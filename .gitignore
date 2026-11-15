@@ -1,0 +1,53 @@
+# Gradle
+.gradle/
+build/
+app/build/
+!gradle/wrapper/gradle-wrapper.jar
+
+# 本地环境（每台机器独立，不入库）
+local.properties
+
+# IDE
+.idea/
+*.iml
+*.ipr
+*.iws
+captures/
+.navigation/
+
+# Kotlin
+.kotlin/
+
+# 签名与密钥
+*.jks
+*.keystore
+keystore.properties
+
+# 系统
+.DS_Store
+Thumbs.db
+
+# 构建产物
+*.apk
+*.aab
+*.hprof
+
+# 签名密钥（不入库）
+*.jks
+keystore/
+
+# Local credentials and private exports
+.env
+.env.*
+!.env.example
+*.p12
+*.pfx
+*.pem
+*.key
+
+# Python device tooling
+__pycache__/
+*.py[cod]
+
+# Optional local codec binaries are not part of the public source snapshot.
+app/libs/*.aar

@@ -1,0 +1,14 @@
+Novum
+Copyright 2026 Novum contributors
+
+Novum original code is licensed under the Apache License, Version 2.0.
+
+This project includes the Inter typeface, version 3.019.
+Copyright 2020 The Inter Project Authors.
+Inter is licensed under the SIL Open Font License, Version 1.1.
+See core/designsystem/INTER-OFL.txt and the embedded font metadata.
+
+Third-party components retain their own licenses. The public source
+snapshot excludes the precompiled FFmpeg decoder AAR from the private
+baseline. It does not grant rights to that omitted binary.
+See THIRD_PARTY_NOTICES.md.

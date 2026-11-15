@@ -1,0 +1,74 @@
+package com.novum.tv.data.settings
+
+import androidx.datastore.preferences.core.PreferenceDataStoreFactory
+import java.io.File
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.test.runTest
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
+import org.junit.Rule
+import org.junit.Test
+import org.junit.rules.TemporaryFolder
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
+
+/**
+ * 设置仓储的持久化行为测试。
+ *
+ * 使用真实 DataStore（临时文件）+ Robolectric，验证默认值、写回与越界收敛，
+ * 而不是只测内存假实现。
+ */
+@OptIn(ExperimentalCoroutinesApi::class)
+@RunWith(RobolectricTestRunner::class)
+@Config(sdk = [35])
+class DataStoreSettingsRepositoryTest {
+
+    @get:Rule
+    val temporaryFolder = TemporaryFolder()
+
+    private fun CoroutineScope.createRepository(): DataStoreSettingsRepository {
+        val dataStore = PreferenceDataStoreFactory.create(
+            scope = this,
+            produceFile = { File(temporaryFolder.root, "novum_settings.preferences_pb") },
+        )
+        return DataStoreSettingsRepository(dataStore)
+    }
+
+    @Test
+    fun defaultsMatchLegacyBehaviour() = runTest {
+        val repository = createRepository()
+
+        val settings = repository.settings.first()
+
+        assertTrue("优先直连默认开启", settings.preferDirect)
+        assertTrue("音频直通默认开启", settings.audioPassthrough)
+        assertTrue("字幕默认开启", settings.subtitleEnabledByDefault)
+        assertEquals("片头默认 90 秒", 90, settings.skipIntroSeconds)
+    }
+
+    @Test
+    fun persistsUpdatedValues() = runTest {
+        val repository = createRepository()
+
+        repository.update { it.copy(preferDirect = false, audioPassthrough = false) }
+
+        val settings = repository.settings.first()
+        assertFalse(settings.preferDirect)
+        assertFalse(settings.audioPassthrough)
+    }
+
+    @Test
+    fun clampsOutOfRangeValues() = runTest {
+        val repository = createRepository()
+
+        repository.update { it.copy(subtitleSize = 99, skipIntroSeconds = 1) }
+
+        val settings = repository.settings.first()
+        assertEquals("字幕字号上限 4", 4, settings.subtitleSize)
+        assertEquals("片头下限 15 秒", 15, settings.skipIntroSeconds)
+    }
+}

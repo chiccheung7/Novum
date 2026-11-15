@@ -1,0 +1,434 @@
+package com.novum.tv.data.repository
+
+import com.novum.tv.core.dispatcher.DispatcherProvider
+import com.novum.tv.core.error.NovumError
+import com.novum.tv.core.log.NovumLogger
+import com.novum.tv.core.network.toNovumError
+import com.novum.tv.core.result.NovumResult
+import com.novum.tv.core.result.failureOf
+import com.novum.tv.core.result.successOf
+import com.novum.tv.data.remote.emby.EmbyApi
+import com.novum.tv.data.remote.emby.EmbyApiProvider
+import com.novum.tv.data.remote.emby.EmbyImages
+import com.novum.tv.data.remote.emby.ItemDto
+import com.novum.tv.data.remote.emby.MediaSourceDto
+import com.novum.tv.data.remote.emby.MediaStreamDto
+import com.novum.tv.data.remote.emby.SessionHolder
+import com.novum.tv.data.text.MediaStrings
+import com.novum.tv.model.CastMember
+import com.novum.tv.model.Chapter
+import com.novum.tv.model.Episode
+import com.novum.tv.model.HOME_ROW_RESUME
+import com.novum.tv.model.HomeEntry
+import com.novum.tv.model.MediaTrackOption
+import com.novum.tv.model.MediaVersionOption
+import com.novum.tv.model.HomeFeed
+import com.novum.tv.model.HomeLatestRow
+import com.novum.tv.model.HomeRow
+import com.novum.tv.model.MediaDetail
+import com.novum.tv.model.MediaItem
+import com.novum.tv.model.MediaLibrary
+import com.novum.tv.model.MediaPage
+import com.novum.tv.model.Season
+import java.text.SimpleDateFormat
+import java.util.Calendar
+import java.util.Locale
+import javax.inject.Inject
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Deferred
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.withContext
+
+/**
+ * 媒体库浏览仓储默认实现。
+ *
+ * 依赖 [SessionHolder] 提供服务器与用户 id：未登录时直接返回 `Unauthorized`，
+ * 不发起任何网络请求。
+ *
+ * @param clients Emby API 提供者。
+ * @param sessionHolder 当前会话（服务器、用户、Token）。
+ * @param dispatchers 调度器，网络与映射统一切到 IO。
+ */
+class DefaultMediaRepository @Inject constructor(
+    private val clients: EmbyApiProvider,
+    private val sessionHolder: SessionHolder,
+    private val dispatchers: DispatcherProvider,
+    private val personIndex: PersonIndexStore,
+    private val strings: MediaStrings,
+    private val logger: NovumLogger,
+) : MediaRepository {
+
+    override suspend fun libraries(): NovumResult<List<MediaLibrary>> = withContext(dispatchers.io) {
+        val server = sessionHolder.server
+        val userId = sessionHolder.userId
+        if (server.isBlank() || userId.isBlank()) {
+            return@withContext failureOf(NovumError.Unauthorized())
+        }
+        safeCall {
+            clients.api(server)
+                .views(uid = userId)
+                .Items
+                .mapNotNull { dto -> dto.toLibrary(server) }
+        }
+    }
+
+    override suspend fun items(
+        parentId: String?,
+        startIndex: Int,
+        limit: Int,
+        sortBy: String,
+        ascending: Boolean,
+        filters: String?,
+        searchTerm: String?,
+        includeItemTypes: String?,
+    ): NovumResult<MediaPage> = withContext(dispatchers.io) {
+        val server = sessionHolder.server
+        val userId = sessionHolder.userId
+        if (server.isBlank() || userId.isBlank()) {
+            return@withContext failureOf(NovumError.Unauthorized())
+        }
+        safeCall {
+            val response = clients.api(server).items(
+                uid = userId,
+                parentId = parentId,
+                startIndex = startIndex,
+                limit = limit,
+                sortBy = sortBy,
+                sortOrder = if (ascending) "Ascending" else "Descending",
+                filters = filters,
+                searchTerm = searchTerm,
+                includeItemTypes = includeItemTypes,
+                // 搜索时附带 People 以更新本地人物索引；其他列表不请求该字段。
+                fields = if (searchTerm != null) "${EmbyApi.DEFAULT_FIELDS},People" else EmbyApi.DEFAULT_FIELDS,
+            )
+            if (searchTerm != null) {
+                personIndex.addAll(response.Items.flatMap { dto -> dto.toCastMembers(server, strings) })
+            }
+            MediaPage(
+                items = response.Items.mapNotNull { dto -> dto.toMediaItem(server, strings) },
+                total = response.TotalRecordCount,
+            )
+        }
+    }
+
+    override suspend fun detail(itemId: String): NovumResult<MediaDetail> = withContext(dispatchers.io) {
+        val server = sessionHolder.server
+        val userId = sessionHolder.userId
+        if (server.isBlank() || userId.isBlank()) {
+            return@withContext failureOf(NovumError.Unauthorized())
+        }
+        safeCall {
+            val detail = clients.api(server)
+                .detail(uid = userId, itemId = itemId)
+                .toDetail(server = server, fallbackId = itemId, strings = strings)
+            // 演职员进本地人物索引（搜演员名的客户端桥接；同名覆盖，无感增量）
+            personIndex.addAll(detail.cast)
+            detail
+        }
+    }
+
+    /** 人物全部作品：按 PersonIds 过滤，并按首播日期和年份倒序。 */
+    override suspend fun personWorks(personId: String): NovumResult<List<MediaItem>> =
+        withContext(dispatchers.io) {
+            val server = sessionHolder.server
+            val userId = sessionHolder.userId
+            if (server.isBlank() || userId.isBlank()) {
+                return@withContext failureOf(NovumError.Unauthorized())
+            }
+            safeCall {
+                clients.api(server)
+                    .items(
+                        uid = userId,
+                        personIds = personId,
+                        recursive = true,
+                        includeItemTypes = "Movie,Series",
+                        sortBy = "PremiereDate,ProductionYear",
+                        sortOrder = "Descending",
+                        limit = 60,
+                    )
+                    .Items
+                    .mapNotNull { dto -> dto.toMediaItem(server, strings) }
+            }
+        }
+
+    /**
+     * 人物搜索：服务端 `Persons` 端点为主，与本地索引结果合并去重。
+     *
+     * 本地索引只含已浏览过的演职员，因此与服务端搜索结果合并后去重。
+     */
+    override suspend fun searchPersons(query: String, limit: Int): List<PersonRef> =
+        withContext(dispatchers.io) {
+            val server = sessionHolder.server
+            val userId = sessionHolder.userId
+            if (server.isBlank() || userId.isBlank()) return@withContext emptyList()
+            val remote = runCatching {
+                clients.api(server)
+                    .persons(userId = userId, searchTerm = query, limit = limit)
+                    .Items
+                    .mapNotNull { dto ->
+                        val id = dto.Id ?: return@mapNotNull null
+                        val name = dto.Name?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
+                        PersonRef(
+                            name = name,
+                            personId = id,
+                            imageUrl = dto.PrimaryImageTag?.let { tag ->
+                                EmbyImages.primary(server = server, itemId = id, tag = tag, maxWidth = 240)
+                            },
+                        )
+                    }
+            }.onFailure { logger.w(TAG, "人物远端搜索失败，仅用本地索引：$query", it) }
+                .getOrDefault(emptyList())
+            val local = runCatching { personIndex.search(query, limit) }.getOrDefault(emptyList())
+            (remote + local)
+                .distinctBy { it.personId }
+                .take(limit)
+        }
+
+    override suspend fun seasons(seriesId: String): NovumResult<List<Season>> =
+        withContext(dispatchers.io) {
+            val server = sessionHolder.server
+            val userId = sessionHolder.userId
+            if (server.isBlank() || userId.isBlank()) {
+                return@withContext failureOf(NovumError.Unauthorized())
+            }
+            safeCall {
+                clients.api(server)
+                    .seasons(seriesId = seriesId, userId = userId)
+                    .Items
+                    .mapIndexedNotNull { index, dto -> dto.toSeason(index, strings) }
+                    .sortedBy { it.index }
+            }
+        }
+
+    override suspend fun episodes(seriesId: String, seasonId: String?): NovumResult<List<Episode>> =
+        withContext(dispatchers.io) {
+            val server = sessionHolder.server
+            val userId = sessionHolder.userId
+            if (server.isBlank() || userId.isBlank()) {
+                return@withContext failureOf(NovumError.Unauthorized())
+            }
+            safeCall {
+                clients.api(server)
+                    .episodes(seriesId = seriesId, userId = userId, seasonId = seasonId)
+                    .Items
+                    .mapIndexedNotNull { index, dto -> dto.toEpisode(server, index, strings) }
+                    .sortedBy { it.index }
+            }
+        }
+
+    override suspend fun seriesNextUp(seriesId: String): NovumResult<Episode?> =
+        withContext(dispatchers.io) {
+            val server = sessionHolder.server
+            val userId = sessionHolder.userId
+            if (server.isBlank() || userId.isBlank()) {
+                return@withContext failureOf(NovumError.Unauthorized())
+            }
+            safeCall {
+                // 单剧集 NextUp——详情页默认定位的「当前集」。字段用
+                // 分集口径（带 MediaSources），让焦点集的多版本信息开箱即用；
+                // 全部看完且无上新时服务端返回空列表 → null（页面回落剧集级）。
+                clients.api(server)
+                    .nextUp(uid = userId, limit = 1, fields = EmbyApi.EPISODE_FIELDS, seriesId = seriesId)
+                    .Items
+                    .firstOrNull()
+                    ?.let { dto -> dto.toEpisode(server, index = 0, strings = strings) }
+            }
+        }
+
+    override suspend fun setFavorite(itemId: String, favorite: Boolean): NovumResult<Boolean> =
+        withContext(dispatchers.io) {
+            val server = sessionHolder.server
+            val userId = sessionHolder.userId
+            if (server.isBlank() || userId.isBlank()) {
+                return@withContext failureOf(NovumError.Unauthorized())
+            }
+            safeCall {
+                val api = clients.api(server)
+                val data = if (favorite) {
+                    api.addFavorite(uid = userId, itemId = itemId)
+                } else {
+                    api.removeFavorite(uid = userId, itemId = itemId)
+                }
+                data.IsFavorite
+            }
+        }
+
+    override suspend fun setPlayed(itemId: String, played: Boolean): NovumResult<Boolean> =
+        withContext(dispatchers.io) {
+            val server = sessionHolder.server
+            val userId = sessionHolder.userId
+            if (server.isBlank() || userId.isBlank()) {
+                return@withContext failureOf(NovumError.Unauthorized())
+            }
+            safeCall {
+                val api = clients.api(server)
+                val data = if (played) {
+                    api.markPlayed(uid = userId, itemId = itemId)
+                } else {
+                    api.markUnplayed(uid = userId, itemId = itemId)
+                }
+                data.Played
+            }
+        }
+
+    override suspend fun feed(): NovumResult<HomeFeed> = withContext(dispatchers.io) {
+        val server = sessionHolder.server
+        val userId = sessionHolder.userId
+        if (server.isBlank() || userId.isBlank()) {
+            return@withContext failureOf(NovumError.Unauthorized())
+        }
+        safeCall {
+            val api = clients.api(server)
+            // 只有影片与剧集两类库上首页；音乐 / 图片等类型的内容形态不同，不强行混排
+            val libraries = api.views(uid = userId).Items
+                .mapNotNull { dto -> dto.toLibrary(server) }
+                .filter { it.kind == "movies" || it.kind == "tvshows" }
+            // Hero 候选的双口径：电影看发行时间，剧综看近期是否上新
+            val movieCutoff = isoDateDaysAgo(DAYS_MOVIE_WINDOW)
+            val updateCutoff = isoDateDaysAgo(DAYS_UPDATE_WINDOW)
+            coroutineScope {
+                // 各区块并发拉取，单个区块失败只让该区块为空，不拖垮整页
+                val resumeItems = asyncOrNull { api.resume(uid = userId).Items }
+                val nextUpItems = asyncOrNull { api.nextUp(uid = userId).Items }
+                val moviePicks = asyncOrNull {
+                    api.items(
+                        uid = userId,
+                        includeItemTypes = "Movie",
+                        sortBy = "PremiereDate,SortName",
+                        limit = REQUEST_MOVIE_LIMIT,
+                        minPremiereDate = movieCutoff,
+                    ).Items
+                }
+                // Emby 的 PlayCount 排序按累计播放次数提供 Hero 热播候选。
+                // 电影+剧集一起取，只要可播放条目（IsNotFolder 排除合集/目录）。
+                val hotPicks = asyncOrNull {
+                    api.items(
+                        uid = userId,
+                        includeItemTypes = "Movie,Series",
+                        sortBy = "PlayCount,CommunityRating",
+                        sortOrder = "Descending",
+                        filters = "IsNotFolder",
+                        limit = REQUEST_HOT_LIMIT,
+                    ).Items
+                }
+                val latestPerLibrary = libraries.map { library ->
+                    asyncOrNull { library.id to api.latest(uid = userId, parentId = library.id) }
+                }
+
+                // 各库最新：保留原始 DTO（Hero 需要背景图标签），再映射成行数据
+                val rawLatest = latestPerLibrary.mapNotNull { deferred ->
+                    val (libraryId, items) = deferred.await() ?: return@mapNotNull null
+                    val library = libraries.firstOrNull { it.id == libraryId } ?: return@mapNotNull null
+                    library to items
+                }
+                val latest = rawLatest.mapNotNull { (library, items) ->
+                    val entries = items.mapNotNull { dto -> dto.toHomeEntry(server, strings) }
+                    if (entries.isEmpty()) {
+                        null
+                    } else {
+                        HomeLatestRow(libraryId = library.id, libraryName = library.name, items = entries)
+                    }
+                }
+
+                val movies = moviePicks.await().orEmpty()
+                    // 服务端可能忽略 MinPremiereDate，因此客户端再过滤一次。
+                    .filter { dto -> dto.PremiereDate.isOnOrAfter(movieCutoff) }
+                    .sortedByDescending { dto -> dto.CommunityRating ?: 0f }
+                    .take(PICK_MOVIE_LIMIT)
+                // 剧综池复用各库最新结果，避免额外请求；按条目类型筛选，不依赖库类型标记。
+                val seriesPool = rawLatest
+                    .flatMap { (_, items) -> items }
+                    .filter { dto -> dto.Type == "Series" }
+                    .distinctBy { dto -> dto.Id }
+                // 「近一周有更新」优先看最后添加新集的时间；服务端不返回该字段时退回入库时间
+                val seriesInWeek = seriesPool.filter { dto -> dto.isUpdatedSince(updateCutoff) }
+                // 一周内没有新集就退回一个月；latest 本身就是最近入库，字段全缺时直接采用
+                val fallbackCutoff = isoDateDaysAgo(DAYS_UPDATE_FALLBACK)
+                val series = seriesInWeek.ifEmpty { seriesPool.filter { dto -> dto.isUpdatedSince(fallbackCutoff) } }
+                    .ifEmpty { seriesPool }
+                    .sortedByDescending { dto -> dto.DateLastMediaAdded ?: dto.DateCreated.orEmpty() }
+                    .take(PICK_SERIES_LIMIT)
+                // 电影在前（评分优先），剧综在后（按最近上新时间）
+
+                val resumeDtoItems = resumeItems.await().orEmpty()
+                // 正在续播的条目不占用 Hero 推荐位，避免重复展示。
+                val resumeIds = resumeDtoItems.mapNotNull { dto -> dto.Id }.toSet()
+                // 继续观看行合并 NextUp：播放中的集保留在行内，看完或追平的剧集由 NextUp 递补。
+                // 同一剧集只保留一张卡：
+                // 在看的优先，NextUp 条目按分集 id + 剧集 id 双重去重后追加行尾。
+                val resumeSeriesIds = resumeDtoItems.mapNotNull { dto -> dto.SeriesId }.toSet()
+                val mergedResume = (
+                    resumeDtoItems +
+                        nextUpItems.await().orEmpty()
+                            .filter { dto -> dto.Id !in resumeIds && dto.SeriesId !in resumeSeriesIds }
+                            // 同剧集的多个 NextUp 只留首个（一部剧一张卡）
+                            .distinctBy { dto -> dto.SeriesId }
+                    )
+                    .distinctBy { dto -> dto.Id }
+                    .take(HOME_ROW_RESUME_LIMIT)
+
+                // Hero 优先使用热播候选；数量不足时从电影、剧集和各库最新条目构建候选池。
+                // 两条路径都按同一规则洗牌并限制容量。
+                val hot = hotPicks.await().orEmpty()
+                    .filter { dto -> dto.Id !in resumeIds }
+                val hero = if (hot.size >= HERO_LIMIT) {
+                    hot.filter { it.BackdropImageTags.isNotEmpty() }
+                        .seededShuffle(_heroSeedProvider())
+                        .take(HERO_LIMIT)
+                } else {
+                    heroRotationPool(
+                        movies = movies.filter { dto -> dto.Id !in resumeIds },
+                        series = series.filter { dto -> dto.Id !in resumeIds },
+                        latest = rawLatest.flatMap { (_, items) -> items }
+                            .filter { dto -> dto.Id !in resumeIds },
+                    )
+                }
+                    // /Items/Latest 不含 MediaStreams 和 OfficialRating；按 Ids 回捞完整字段，
+                    // 请求失败时保留原 DTO。
+                    .let { pool ->
+                        val poolIds = pool.mapNotNull { it.Id }
+                        val fullItems = if (poolIds.isEmpty()) {
+                            null
+                        } else {
+                            asyncOrNull {
+                                api.items(
+                                    uid = userId,
+                                    ids = poolIds.joinToString(","),
+                                    limit = poolIds.size,
+                                ).Items
+                            }.await().orEmpty()
+                        }
+                        val fullById = fullItems?.associateBy { it.Id }
+                        pool.mapNotNull { dto ->
+                            (fullById?.get(dto.Id) ?: dto).toHomeEntry(server, strings)
+                        }
+                    }
+
+                HomeFeed(
+                    hero = hero,
+                    resume = mergedResume
+                        .mapNotNull { dto -> dto.toHomeEntry(server, strings) }
+                        .toRow(HOME_ROW_RESUME),
+                    // 首页按媒体库目录构建分库内容行。
+                    libraries = libraries,
+                    nextUp = null,
+                    latest = latest,
+                )
+            }
+        }
+    }
+
+    /** 统一异常映射，保证仓储不向 UI 抛异常。 */
+    private suspend fun <T> safeCall(block: suspend () -> T): NovumResult<T> = try {
+        successOf(block())
+    } catch (cancellation: CancellationException) {
+        throw cancellation
+    } catch (throwable: Throwable) {
+        failureOf(throwable.toNovumError())
+    }
+}
+
+/** 日志标签。 */
+private const val TAG = "MediaRepo"

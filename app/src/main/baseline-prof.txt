@@ -1,0 +1,24 @@
+# Baseline Profile：告诉 ART 启动路径上哪些类/方法值得提前 AOT 编译。
+# 规则按「入口 → 应用装配 → 首页首屏」排列，只覆盖冷启动必须走到的路径；
+# 播放器与详情页属于二级页面，代价值得商榷，暂不纳入。
+HSPLcom/novum/tv/MainActivity;->onCreate(Landroid/os/Bundle;)V
+HSPLcom/novum/tv/MainActivity;-><init>()V
+HSPLcom/novum/tv/NovumApplication;->onCreate()V
+Lcom/novum/tv/MainActivity;
+Lcom/novum/tv/NovumApplication;
+Lcom/novum/tv/ui/NovumAppKt;
+Lcom/novum/tv/ui/AppEntryViewModel;
+Lcom/novum/tv/ui/screen/home/HomeScreenKt;
+Lcom/novum/tv/ui/screen/home/HomeViewModel;
+Lcom/novum/tv/ui/screen/home/HomeSkeletonKt;
+Lcom/novum/tv/data/repository/DefaultMediaRepository;
+Lcom/novum/tv/data/remote/emby/EmbyClientFactory;
+Lcom/novum/tv/navigation/NovumNavHostKt;
+Lcom/novum/tv/ui/theme/NovumThemeKt;
+Landroidx/compose/runtime/ComposerImpl;
+Landroidx/compose/runtime/Recomposer;
+Landroidx/compose/ui/platform/AndroidComposeView;
+Landroidx/activity/ComponentActivity;
+Lcoil3/compose/AsyncImageKt;
+Lcoil3/ImageLoader;
+Lokhttp3/OkHttpClient;

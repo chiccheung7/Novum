@@ -1,0 +1,269 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Novum</string>
+
+    <!-- 通用 -->
+    <string name="action_cancel">取消</string>
+
+    <!-- 登录 -->
+    <string name="login_title">登录</string>
+    <string name="login_hint">输入 Emby 服务器地址与账号，登录后即可浏览媒体库</string>
+    <string name="login_server">服务器地址</string>
+    <string name="login_server_placeholder">192.168.1.10:8096</string>
+    <string name="login_username">用户名</string>
+    <string name="login_password">密码</string>
+    <string name="login_action">登录</string>
+    <string name="login_action_loading">正在登录…</string>
+    <string name="login_error_server">请填写服务器地址</string>
+    <string name="login_error_username">请填写用户名</string>
+    <string name="login_error_password">请填写密码</string>
+    <string name="login_cleartext_inline">HTTP 明文连接 · 凭据不加密</string>
+    <string name="login_cleartext_title">使用 HTTP 明文连接？</string>
+    <string name="login_cleartext_message">该地址将以未加密的 HTTP 发送用户名与密码，同一网络内的其他人可能截获。若服务器支持 HTTPS，建议改用 https:// 开头的地址。</string>
+    <string name="login_cleartext_confirm">仍然登录</string>
+    <string name="login_cleartext_cancel">取消</string>
+    <string name="home_exit_confirm">再按一次返回键退出</string>
+
+    <!-- 首页 -->
+    <string name="home_row_resume">继续观看</string>
+    <string name="library_title">媒体库</string>
+    <string name="home_entry_movie">电影</string>
+    <string name="home_entry_series">剧集</string>
+    <string name="home_hero_play">播放</string>
+    <string name="home_hero_detail">详情</string>
+
+    <!-- 顶部导航 -->
+    <string name="top_nav_favorites">收藏</string>
+    <string name="top_nav_search">搜索</string>
+    <string name="top_nav_settings">设置</string>
+
+    <!-- 线路选择 -->
+    <string name="line_picker_title">选择线路</string>
+    <string name="line_picker_current">当前</string>
+    <string name="line_picker_loading">正在获取线路…</string>
+    <string name="line_picker_failed">线路列表获取失败</string>
+    <string name="line_picker_failed_hint">将沿用当前服务器地址</string>
+    <string name="settings_playback_line">播放线路</string>
+    <string name="settings_playback_line_auto">默认</string>
+
+    <!-- 收藏 -->
+    <string name="favorites_title">我的收藏</string>
+    <string name="favorites_empty">还没有收藏的影片，去详情页点「收藏」试试</string>
+
+    <!-- 搜索 -->
+    <string name="search_title">搜索</string>
+    <string name="search_label">关键词</string>
+    <string name="search_placeholder">片名 / 剧名 / 演员</string>
+    <string name="search_hint">输入关键词后点「搜索」</string>
+    <string name="search_empty">没有找到相关内容</string>
+
+    <!-- 通用状态 -->
+    <string name="state_empty_message">这里还没有内容</string>
+    <string name="state_retry">重试</string>
+
+    <!-- 详情 -->
+    <string name="detail_play">立即播放</string>
+    <string name="detail_resume">继续播放</string>
+    <string name="detail_favorite">收藏</string>
+    <string name="detail_favorited">已收藏</string>
+    <string name="detail_episodes">选集</string>
+    <string name="detail_no_episodes">暂无分集</string>
+    <string name="detail_episodes_failed">剧集列表加载失败</string>
+    <string name="detail_favorite_failed">收藏操作失败，请稍后重试</string>
+    <string name="detail_status_continuing">连载中</string>
+    <string name="detail_status_ended">已完结</string>
+    <string name="detail_cast">演职员</string>
+    <string name="detail_pref_dialog_version">版本</string>
+    <string name="player_drawer_audio_delay">音频延迟</string>
+    <string name="player_drawer_subtitle_delay">字幕延迟</string>
+    <string name="player_drawer_subtitle_height">字幕高度</string>
+    <!-- 字幕高度五档：默认居中，两档上移、两档下移。 -->
+    <string name="subtitle_height_default">默认</string>
+    <string name="subtitle_height_up1">高一档</string>
+    <string name="subtitle_height_up2">高两档</string>
+    <string name="subtitle_height_down1">低一档</string>
+    <string name="subtitle_height_down2">低两档</string>
+    <string name="settings_pref_subtitle">首选字幕语言</string>
+    <string name="settings_pref_audio">首选音频语言</string>
+    <string name="settings_pref_quality">优先视频质量</string>
+    <string name="settings_lang_default">默认</string>
+    <string name="detail_minutes">%1$d 分钟</string>
+    <string name="detail_play_from_head">从头播放</string>
+    <string name="detail_mark_played">标为已看</string>
+    <string name="detail_mark_unplayed">标为未看</string>
+    <string name="detail_seasons_count">%1$d 季</string>
+    <string name="season_name">第 %1$d 季</string>
+    <string name="season_special">特别篇</string>
+    <string name="season_mark_title">整季标记</string>
+    <string name="mark_season_watched">标记整季为已看</string>
+    <string name="mark_season_unwatched">标记整季为未看</string>
+    <string name="toast_mark_season_watched">本季已全部标为已看</string>
+    <string name="toast_mark_season_unwatched">本季已全部标为未看</string>
+    <string name="toast_mark_season_partial">本季部分分集标记失败（%1$d 集），请稍后重试</string>
+
+    <string name="detail_select_season">选择季</string>
+    <string name="detail_episode_played">已看完</string>
+    <string name="detail_episode_remaining">剩 %1$d 分钟</string>
+    <string name="detail_season_unplayed">%1$d 集未看</string>
+    <string name="detail_played_toast">已标为已看</string>
+    <string name="detail_unplayed_toast">已标为未看</string>
+    <string name="detail_played_failed">已看操作失败，请稍后重试</string>
+
+    <!-- 播放 -->
+    <string name="player_unknown_title">正在播放</string>
+    <string name="play_method_direct_play">直连播放</string>
+    <string name="play_method_direct_stream">转封装播放</string>
+    <string name="play_method_transcode">服务端转码</string>
+    <string name="player_fallback_notice">直连失败，已切换服务端转码</string>
+    <string name="player_track_audio">音轨</string>
+    <string name="player_track_subtitle">字幕</string>
+    <string name="player_track_channels">%1$d 声道</string>
+    <string name="player_info_chapter_default">章节 %1$d</string>
+
+    <!-- 播放信息面板 -->
+    <string name="player_info_title">播放信息</string>
+    <string name="player_info_video">视频</string>
+    <string name="player_info_bitrate">码率</string>
+    <string name="player_info_container">封装</string>
+    <string name="player_info_method">播放方式</string>
+    <string name="player_info_audio">音轨</string>
+    <string name="player_info_subtitle">字幕</string>
+    <string name="player_info_speed">倍速</string>
+    <string name="player_info_chapters">章节</string>
+    <string name="player_info_unknown">未知</string>
+
+    <!-- 播放信息 -->
+    <string name="player_stats_display_mode">显示模式</string>
+    <string name="player_stats_video_size">画面尺寸</string>
+    <string name="player_stats_dropped">丢帧</string>
+    <string name="player_stats_dropped_fmt">%1$d 帧</string>
+    <string name="player_stats_buffer">缓冲</string>
+    <string name="player_stats_buffer_fmt">%1$d%% · %2$d 秒</string>
+    <string name="player_error_title">无法播放此片源</string>
+    <string name="player_retry_next_line">换线路重试</string>
+    <string name="player_error_hint">设备不支持该编码，服务端转码也不可用。按返回键退出。</string>
+
+    <!-- 播放控制条 -->
+    <string name="player_progress">播放进度</string>
+    <string name="player_control_play">播放</string>
+    <string name="player_control_pause">暂停</string>
+    <string name="player_control_settings">播放设置</string>
+    <string name="player_control_next">下一集</string>
+    <string name="home_remaining_minutes">剩余 %1$d 分钟</string>
+    <string name="player_skip_intro">跳过片头</string>
+    <string name="player_skip_credits">跳过片尾</string>
+    <!-- 自动连播 -->
+    <string name="settings_autoplay_next">自动连播</string>
+    <string name="player_autonext_countdown">下一集 %1$d 秒后播放</string>
+    <string name="player_autonext_cancel_hint">按任意键取消</string>
+    <string name="player_control_rewind">后退10秒</string>
+    <string name="player_control_forward">快进10秒</string>
+    <string name="player_control_scale">画面比例</string>
+    <string name="player_scale_fit">默认</string>
+    <string name="player_scale_stretch">拉伸</string>
+    <string name="player_scale_crop">裁剪</string>
+    <string name="player_drawer_quality">信息</string>
+    <string name="player_drawer_title">播放设置</string>
+    <string name="player_drawer_passthrough">音频直通（杜比 / DTS）</string>
+    <string name="player_drawer_audio">音轨</string>
+    <string name="player_drawer_subtitle">字幕</string>
+    <string name="player_drawer_empty">暂无可切换轨道</string>
+    <string name="player_drawer_subtitle_off">关闭字幕</string>
+    <string name="player_drawer_reloading">正在按新音频设置重新加载…</string>
+    <string name="player_exit_title">退出播放？</string>
+    <string name="player_exit_message">当前进度已保存，下次可以从这里继续看</string>
+    <string name="player_exit_confirm">退出</string>
+
+    <!-- 媒体库 -->
+    <string name="library_empty">这个媒体库还没有内容</string>
+    <string name="library_item_count">共 %1$d 部</string>
+
+    <!-- 网格排序条 -->
+    <string name="sort_name">片名</string>
+    <string name="sort_year">年份</string>
+    <string name="sort_rating">评分</string>
+
+    <!-- 设置 -->
+    <string name="settings_group_playback">播放与续播</string>
+    <string name="settings_prefer_direct">优先直连播放</string>
+    <string name="settings_audio_passthrough">音频直通（杜比 / DTS）</string>
+    <string name="settings_skip_intro">自动跳过片头</string>
+    <string name="settings_skip_intro_seconds">片头时长</string>
+    <string name="settings_seconds">%1$d 秒</string>
+
+    <string name="settings_group_subtitle">字幕与音轨</string>
+    <string name="settings_subtitle_default">默认开启字幕</string>
+    <string name="settings_subtitle_ass_burn_in">ASS 字幕烧录保样式</string>
+    <string name="settings_subtitle_size">字幕字号</string>
+    <string name="settings_group_data">数据与缓存</string>
+    <string name="settings_clear_cache">清除图片缓存</string>
+    <string name="settings_group_account">账号</string>
+    <string name="settings_connection">用户名</string>
+    <string name="settings_connection_unknown">未登录</string>
+    <string name="settings_logout">退出登录</string>
+    <string name="settings_logout_action">退出</string>
+    <string name="settings_logging_out">正在退出…</string>
+    <string name="settings_state_on">开</string>
+    <string name="settings_state_off">关</string>
+
+    <!-- 字幕字号 -->
+    <string name="subtitle_size_small">小</string>
+    <string name="subtitle_size_medium">中</string>
+    <string name="subtitle_size_large">大</string>
+    <string name="subtitle_size_xlarge">超大</string>
+
+
+    <!-- 全局 Toast -->
+    <string name="toast_favorite_added">已加入收藏</string>
+    <string name="toast_favorite_removed">已取消收藏</string>
+    <string name="toast_pref_on">%1$s：已开启</string>
+    <string name="toast_pref_off">%1$s：已关闭</string>
+    <string name="toast_cycled">%1$s：%2$s</string>
+    <string name="toast_cache_cleared">图片缓存已清除</string>
+
+    <!-- 错误 -->
+    <string name="error_network">网络连接失败，请检查网络后重试</string>
+    <string name="error_unauthorized">登录已失效，请重新登录</string>
+    <string name="error_server">服务器返回异常（%1$d）</string>
+    <string name="error_parse">数据解析失败</string>
+    <string name="error_not_found">内容不存在或已下架</string>
+    <string name="error_unknown">出了点问题，请稍后重试</string>
+
+    <!-- 偏好浮层选项 -->
+    <string name="settings_option_default">默认</string>
+    <string name="settings_option_zh_cn">简体中文</string>
+    <string name="settings_option_zh_tw">繁体中文</string>
+    <string name="settings_option_zh_dual">中英双语</string>
+    <string name="settings_option_english">英语</string>
+    <string name="settings_option_japanese">日语</string>
+    <string name="settings_option_korean">韩语</string>
+    <string name="settings_option_quality_dolby">杜比视界优先</string>
+    <string name="settings_option_quality_hdr">HDR 优先</string>
+    <string name="settings_option_quality_sdr">SDR 优先</string>
+    <string name="settings_option_quality_bitrate">码率优先</string>
+    <string name="settings_option_quality_ask">每次询问</string>
+
+    <!-- 片长/延迟格式 -->
+    <string name="media_runtime_minutes">%1$d 分钟</string>
+    <string name="media_runtime_hours">%1$d 小时</string>
+    <string name="media_runtime_hours_minutes">%1$d 小时 %2$d 分钟</string>
+    <string name="player_delay_off">关</string>
+
+    <!-- 数据层展示文案 -->
+    <string name="media_type_movie">电影</string>
+    <string name="media_type_series">剧集</string>
+    <string name="media_type_episode">分集</string>
+    <string name="media_type_boxset">合集</string>
+    <string name="media_version_n">版本 %1$d</string>
+    <string name="media_audio_track_n">音轨 %1$d</string>
+    <string name="media_subtitle_track_n">字幕 %1$d</string>
+    <string name="media_chapter_n">章节 %1$d</string>
+    <string name="media_role_actor">演员</string>
+    <string name="media_role_director">导演</string>
+    <string name="media_role_writer">编剧</string>
+    <string name="media_role_producer">制片</string>
+    <string name="media_role_composer">作曲</string>
+    <string name="media_role_guest_star">客串</string>
+    <string name="media_season_n">第 %1$d 季</string>
+    <string name="media_episode_n">第 %1$d 集</string>
+</resources>

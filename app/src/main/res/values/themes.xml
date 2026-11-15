@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!--
+        TV 全屏无 ActionBar 基础主题；视觉由 Compose 侧 NovumTheme 统一接管。
+
+        应用主题放在 app 模块而不是 designsystem：Splash 需要引用 @mipmap/ic_launcher，
+        而 library 模块无法引用 app 模块的资源。公共项抽到 Base，v31 只叠加 Splash 属性。
+    -->
+    <style name="Theme.Novum.Base" parent="@android:style/Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/novum_ink</item>
+        <item name="android:colorBackground">@color/novum_ink</item>
+        <item name="android:windowActionModeOverlay">true</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+    </style>
+
+    <style name="Theme.Novum" parent="Theme.Novum.Base" />
+</resources>

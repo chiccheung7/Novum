@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Novum 不参与任何云备份或设备迁移：应用数据仅存在于本机电视。 -->
+<data-extraction-rules>
+    <cloud-backup>
+        <exclude domain="root" path="." />
+    </cloud-backup>
+    <device-transfer>
+        <exclude domain="root" path="." />
+    </device-transfer>
+</data-extraction-rules>

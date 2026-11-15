@@ -1,0 +1,9 @@
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Fixed artificial API key used by the log-redaction regression test"
+condition = "AND"
+regexTarget = "secret"
+regexes = ['''^abc123DEF456$''']
+paths = ['''(^|/)(app|core/common)/src/test/java/com/novum/tv/core/log/LogRedactionTest\.kt$''']

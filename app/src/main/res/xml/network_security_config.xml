@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  明文流量策略。
+
+  为什么必须显式允许：targetSdk ≥ 28 起系统默认禁止明文 HTTP，而家庭 Emby 服务器
+  绝大多数是「局域网 IP + 8096 明文」。不放开这一项，局域网用户连登录都过不去
+  （CLEARTEXT communication to 192.168.x.x not permitted），而这类服务器通常
+  没有有效证书，无法靠 HTTPS 解决。
+
+  风险控制不靠"禁用"，靠"告知"：登录页对确定会走明文的地址（显式 http://、
+  私有网段 IP、非 443 显式端口）弹出确认框，说明凭据会明文传输，用户可选择取消
+  并改用 https:// 地址。见 ServerAddress.usesCleartext 与 LoginScreen 的确认框。
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+</network-security-config>
