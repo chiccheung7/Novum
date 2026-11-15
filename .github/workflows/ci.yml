@@ -27,7 +27,10 @@ jobs:
           distribution: temurin
           java-version: '17'
       - name: Install Android SDK packages
-        run: sdkmanager 'platforms;android-37.0' 'build-tools;36.0.0'
+        uses: android-actions/setup-android@be39fa834029ff78f1a44aa3bb0819b8fc2bd8fd # v4
+        with:
+          packages: 'platforms;android-37.0 build-tools;36.0.0'
+          log-accepted-android-sdk-licenses: false
       - name: Set up Gradle and validate Wrapper
         uses: gradle/actions/setup-gradle@4c125117fe7c5aed11272ec4213f602f012f89f2 # v5
       - name: Run unit tests, lint and build
