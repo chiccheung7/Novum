@@ -501,6 +501,96 @@ class DetailViewModelTest {
         assertTrue("剧集无单集目标时不得发任何标记请求", repository.playedCalls.isEmpty())
     }
 
+    // 已看/未看 bug 修复回归。
+
+    @Test
+    fun singleEpisodeMarkedPlayedSyncsSeasonUnplayedAndAggregate() = runTest {
+        // 剧集单集标已看：所在季的未看计数 -1，全剧"已看 x/y"随之更新（核心 bug）。
+        val seasons = listOf(season("s1", index = 1, unplayed = 3))
+        val repository = FakeDetailRepository(
+            detail = seriesDetail(),
+            seasons = seasons,
+            episodesFor = mapOf("s1" to listOf(episode("e1"), episode("e2"))),
+        )
+        val (viewModel, _) = viewModel(repository, itemId = "se1")
+        advanceUntilIdle()
+        assertEquals("初始已看 5/8", 5 to 8,
+            viewModel.state.value.watchedEpisodeCount to viewModel.state.value.totalEpisodeCount)
+
+        viewModel.togglePlayed(episodeId = "e1")
+        advanceUntilIdle()
+
+        assertEquals("本季未看应从 3 减到 2", 2, viewModel.state.value.seasons.first().unplayedCount)
+        assertEquals("全剧已看应变成 6/8", 6 to 8,
+            viewModel.state.value.watchedEpisodeCount to viewModel.state.value.totalEpisodeCount)
+    }
+
+    @Test
+    fun singleEpisodeMarkedPlayedRefreshesSeriesPlayedFlag() = runTest {
+        // 剧集单集标已看后必须重拉详情，拿服务端聚合的 series.Played（最后一集看完翻 true）。
+        val seasons = listOf(season("s1", index = 1, unplayed = 1))
+        val repository = FakeDetailRepository(
+            detail = seriesDetail(),
+            seasons = seasons,
+            episodesFor = mapOf("s1" to listOf(episode("e1"))),
+            seriesPlayedOnRefresh = true,
+        )
+        val (viewModel, _) = viewModel(repository, itemId = "se1")
+        advanceUntilIdle()
+        val callsBefore = repository.detailCallCount
+
+        viewModel.togglePlayed(episodeId = "e1")
+        advanceUntilIdle()
+
+        assertTrue("标记后应重拉详情", repository.detailCallCount > callsBefore)
+        assertTrue("剧集级 Played 应取服务端聚合值", detailData(viewModel).played)
+    }
+
+    @Test
+    fun currentEpisodeStaysStableWhenMarkedPlayed() = runTest {
+        // 剧级态把当前集标已看后，"当前集"不得实时跳到下一未看集（跳集 bug）。
+        val seasons = listOf(season("s1", index = 1, unplayed = 2))
+        val repository = FakeDetailRepository(
+            detail = seriesDetail(),
+            seasons = seasons,
+            episodesFor = mapOf("s1" to listOf(episode("e1"), episode("e2"))),
+            nextUpHint = episode("e1"),
+        )
+        val (viewModel, _) = viewModel(repository, itemId = "se1", focusCurrentEpisode = true)
+        advanceUntilIdle()
+        assertEquals("进场锚点当前集 = e1", "e1", viewModel.state.value.currentEpisode?.id)
+
+        viewModel.togglePlayed(episodeId = "e1")
+        advanceUntilIdle()
+
+        assertEquals("标已看后当前集应稳定在 e1", "e1", viewModel.state.value.currentEpisode?.id)
+    }
+
+    @Test
+    fun markSeasonPartialFailureDoesNotLocallyMarkFailedEpisodes() = runTest {
+        // 整季标记部分失败：失败的集绝不能被本地标成已看（与服务端不一致的 bug）。
+        val seasons = listOf(season("s1", index = 1, unplayed = 2))
+        val repository = FakeDetailRepository(
+            detail = seriesDetail(),
+            seasons = seasons,
+            episodesFor = mapOf("s1" to listOf(episode("e1"), episode("e2"))),
+            playedResult = { id, played ->
+                if (id == "e2") NovumResult.Failure(NovumError.Network())
+                else NovumResult.Success(played)
+            },
+        )
+        val (viewModel, toast) = viewModel(repository, itemId = "se1")
+        advanceUntilIdle()
+
+        viewModel.markSeasonPlayed(played = true)
+        advanceUntilIdle()
+
+        val eps = viewModel.state.value.episodes.associateBy { it.id }
+        assertTrue("成功的 e1 应为已看", eps.getValue("e1").played)
+        assertFalse("失败的 e2 必须保持未看", eps.getValue("e2").played)
+        assertTrue("部分失败应提示", toast.texts.any { it.contains("部分") })
+    }
+
     private fun detailData(viewModel: DetailViewModel): MediaDetail {
         val state = viewModel.state.value
         return (state.detail as? UiState.Success)?.data
@@ -565,6 +655,8 @@ private open class FakeDetailRepository(
         { _, played -> NovumResult.Success(played) },
     /** NextUp 进场定位提示；null = 服务端无下一集（追平且无上新）。 */
     private val nextUpHint: Episode? = null,
+    /** 剧集级 Played 的聚合回传值：标记单集后重拉详情时用它；null = 沿用初始 detail。 */
+    private val seriesPlayedOnRefresh: Boolean? = null,
 ) : MediaRepository {
 
     /** 依序记录的 setFavorite 调用。 */
@@ -572,6 +664,10 @@ private open class FakeDetailRepository(
 
     /** 依序记录的 setPlayed 调用。 */
     val playedCalls = mutableListOf<Pair<String, Boolean>>()
+
+    /** detail(...) 被调用次数；验证单集标记后是否重拉详情刷新剧集级状态。 */
+    var detailCallCount = 0
+        private set
 
     override suspend fun items(
         parentId: String?,
@@ -586,7 +682,15 @@ private open class FakeDetailRepository(
 
     override suspend fun libraries(): NovumResult<List<MediaLibrary>> = NovumResult.Success(emptyList())
 
-    override suspend fun detail(itemId: String): NovumResult<MediaDetail> = NovumResult.Success(detail)
+    override suspend fun detail(itemId: String): NovumResult<MediaDetail> {
+        detailCallCount++
+        val played = if (detail.type == "Series" && seriesPlayedOnRefresh != null) {
+            seriesPlayedOnRefresh
+        } else {
+            detail.played
+        }
+        return NovumResult.Success(detail.copy(played = played))
+    }
 
     override suspend fun seasons(seriesId: String): NovumResult<List<Season>> = NovumResult.Success(seasons)
 

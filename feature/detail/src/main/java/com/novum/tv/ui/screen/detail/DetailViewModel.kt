@@ -115,12 +115,39 @@ data class DetailUiState(
         }
 
     /**
-     * 「当前集」：手动选中的集优先，没有则用默认播放目标集。
-     * 播放/从头播放/已看图标与页面背景都跟着它走；电影为 null。
+     * 「当前集」：手动选中的集优先 → 进场 NextUp 锚点 → 默认播放目标集。
+     *
+     * 锚点优先是已看标记稳定性的关键：剧级态把当前集标为已看后，若仍从
+     * `episodes.firstOrNull { !it.played }` 实时推算，当前集会立刻跳到下一集，
+     * 造成操作行图标/信息区"跳集"。锚点（[currentEpisodeId]）由进场 NextUp
+     * 一次性确定、切季才清空，标记已看不会改它，故当前集保持稳定。
      */
     val currentEpisode: Episode?
         get() = episodeContextId?.let { id -> episodes.firstOrNull { it.id == id } }
+            ?: currentEpisodeId?.let { id -> episodes.firstOrNull { it.id == id } }
             ?: playTargetEpisode
+
+    /**
+     * 全剧已看聚合（"已看 x/y 集"）。
+     *
+     * 只统计每一季都给出 `episodeCount` 与 `unplayedCount` 的完整数据，
+     * 任一季缺字段即返回 null（界面不显示，不编造分母）。调用方据此在剧集
+     * 信息区展示聚合进度；x = 总集数 − 未看集数之和，y = 总集数。
+     */
+    val watchedEpisodeCount: Int?
+        get() = if (seasons.isEmpty() || seasons.any { it.episodeCount == null || it.unplayedCount == null }) {
+            null
+        } else {
+            seasons.sumOf { (it.episodeCount ?: 0) - (it.unplayedCount ?: 0) }.coerceAtLeast(0)
+        }
+
+    /** 全剧总集数（与 [watchedEpisodeCount] 同口径；缺字段为 null）。 */
+    val totalEpisodeCount: Int?
+        get() = if (seasons.isEmpty() || seasons.any { it.episodeCount == null }) {
+            null
+        } else {
+            seasons.sumOf { it.episodeCount ?: 0 }
+        }
 
     /** 当前集的多版本选项（电影/剧集条目则看条目级）；单版本为空。 */
     val currentVersions: List<MediaVersionOption>
@@ -292,42 +319,68 @@ class DetailViewModel @Inject constructor(
         viewModelScope.launch {
             _state.update { it.copy(playedBusy = true, playedFailed = false) }
             var failures = 0
-            // 并发 6 路请求（串行逐集太慢）
-            // 全部跑在 Main 协程内（仓储内部自行切 IO），计数器无并发竞争
+            // 记录真正成功的集 id：失败的集绝不能本地标成目标态——
+            // 否则「部分失败」提示说了失败，界面却显示全标，与服务端不一致。
+            val succeeded = mutableSetOf<String>()
+            // 并发 6 路请求（串行逐集太慢）；succeeded/failures 全部在 Main 协程
+            // 内读写（仓储内部自行切 IO），无并发竞争。
             val semaphore = Semaphore(6)
             coroutineScope {
                 episodes.map { episode ->
                     async {
-                        if (episode.played == played) return@async
+                        if (episode.played == played) {
+                            // 本来就处于目标态，无需请求，也算"已到位"
+                            succeeded += episode.id
+                            return@async
+                        }
                         semaphore.withPermit {
                             when (repository.setPlayed(episode.id, played)) {
-                                is NovumResult.Success -> Unit
+                                is NovumResult.Success -> succeeded += episode.id
                                 else -> failures += 1
                             }
                         }
                     }
                 }.awaitAll()
             }
+            // 本季未看数按"实际到位的集数"重算（全部到位 → 0 或全集数），
+            // 让"已看 x/y 集"与批量标记结果一致。
+            fun applyResult(current: DetailUiState, detail: UiState<MediaDetail>): DetailUiState {
+                val seasonIndex = episodes.firstOrNull()?.seasonIndex
+                val total = episodes.size
+                val newUnplayed = if (played) total - succeeded.size else succeeded.size
+                val seasons = if (seasonIndex == null) {
+                    current.seasons
+                } else {
+                    current.seasons.map { s ->
+                        if (s.index == seasonIndex) s.copy(unplayedCount = newUnplayed) else s
+                    }
+                }
+                return current.copy(
+                    playedBusy = false,
+                    episodes = current.episodes.map { ep ->
+                        if (ep.id in succeeded) {
+                            ep.copy(played = played, progressMs = if (played) 0L else ep.progressMs)
+                        } else {
+                            ep
+                        }
+                    },
+                    seasons = seasons,
+                    detail = detail,
+                )
+            }
             // 剧集级态不本地猜（只标了本季）：重拉详情拿服务端聚合结果
             when (val fresh = repository.detail(itemId)) {
                 is NovumResult.Success -> _state.update { current ->
                     if (current.data == null) {
-                        current
+                        current.copy(playedBusy = false)
                     } else {
-                        current.copy(
-                            playedBusy = false,
-                            episodes = current.episodes.map { it.copy(played = played) },
-                            detail = UiState.Success(fresh.value),
-                        )
+                        applyResult(current, UiState.Success(fresh.value))
                     }
                 }
 
                 else -> _state.update { current ->
-                    // 拉取失败：保持本季乐观态，剧集级态不动（下次进页自然刷新）
-                    current.copy(
-                        playedBusy = false,
-                        episodes = current.episodes.map { it.copy(played = played) },
-                    )
+                    // 拉取失败：保持本季乐观态与既有剧集级态（下次进页自然刷新）
+                    applyResult(current, current.detail)
                 }
             }
             toast.show(
@@ -389,10 +442,12 @@ class DetailViewModel @Inject constructor(
         if (_state.value.playedBusy) return
         // 剧集没有「整个条目」级标记，避免更新整部剧的所有季；选集未加载完时不动作。
         if (episodeId == null && item.isSeries) return
+        // 目标集不存在（剧集分集尚未到达/已失效）时静默不动作，避免打错 id。
+        val targetEpisode = episodeId?.let { id ->
+            _state.value.episodes.firstOrNull { it.id == id } ?: return
+        }
         // 目标状态：单集看该集当前状态，否则看条目状态
-        val currentPlayed = episodeId?.let { id ->
-            _state.value.episodes.firstOrNull { it.id == id }?.played
-        } ?: item.played
+        val currentPlayed = targetEpisode?.played ?: item.played
         val targetId = episodeId ?: item.id
         val target = !currentPlayed
         viewModelScope.launch {
@@ -400,12 +455,30 @@ class DetailViewModel @Inject constructor(
             when (val result = repository.setPlayed(targetId, target)) {
                 is NovumResult.Success -> {
                     _state.update { current ->
-                        if (episodeId != null) {
-                            // 单集：只更新该集的 played 状态
+                        if (targetEpisode != null) {
+                            // 单集：更新该集，并同步其所在季的未看计数——
+                            // 否则「已看 x/y 集」在标记后不变（剧集已看标记的核心 bug）。
                             current.copy(
                                 playedBusy = false,
                                 episodes = current.episodes.map { ep ->
-                                    if (ep.id == episodeId) ep.copy(played = result.value) else ep
+                                    if (ep.id == episodeId) {
+                                        ep.copy(
+                                            played = result.value,
+                                            // 标已看进度清零；标未看保留原进度（服务端 PlaybackPosition 不变）
+                                            progressMs = if (result.value) 0L else ep.progressMs,
+                                        )
+                                    } else {
+                                        ep
+                                    }
+                                },
+                                seasons = if (result.value != targetEpisode.played) {
+                                    adjustSeasonUnplayed(
+                                        current.seasons,
+                                        targetEpisode.seasonIndex,
+                                        if (result.value) -1 else 1,
+                                    )
+                                } else {
+                                    current.seasons
                                 },
                             )
                         } else {
@@ -426,6 +499,9 @@ class DetailViewModel @Inject constructor(
                             )
                         }
                     }
+                    // 剧集单集标记：重拉详情拿服务端聚合的剧集级 Played，更新信息区
+                    // 的剧集已看态（只取 played 字段，不覆盖本地刚更新的其它状态）。
+                    if (item.isSeries && targetEpisode != null) refreshSeriesPlayedFlag()
                     toast.show(
                         appContext.getString(
                             if (result.value) R.string.detail_played_toast else R.string.detail_unplayed_toast,
@@ -439,6 +515,43 @@ class DetailViewModel @Inject constructor(
             }
         }
     }
+
+    /**
+     * 重拉详情，仅把服务端聚合的剧集级 `played` 写回当前详情。
+     *
+     * 单集标记后 series.Played 由服务端按全部季聚合（本季全看完不一定翻
+     * true，要看所有季），客户端不本地猜；拉取失败则保持现状，下次进页刷新。
+     */
+    private suspend fun refreshSeriesPlayedFlag() {
+        when (val fresh = repository.detail(itemId)) {
+            is NovumResult.Success -> _state.update { current ->
+                val data = current.data
+                if (data == null) {
+                    current
+                } else {
+                    current.copy(detail = UiState.Success(data.copy(played = fresh.value.played)))
+                }
+            }
+            else -> Unit
+        }
+    }
+
+    /**
+     * 增量调整某季的未看计数（单集标记用），clamp 到 [0, episodeCount]。
+     *
+     * 服务端不在标记响应里回传季计数，重拉季列表又太重；本地按 ±1 维护，
+     * 与「本季未看」角标、"已看 x/y 集"聚合保持即时一致。缺字段的季不动。
+     */
+    private fun adjustSeasonUnplayed(seasons: List<Season>, seasonIndex: Int, delta: Int): List<Season> =
+        seasons.map { season ->
+            val unplayed = season.unplayedCount
+            if (season.index == seasonIndex && unplayed != null) {
+                val max = season.episodeCount ?: Int.MAX_VALUE
+                season.copy(unplayedCount = (unplayed + delta).coerceIn(0, max))
+            } else {
+                season
+            }
+        }
 
     private suspend fun loadSeasons() {
         // 与季列表并行取该剧集的 NextUp 提示——它天然覆盖三种默认定位

@@ -222,9 +222,16 @@ internal fun ActionRow(
  *
  * @param data 详情数据。
  * @param seasonCount 季数；仅剧集且大于 1 时展示。
+ * @param watchedEpisodeCount 全剧已看集数；null = 数据不全不展示。
+ * @param totalEpisodeCount 全剧总集数；与 [watchedEpisodeCount] 成对出现。
  */
 @Composable
-internal fun detailMetaParts(data: MediaDetail, seasonCount: Int): List<String> {
+internal fun detailMetaParts(
+    data: MediaDetail,
+    seasonCount: Int,
+    watchedEpisodeCount: Int? = null,
+    totalEpisodeCount: Int? = null,
+): List<String> {
     val typeLabel = when (data.type) {
         "Movie" -> stringResource(R.string.home_entry_movie)
         "Series" -> stringResource(R.string.home_entry_series)
@@ -247,6 +254,12 @@ internal fun detailMetaParts(data: MediaDetail, seasonCount: Int): List<String> 
     val seasons = seasonCount
         .takeIf { it > 1 }
         ?.let { stringResource(R.string.detail_seasons_count, it) }
+    // 全剧已看聚合：两数齐全才展示，避免编造分母。
+    val watched = if (watchedEpisodeCount != null && totalEpisodeCount != null && totalEpisodeCount > 0) {
+        stringResource(R.string.detail_watched_progress, watchedEpisodeCount, totalEpisodeCount)
+    } else {
+        null
+    }
     return listOfNotNull(
         data.year?.toString(),
         typeLabel,
@@ -256,6 +269,7 @@ internal fun detailMetaParts(data: MediaDetail, seasonCount: Int): List<String> 
         // 评分展示与首页 Hero 一致，不带星号前缀。
         data.rating?.takeIf { it > 0f }?.let { String.format(java.util.Locale.US, "%.1f", it) },
         seasons,
+        watched,
         status,
     )
 }

@@ -163,6 +163,12 @@ data class Episode(
     val imageUrl: String?,
     val seriesWideUrl: String? = null,
     val overview: String?,
+    /** 该集音频编码（`EAC3`/`TRUEHD`/`DTS`…），供「当前集信息区」格式徽章；无音频流为 null。 */
+    val audioFormat: String? = null,
+    /** 该集音频 Profile（`Dolby Atmos` 等）；无则 null。 */
+    val audioProfile: String? = null,
+    /** 该集的首播日期（ISO-8601 前 10 位）；无则 null。 */
+    val premiereDate: String? = null,
     /** 该集的多版本选项；单版本为空。 */
     val versions: List<MediaVersionOption> = emptyList(),
 ) {

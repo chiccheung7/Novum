@@ -94,6 +94,10 @@
     <string name="detail_mark_played">标为已看</string>
     <string name="detail_mark_unplayed">标为未看</string>
     <string name="detail_seasons_count">%1$d 季</string>
+    <!-- 剧集元信息里的全剧已看聚合（与年份/季数/评分同一行）。 -->
+    <string name="detail_watched_progress">已看 %1$d/%2$d 集</string>
+    <!-- 当前集信息区标题。 -->
+    <string name="detail_current_episode">当前集</string>
     <string name="season_name">第 %1$d 季</string>
     <string name="season_special">特别篇</string>
     <string name="season_mark_title">整季标记</string>

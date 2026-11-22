@@ -332,6 +332,15 @@ internal fun ItemDto.toEpisode(server: String, index: Int, strings: MediaStrings
         },
         seriesWideUrl = seriesWideUrl,
         overview = Overview?.takeIf { it.isNotBlank() },
+        // 当前集信息区的格式徽章：音频编码与 Profile 从首个片源的 MediaStreams 取。
+        // 分集没有顶层 MediaStreams（EPISODE_FIELDS 只请求 MediaSources），故走片源口径。
+        audioFormat = MediaSources.firstOrNull()?.MediaStreams
+            ?.firstOrNull { it.Type == "Audio" }?.Codec
+            ?.uppercase()?.takeIf { it.isNotBlank() },
+        audioProfile = MediaSources.firstOrNull()?.MediaStreams
+            ?.firstOrNull { it.Type == "Audio" }?.Profile
+            ?.takeIf { it.contains("Atmos", ignoreCase = true) }?.let { "Dolby Atmos" },
+        premiereDate = PremiereDate?.take(10)?.takeIf { it.isNotBlank() },
         // 单集多版本由详情页播放按钮的长按操作选择。
         versions = MediaSources.mapIndexedNotNull { index, sourceDto ->
             sourceDto.toVersionOption(index, strings)
