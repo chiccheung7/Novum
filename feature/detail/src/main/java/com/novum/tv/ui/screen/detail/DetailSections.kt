@@ -237,8 +237,9 @@ private fun EpisodeCard(
         badge = null,
         badgeIcon = if (episode.played) NovumIcons.CheckFilled else NovumIcons.Check,
         badgeIconTint = if (episode.played) NovumPalette.Success else null,
-        // 优先使用剧集级 16:9 主视觉；缺失时回落到分集图。
-        imageUrl = episode.seriesWideUrl ?: episode.imageUrl,
+        // 优先使用分集自己的 Primary 图（每集不同的剧照/截图，便于区分选集）；
+        // 缺失时回落到剧集级 16:9 主视觉。
+        imageUrl = episode.imageUrl ?: episode.seriesWideUrl,
         logoUrl = logoUrl,
         // 未看完的集在卡底画进度条（与首页继续观看行同款 3dp 白条）
         progress = progress,

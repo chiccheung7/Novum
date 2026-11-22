@@ -263,13 +263,14 @@ internal fun detailMetaParts(
     return listOfNotNull(
         data.year?.toString(),
         typeLabel,
+        // 已看聚合紧跟类型：元信息行是单行省略，靠后会被截掉，这里优先保证可见。
+        watched,
         data.officialRating,
         data.resolution,
         runtime,
         // 评分展示与首页 Hero 一致，不带星号前缀。
         data.rating?.takeIf { it > 0f }?.let { String.format(java.util.Locale.US, "%.1f", it) },
         seasons,
-        watched,
         status,
     )
 }

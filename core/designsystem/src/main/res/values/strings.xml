@@ -178,6 +178,7 @@
     <string name="player_drawer_audio">音轨</string>
     <string name="player_drawer_subtitle">字幕</string>
     <string name="player_drawer_empty">暂无可切换轨道</string>
+    <string name="player_drawer_episode_overview">%1$s · %2$s 简介</string>
     <string name="player_drawer_subtitle_off">关闭字幕</string>
     <string name="player_drawer_reloading">正在按新音频设置重新加载…</string>
     <string name="player_exit_title">退出播放？</string>

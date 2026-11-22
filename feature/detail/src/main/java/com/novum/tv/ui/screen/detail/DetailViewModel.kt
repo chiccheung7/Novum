@@ -130,23 +130,37 @@ data class DetailUiState(
     /**
      * 全剧已看聚合（"已看 x/y 集"）。
      *
-     * 只统计每一季都给出 `episodeCount` 与 `unplayedCount` 的完整数据，
-     * 任一季缺字段即返回 null（界面不显示，不编造分母）。调用方据此在剧集
-     * 信息区展示聚合进度；x = 总集数 − 未看集数之和，y = 总集数。
+     * 采用「按有数据的季聚合」：只要至少一季同时给出 `episodeCount` 与
+     * `unplayedCount`，就用这些季计数，已看 = 总 − 未看之和。缺字段的季
+     * 不计入（既不编造分母，也不因个别季缺字段让整行消失）。
+     *
+     * 特别地：当所有季都缺 `unplayedCount`（Emby 常见——季列表默认不下发
+     * 未看计数）但剧集条目自身给了 `UserData.UnplayedItemCount` 时，用条目的
+     * 未看集数配合总集数兜底，保证这一行能显示真实进度。
      */
     val watchedEpisodeCount: Int?
-        get() = if (seasons.isEmpty() || seasons.any { it.episodeCount == null || it.unplayedCount == null }) {
-            null
-        } else {
-            seasons.sumOf { (it.episodeCount ?: 0) - (it.unplayedCount ?: 0) }.coerceAtLeast(0)
+        get() {
+            val complete = seasons.filter { it.episodeCount != null && it.unplayedCount != null }
+            if (complete.isNotEmpty()) {
+                return complete.sumOf { (it.episodeCount ?: 0) - (it.unplayedCount ?: 0) }
+                    .coerceAtLeast(0)
+            }
+            val total = totalEpisodeCount ?: return null
+            val seriesUnplayed = data?.unplayedCount?.coerceAtMost(total) ?: return null
+            return (total - seriesUnplayed).coerceAtLeast(0)
         }
 
-    /** 全剧总集数（与 [watchedEpisodeCount] 同口径；缺字段为 null）。 */
+    /**
+     * 全剧总集数：与 [watchedEpisodeCount] 同源——只统计「计数完整」的季
+     * （同时有 episodeCount 与 unplayedCount），保证分子分母口径一致；
+     * 没有任何完整季时回落到剧集条目自身的 `childCount`。
+     */
     val totalEpisodeCount: Int?
-        get() = if (seasons.isEmpty() || seasons.any { it.episodeCount == null }) {
-            null
-        } else {
-            seasons.sumOf { it.episodeCount ?: 0 }
+        get() {
+            val complete = seasons.filter { it.episodeCount != null && it.unplayedCount != null }
+            val fromSeasons = complete.mapNotNull { it.episodeCount }.sum()
+            if (fromSeasons > 0) return fromSeasons
+            return data?.childCount?.takeIf { it > 0 }
         }
 
     /** 当前集的多版本选项（电影/剧集条目则看条目级）；单版本为空。 */

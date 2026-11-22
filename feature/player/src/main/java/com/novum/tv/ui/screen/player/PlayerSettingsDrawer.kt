@@ -379,6 +379,24 @@ private fun EpisodesTab(
         HintRow(stringResource(R.string.player_drawer_empty))
         return
     }
+    // 当前集简介：详情页已撤下当前集信息区，集简介改在这里随当前播放集展示。
+    val currentEpisode = episodes.firstOrNull { it.id == currentEpisodeId }
+    val episodeOverview = currentEpisode?.overview?.takeIf { it.isNotBlank() }
+    if (currentEpisode != null && episodeOverview != null) {
+        val code = "S%02dE%02d".format(currentEpisode.seasonIndex, currentEpisode.index % 100)
+        Text(
+            text = stringResource(R.string.player_drawer_episode_overview, code, currentEpisode.title),
+            style = NovumType.Label,
+            color = NovumPalette.Paper,
+            modifier = Modifier.padding(horizontal = 4.dp),
+        )
+        Text(
+            text = episodeOverview,
+            style = NovumType.Caption,
+            color = NovumPalette.PaperMuted,
+            modifier = Modifier.padding(horizontal = 4.dp, vertical = 6.dp),
+        )
+    }
     SectionLabel(stringResource(R.string.detail_episodes))
     episodes.forEach { episode ->
         val runtime = episode.runtimeMinutes

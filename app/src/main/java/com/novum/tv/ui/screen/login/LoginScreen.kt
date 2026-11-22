@@ -3,7 +3,6 @@ package com.novum.tv.ui.screen.login
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -29,7 +28,7 @@ import androidx.tv.material3.Text
 import com.novum.tv.core.designsystem.R
 import com.novum.tv.ui.common.userMessage
 import com.novum.tv.ui.component.NovumButton
-import com.novum.tv.ui.component.NovumOptionRow
+import com.novum.tv.ui.component.NovumCheckboxRow
 import com.novum.tv.ui.component.NovumSafeArea
 import com.novum.tv.ui.component.NovumTextField
 import kotlinx.coroutines.launch
@@ -76,9 +75,12 @@ fun LoginScreen(
     NovumSafeArea(modifier = modifier) {
         Column(
             modifier = Modifier
-                .align(Alignment.CenterStart)
+                // 顶部对齐而非垂直居中：表单项多时居中会让首项顶出屏幕且无法滚入；
+                // 首尾留白给聚焦放大的按钮/输入框留呼吸位，避免被视口边缘硬裁。
+                .align(Alignment.TopStart)
                 .widthIn(max = 560.dp)
-                .verticalScroll(rememberScrollState()),
+                .verticalScroll(rememberScrollState())
+                .padding(vertical = 24.dp),
             verticalArrangement = Arrangement.spacedBy(NovumDimens.TextBlockGap),
         ) {
             Text(
@@ -120,15 +122,10 @@ fun LoginScreen(
                 isPassword = true,
                 imeAction = ImeAction.Done,
             )
-            // 记住登录：勾选保存 token 自动登录；关闭则只预填地址+用户名
-            NovumOptionRow(
+            // 记住登录：对号框勾选保存 token 自动登录；关闭则只预填地址+用户名
+            NovumCheckboxRow(
                 text = stringResource(R.string.login_remember),
-                value = if (state.remember) {
-                    stringResource(R.string.settings_state_on)
-                } else {
-                    stringResource(R.string.settings_state_off)
-                },
-                selected = state.remember,
+                checked = state.remember,
                 onClick = { viewModel.onRememberChange(!state.remember) },
             )
 
@@ -159,20 +156,19 @@ fun LoginScreen(
                         viewModel.submit()
                     }
                 },
-                // 与密码框拉开间距，按钮使用确认框同规格宽度。
-                // bring-into-view：按钮是滚动容器末项，小屏/大字体下聚焦时
-                // 主动滚入视口，避免「登录按钮显示不全」。
+                // 按内容自适应宽度：固定宽度 + centerContent 在「正在登录…」
+                // 这类较长文案下会把文字挤到两侧被硬裁。改为不定宽，文字完整可见。
+                // 首焦容器已改顶部对齐并留首尾白，按钮不再贴视口边缘；
+                // bring-into-view 仅作小屏/大字体下的兜底。
                 modifier = Modifier
-                    .padding(top = 8.dp)
-                    .width(148.dp)
+                    .padding(top = 8.dp, bottom = 8.dp)
                     .bringIntoViewRequester(buttonBringIntoView)
                     .onFocusChanged { focusState ->
                         if (focusState.isFocused) {
                             scope.launch { buttonBringIntoView.bringIntoView() }
                         }
                     },
-                // 定宽按钮的内容居中。
-                centerContent = true,
+                centerContent = false,
                 enabled = !state.loading,
             ) {
                 Text(

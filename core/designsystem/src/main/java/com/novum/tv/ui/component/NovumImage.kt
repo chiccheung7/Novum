@@ -14,6 +14,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.IntSize
 import android.util.Log
 import coil3.compose.AsyncImage
@@ -109,3 +110,19 @@ fun NovumImage(
 
 /** 图片淡入时长：与提示词约定的 500ms 对齐。 */
 private const val IMAGE_FADE_MS = 500
+
+/**
+ * 全屏背景图的统一解码尺寸。
+ *
+ * Coil 的缓存 key 含解码尺寸：首页 Hero 预取、首页背景、详情页背景必须共用
+ * 同一函数，才能命中同一份内存/磁盘缓存。否则详情页按布局全尺寸解码，
+ * 与首页预取尺寸不同 → 每次进详情都要重新解码大图，翻页重组时反复加载。
+ *
+ * 尺寸取窗口宽度的 2/3、高度的 2/3 × 5/4（适配背景扩展比例）。
+ */
+fun backdropRequestSize(windowSize: IntSize, density: Density): IntSize = with(density) {
+    IntSize(
+        width = (windowSize.width * 2 / 3).coerceAtLeast(1),
+        height = (windowSize.height * 2 / 3 * 5 / 4).coerceAtLeast(1),
+    )
+}

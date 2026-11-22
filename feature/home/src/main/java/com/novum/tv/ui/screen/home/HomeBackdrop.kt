@@ -29,6 +29,7 @@ import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import com.novum.tv.model.HomeEntry
 import com.novum.tv.ui.component.NovumImage
+import com.novum.tv.ui.component.backdropRequestSize
 import com.novum.tv.ui.component.PosterArtwork
 import com.novum.tv.ui.theme.NovumPalette
 import kotlin.math.roundToInt
@@ -246,9 +247,7 @@ private const val KEN_BURNS_MS = 30_000
  * 解码尺寸为窗口宽度的 2/3、高度的 2/3 × 5/4，以适配背景扩展后的显示比例。
  * 预取和显示共用此函数，保证 Coil 缓存键一致。
  */
-internal fun heroBackdropPixelSize(windowSize: IntSize, density: Density): IntSize = with(density) {
-    IntSize(
-        width = (windowSize.width * 2 / 3).coerceAtLeast(1),
-        height = (windowSize.height * 2 / 3 * 5 / 4).coerceAtLeast(1),
-    )
-}
+internal fun heroBackdropPixelSize(
+    windowSize: IntSize,
+    density: Density,
+): IntSize = backdropRequestSize(windowSize, density)

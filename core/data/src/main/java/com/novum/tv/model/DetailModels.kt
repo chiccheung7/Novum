@@ -58,6 +58,8 @@ data class MediaDetail(
     val played: Boolean,
     val resumePositionMs: Long,
     val childCount: Int?,
+    /** 未看子项数（剧集条目为未看集数）；用于季列表缺未看计数时兜底聚合。 */
+    val unplayedCount: Int? = null,
     val premiereDate: String?,
     val status: String?,
     val cast: List<CastMember>,

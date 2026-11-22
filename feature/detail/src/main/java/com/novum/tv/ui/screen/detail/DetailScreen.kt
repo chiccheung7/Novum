@@ -3,7 +3,6 @@ package com.novum.tv.ui.screen.detail
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.scrollBy
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -35,22 +34,21 @@ import androidx.compose.ui.input.key.type
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.tv.material3.Text
 import com.novum.tv.core.designsystem.R
 import com.novum.tv.core.state.UiState
-import com.novum.tv.model.Episode
 import com.novum.tv.model.MediaDetail
 import com.novum.tv.ui.component.NovumBrowseScaffold
 import com.novum.tv.ui.component.NovumImage
 import com.novum.tv.ui.component.NovumMediaInfoBlock
 import com.novum.tv.ui.component.NovumSkeletonDetail
 import com.novum.tv.ui.component.NovumStateView
-import com.novum.tv.ui.component.NovumTagChip
+import com.novum.tv.ui.component.backdropRequestSize
 import com.novum.tv.ui.theme.NovumDimens
 import com.novum.tv.ui.theme.NovumPalette
 import com.novum.tv.ui.theme.NovumType
@@ -329,6 +327,12 @@ private fun DetailBody(
             NovumImage(
                 url = backdrop,
                 contentDescription = data.title,
+                // 与首页 Hero 预取共用同一解码尺寸 → 缓存 key 一致，进详情直接
+                // 命中首页已缓存的图且尺寸稳定，避免翻页重组反复解码大图。
+                requestSize = backdropRequestSize(
+                    windowSize = LocalWindowInfo.current.containerSize,
+                    density = LocalDensity.current,
+                ),
                 modifier = Modifier.fillMaxSize(),
             )
         } else {
@@ -451,23 +455,7 @@ private fun DetailBody(
                 }
             }
 
-            // 当前集信息区（剧集专用）：随焦点/选中跟手更新，展示该集的
-            // SxxExx、标题、简介、音轨格式与进度/已看。剧集身份（标题/整剧
-            // 简介/演员/收藏/格式徽章）保持在上方信息区恒定不变；本区只承载
-            // 「正在看哪一集」。纯文字 + 徽章，不放分集截图（避免全屏截图难看）。
-            if (data.isSeries && currentEpisode != null) {
-                row(key = "current-episode") {
-                    CurrentEpisodeInfo(
-                        episode = currentEpisode,
-                        modifier = Modifier.padding(
-                            start = NovumDimens.SafeHorizontal,
-                            end = NovumDimens.SafeHorizontal,
-                        ),
-                    )
-                }
-            }
-
-            // 选集（剧集专用）。
+            // 选集（剧集专用）。集简介只在播放页抽屉展示，详情信息区不再重复。
             if (data.isSeries) {
                 row(key = "episodes") {
                     EpisodeStrip(
@@ -578,98 +566,6 @@ private val DETAIL_SCROLL_STEP = 460.dp
 
 /** 详情信息区顶部留白（主流详情页标题区起始 ≈10% 视口高的保守档）。 */
 private val DETAIL_INFO_TOP_INSET = 54.dp
-
-/**
- * 当前集信息区：剧集详情页中部的一块稳定信息，随焦点/选中集更新。
- *
- * 只承载「这一集是什么」——SxxExx、集标题、集简介、音轨格式与已看/进度；
- * 剧集身份（标题、整剧简介、演员、收藏、整剧格式徽章）留在上方信息区恒定。
- * 视觉沿用信息块的排版语汇（Section 标题 / Body 正文 / Label 胶囊 / 灰字元信息），
- * 不放分集截图——分集图多为视频截帧，放大铺底不如剧集主视觉美观。
- *
- * @param episode 当前集（选中集或进场锚点集/默认目标集）。
- */
-@Composable
-private fun CurrentEpisodeInfo(
-    episode: Episode,
-    modifier: Modifier = Modifier,
-) {
-    val code = "S%02dE%02d".format(episode.seasonIndex, episode.index % 100)
-    // 元信息：时长 · 已看状态（已看完 / 剩 N 分钟）；与选集卡角标同口径。
-    val runtime = episode.runtimeMinutes
-    val progress = episode.progressRatio
-    val status = when {
-        episode.played -> stringResource(R.string.detail_episode_played)
-        runtime != null && progress != null -> {
-            val remaining = (runtime * (1f - progress)).toInt().coerceAtLeast(1)
-            stringResource(R.string.detail_episode_remaining, remaining)
-        }
-        else -> null
-    }
-    val metaParts = buildList {
-        episode.runtimeMinutes?.takeIf { it > 0 }?.let { add(stringResource(R.string.detail_minutes, it)) }
-        status?.let(::add)
-    }
-    // 音轨格式徽章：Profile（杜比全景声）+ 编码，复用信息块的胶囊样式。
-    val badges = buildList {
-        episode.audioProfile?.let(::add)
-        episode.audioFormat?.let(::audioBadgeLabel)?.let(::add)
-    }
-
-    Column(modifier = modifier) {
-        Text(
-            text = stringResource(R.string.detail_current_episode),
-            style = NovumType.Section,
-            color = NovumPalette.Paper,
-        )
-        Spacer(modifier = Modifier.height(NovumDimens.TitleToRow))
-        Text(
-            text = "$code · ${episode.title}",
-            style = NovumType.BodyStrong,
-            color = NovumPalette.Paper,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
-        if (metaParts.isNotEmpty()) {
-            Spacer(modifier = Modifier.height(6.dp))
-            Text(
-                text = metaParts.joinToString(" · "),
-                style = NovumType.Caption,
-                color = NovumPalette.PaperMuted,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-        }
-        if (badges.isNotEmpty()) {
-            Spacer(modifier = Modifier.height(10.dp))
-            FlowRowChips(badges)
-        }
-        episode.overview?.let { overview ->
-            Spacer(modifier = Modifier.height(12.dp))
-            Text(
-                text = overview,
-                style = NovumType.Body,
-                color = NovumPalette.PaperFaint,
-                maxLines = CURRENT_EPISODE_OVERVIEW_LINES,
-                overflow = TextOverflow.Ellipsis,
-            )
-        }
-    }
-}
-
-/** 当前集信息区的一行音轨胶囊（复用信息块胶囊，保持视觉一致）。 */
-@Composable
-private fun FlowRowChips(badges: List<String>) {
-    Row(horizontalArrangement = Arrangement.spacedBy(CURRENT_EPISODE_CHIP_GAP)) {
-        badges.forEach { NovumTagChip(text = it) }
-    }
-}
-
-/** 当前集信息区简介行数：比整剧简介短，控制首屏高度。 */
-private const val CURRENT_EPISODE_OVERVIEW_LINES = 2
-
-/** 当前集音轨胶囊间距。 */
-private val CURRENT_EPISODE_CHIP_GAP = 12.dp
 
 /**
  * 音轨编码徽章展示名：把 Emby 的裸 Codec 值规范成易读标签。

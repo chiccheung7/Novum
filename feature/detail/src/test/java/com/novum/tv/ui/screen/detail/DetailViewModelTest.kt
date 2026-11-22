@@ -526,6 +526,35 @@ class DetailViewModelTest {
     }
 
     @Test
+    fun aggregateFallsBackToSeriesUnplayedWhenSeasonsLackCounts() = runTest {
+        // 季列表不下发未看计数（Emby 常见）：用剧集条目 UserData.UnplayedItemCount 兜底，
+        // 并保证「已看 x/y 集」这一行能显示真实进度，而不是整行消失。
+        val seasons = listOf(season("s1", index = 1, unplayed = null))
+        val detail = seriesDetail().copy(childCount = 20, unplayedCount = 6)
+        val repository = FakeDetailRepository(detail = detail, seasons = seasons)
+        val (viewModel, _) = viewModel(repository, itemId = "se1")
+        advanceUntilIdle()
+
+        assertEquals("总集数回落条目 childCount", 20, viewModel.state.value.totalEpisodeCount)
+        assertEquals("已看 = 总 − 条目未看", 14, viewModel.state.value.watchedEpisodeCount)
+    }
+
+    @Test
+    fun aggregateUsesOnlySeasonsWithCompleteCounts() = runTest {
+        // 部分季有完整计数、部分季缺字段：只按有数据的季聚合，不因个别季缺字段整行消失。
+        val seasons = listOf(
+            season("s1", index = 1, unplayed = 2),   // 8 − 2 = 6 已看
+            season("s2", index = 2, unplayed = null), // 缺未看，不计入
+        )
+        val repository = FakeDetailRepository(detail = seriesDetail(), seasons = seasons)
+        val (viewModel, _) = viewModel(repository, itemId = "se1")
+        advanceUntilIdle()
+
+        assertEquals("只统计有数据的季：分母 8", 8, viewModel.state.value.totalEpisodeCount)
+        assertEquals("只统计有数据的季：已看 6", 6, viewModel.state.value.watchedEpisodeCount)
+    }
+
+    @Test
     fun singleEpisodeMarkedPlayedRefreshesSeriesPlayedFlag() = runTest {
         // 剧集单集标已看后必须重拉详情，拿服务端聚合的 series.Played（最后一集看完翻 true）。
         val seasons = listOf(season("s1", index = 1, unplayed = 1))

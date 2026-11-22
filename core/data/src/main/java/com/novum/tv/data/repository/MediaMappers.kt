@@ -229,6 +229,7 @@ private fun formatBitrate(bps: Long): String = when {
             userData?.PlaybackPositionTicks?.let { it / TICKS_PER_MS } ?: 0L
         },
         childCount = ChildCount ?: RecursiveItemCount,
+        unplayedCount = userData?.UnplayedItemCount,
         premiereDate = PremiereDate?.take(10),
         status = Status,
         cast = toCastMembers(server, strings).take(MAX_CAST),
@@ -332,7 +333,7 @@ internal fun ItemDto.toEpisode(server: String, index: Int, strings: MediaStrings
         },
         seriesWideUrl = seriesWideUrl,
         overview = Overview?.takeIf { it.isNotBlank() },
-        // 当前集信息区的格式徽章：音频编码与 Profile 从首个片源的 MediaStreams 取。
+        // 集音轨格式：音频编码与 Profile 从首个片源的 MediaStreams 取。
         // 分集没有顶层 MediaStreams（EPISODE_FIELDS 只请求 MediaSources），故走片源口径。
         audioFormat = MediaSources.firstOrNull()?.MediaStreams
             ?.firstOrNull { it.Type == "Audio" }?.Codec
