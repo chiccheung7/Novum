@@ -62,6 +62,19 @@ class DataStoreSettingsRepositoryTest {
     }
 
     @Test
+    fun persistsAutoPlayNextToggle() = runTest {
+        val repository = createRepository()
+        assertTrue("自动连播默认开启", repository.settings.first().autoPlayNext)
+
+        repository.update { it.copy(autoPlayNext = false) }
+
+        assertFalse(
+            "关闭自动连播后必须真的写盘，否则每次启动都会回落到默认 true",
+            repository.settings.first().autoPlayNext,
+        )
+    }
+
+    @Test
     fun clampsOutOfRangeValues() = runTest {
         val repository = createRepository()
 

@@ -193,6 +193,8 @@ class PlayerViewModel @Inject constructor(
                     },
                     audioTrack = if (!isText) ItemPlaybackPrefsStore.TrackRef(label, language) else null,
                     subtitleDisabled = if (isText) disabled else null,
+                    // 关闭字幕时把旧的手动轨一并清掉，下次开启回到语言偏好默认轨
+                    clearSubtitleTrack = isText && disabled,
                 )
             }.onFailure { logger.w(TAG, "轨道记忆写入失败", it) }
         }
@@ -390,9 +392,14 @@ class PlayerViewModel @Inject constructor(
         }
     }
 
-    /** 上报开始播放。 */
-    fun onStarted() {
-        viewModelScope.launch { playback.reportStarted(itemId, 0L, method) }
+    /**
+     * 上报开始播放。
+     *
+     * @param positionMs 真实起播位置：续播、跳过片头都可能不是 0，
+     *   写死 0 会把服务端「继续观看」进度先打回开头。
+     */
+    fun onStarted(positionMs: Long) {
+        viewModelScope.launch { playback.reportStarted(itemId, positionMs, method) }
     }
 
     /**

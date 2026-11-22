@@ -120,7 +120,7 @@ interface EmbyApi {
      */
     @GET("Shows/NextUp")
     suspend fun nextUp(
-        @Path("uid") uid: String,
+        @Query("UserId") uid: String,
         @Query("Limit") limit: Int = 14,
         @Query("Fields") fields: String = DEFAULT_FIELDS,
         @Query("SeriesId") seriesId: String? = null,

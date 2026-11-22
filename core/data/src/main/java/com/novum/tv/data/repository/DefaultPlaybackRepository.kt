@@ -204,8 +204,8 @@ class DefaultPlaybackRepository @Inject constructor(
     private fun pickVersionByStrategy(
         sources: List<MediaSourceDto>,
         strategy: String?,
-    ): MediaSourceDto {
-        val fallback = sources.firstOrNull() ?: return sources.first()
+    ): MediaSourceDto? {
+        val fallback = sources.firstOrNull() ?: return null
         when (strategy?.lowercase()) {
             "dolby", "hdr", "sdr" -> {
                 val matched = sources.firstOrNull { source ->

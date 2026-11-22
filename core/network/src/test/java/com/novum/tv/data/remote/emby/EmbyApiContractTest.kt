@@ -54,6 +54,22 @@ class EmbyApiContractTest {
     }
 
     @Test
+    fun nextUpMustPassUserIdAsQueryParameter() {
+        val text = apiFile.readText()
+        val start = text.indexOf("suspend fun nextUp(")
+        assertTrue("找不到 nextUp 定义", start >= 0)
+        val declaration = text.substring(start, (text.indexOf("):", start) + 2).coerceAtLeast(start + 40))
+        assertTrue(
+            "Shows/NextUp 没有 {uid} 路径占位，userId 必须是 Query 参数：" + declaration,
+            declaration.contains("@Query(\"UserId\")"),
+        )
+        assertTrue(
+            "nextUp 不得用 @Path(\"uid\")——运行时会抛 URL 异常并被静默吞掉：" + declaration,
+            !declaration.contains("@Path(\"uid\")"),
+        )
+    }
+
+    @Test
     fun episodeFieldsMustCarryUiConsumedFields() {
         // 消费点：Overview→选集卡简介、RunTimeTicks→片长/剩余时长、UserData→进度与已看、
         // ImageTags→分集缩略图、MediaSources→单集多版本入口

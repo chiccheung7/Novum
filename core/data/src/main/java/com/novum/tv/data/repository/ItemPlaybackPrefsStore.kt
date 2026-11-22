@@ -51,20 +51,29 @@ class ItemPlaybackPrefsStore(
         loadLocked()[itemId]
     }
 
-    /** 合并写入：只改传入的字段，其余保持（版本/字幕/音轨互不覆盖）。 */
+    /**
+     * 合并写入：只改传入的字段，其余保持（版本/字幕/音轨互不覆盖）。
+     *
+     * 注意：null 表示「本次不改」，因此要**清空**某个已记忆字段必须显式置
+     * `clearXxx = true`——否则「关闭字幕」后旧的字幕轨仍留在记忆里，
+     * 下次开字幕会莫名跳回上次那条轨。
+     */
     suspend fun update(
         itemId: String,
         mediaSourceId: String? = null,
         subtitleTrack: TrackRef? = null,
         audioTrack: TrackRef? = null,
         subtitleDisabled: Boolean? = null,
+        clearMediaSourceId: Boolean = false,
+        clearSubtitleTrack: Boolean = false,
+        clearAudioTrack: Boolean = false,
     ) = mutex.withLock {
         val map = loadLocked()
         val old = map[itemId] ?: ItemPrefs(itemId = itemId)
         map[itemId] = old.copy(
-            mediaSourceId = mediaSourceId ?: old.mediaSourceId,
-            subtitleTrack = subtitleTrack ?: old.subtitleTrack,
-            audioTrack = audioTrack ?: old.audioTrack,
+            mediaSourceId = if (clearMediaSourceId) null else mediaSourceId ?: old.mediaSourceId,
+            subtitleTrack = if (clearSubtitleTrack) null else subtitleTrack ?: old.subtitleTrack,
+            audioTrack = if (clearAudioTrack) null else audioTrack ?: old.audioTrack,
             subtitleDisabled = subtitleDisabled ?: old.subtitleDisabled,
         )
         persistLocked(map)

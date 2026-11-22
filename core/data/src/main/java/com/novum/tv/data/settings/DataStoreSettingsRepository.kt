@@ -53,6 +53,7 @@ class DataStoreSettingsRepository @Inject constructor(
             preferences[SettingsKeys.PinnedLineUrl] = next.pinnedLineUrl
             preferences[SettingsKeys.PinnedLineName] = next.pinnedLineName
             preferences[SettingsKeys.PlaybackSpeed] = next.playbackSpeed
+            preferences[SettingsKeys.AutoPlayNext] = next.autoPlayNext
         }
     }
 }
@@ -74,6 +75,7 @@ private object SettingsKeys {
     val PinnedLineUrl = stringPreferencesKey("pinned_line_url")
     val PinnedLineName = stringPreferencesKey("pinned_line_name")
     val PlaybackSpeed = floatPreferencesKey("playback_speed")
+    val AutoPlayNext = booleanPreferencesKey("auto_play_next")
 }
 
 /** 把持久化层数据映射为不可变设置快照，缺失键回落到默认值。 */
@@ -96,6 +98,7 @@ private fun Preferences.toAppSettings(): AppSettings {
         pinnedLineUrl = this[SettingsKeys.PinnedLineUrl] ?: defaults.pinnedLineUrl,
         pinnedLineName = this[SettingsKeys.PinnedLineName] ?: defaults.pinnedLineName,
         playbackSpeed = this[SettingsKeys.PlaybackSpeed] ?: defaults.playbackSpeed,
+        autoPlayNext = this[SettingsKeys.AutoPlayNext] ?: defaults.autoPlayNext,
     )
 }
 

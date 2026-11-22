@@ -235,7 +235,7 @@ fun PlayerScreen(
                 plan.startPositionMs,
             )
             player.prepare()
-            viewModel.onStarted()
+            viewModel.onStarted(plan.startPositionMs)
         }
     }
     // 播放中定时回写进度：5 秒一次，异常退出时最多丢 5 秒
