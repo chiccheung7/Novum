@@ -100,6 +100,7 @@ private class FakeAuthRepository(
         rawServer: String,
         username: String,
         password: String,
+        remember: Boolean,
     ): NovumResult<Session> = result
 
     override suspend fun restore(): Session? = null

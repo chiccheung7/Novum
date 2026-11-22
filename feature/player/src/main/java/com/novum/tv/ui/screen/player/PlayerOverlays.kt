@@ -59,8 +59,7 @@ internal fun SubtitleLayer(
     modifier: Modifier = Modifier,
 ) {
     if (text.isEmpty()) return
-    // 高度档位：默认居中，两档上移、两档下移。
-    // 0=默认 1=高一档 2=高两档 3=低一档 4=低两档；负档在满屏画面触底钳制
+    // 高度档位：0=按黑边自适应，1/2 上移，3/4 下移（负档在满屏画面触底钳制）
     val lift = when (offsetLevel.coerceIn(0, 4)) {
         1 -> SUBTITLE_LIFT_STEP
         2 -> SUBTITLE_LIFT_STEP * 2
@@ -68,12 +67,24 @@ internal fun SubtitleLayer(
         4 -> -SUBTITLE_LIFT_STEP * 2
         else -> 0.dp
     }
+    // 字号越大文字向上扩展越多——自适应档位下让字幕底部同步下沉（减小 bottom），
+    // 抵消文字上扩，使字幕顶部始终留在黑边内、不压到「画面/黑边交界」。
+    val sizeSink = when (sizeLevel.coerceIn(1, 4)) {
+        1 -> 0.dp
+        2 -> 6.dp
+        3 -> 14.dp
+        4 -> 22.dp
+        else -> 6.dp
+    }
+    val inBar = bottomBarHeight >= SUBTITLE_BAR_MIN
+    val baseBottom = when {
+        // 控制条出现：上移到控制条上方，且随字号增大额外抬高，确保真正躲避进度条
+        controlsShown -> SUBTITLE_BOTTOM_WITH_CONTROLS + sizeSink / 2
+        inBar -> (bottomBarHeight * SUBTITLE_BAR_OFFSET_RATIO - sizeSink).coerceAtLeast(4.dp)
+        else -> SUBTITLE_BOTTOM_IDLE
+    }
     val bottom = animateDpAsState(
-        targetValue = when {
-            controlsShown -> SUBTITLE_BOTTOM_WITH_CONTROLS + lift
-            bottomBarHeight >= SUBTITLE_BAR_MIN -> bottomBarHeight * SUBTITLE_BAR_OFFSET_RATIO + lift
-            else -> SUBTITLE_BOTTOM_IDLE + lift
-        }.coerceAtLeast(SUBTITLE_BOTTOM_MIN),
+        targetValue = (baseBottom + lift).coerceAtLeast(SUBTITLE_BOTTOM_MIN),
         animationSpec = tween(SUBTITLE_SHIFT_MS),
         label = "subtitleBottom",
     )
@@ -189,15 +200,19 @@ internal fun NoticeBanner(notice: String?, modifier: Modifier = Modifier) {
 /** 字幕跟随控制条上移的时长。 */
 private const val SUBTITLE_SHIFT_MS = 200
 
-/** 控制条可见时字幕底部留白（躲避进度条/按钮行；二次微降）。 */
-private val SUBTITLE_BOTTOM_WITH_CONTROLS = 132.dp
+/** 控制条可见时字幕底部留白：抬到进度条/按钮行上方（含大字号余量）。 */
+private val SUBTITLE_BOTTOM_WITH_CONTROLS = 152.dp
 
 private val SUBTITLE_BOTTOM_IDLE = 40.dp
 
-/** 下黑边达到该高度才把字幕放进黑边（太窄时字幕挤压画面，不如覆盖画面底缘）。 */
-private val SUBTITLE_BAR_MIN = 60.dp
+/**
+ * 下黑边达到该高度即启用「放入黑边」自适应。
+ * 从 60dp 降到 28dp：常见 2.35:1 影片在 16:9 屏上的单侧黑边约 40dp，
+ * 旧阈值会把它误判为「无黑边」而贴底，字幕顶部因此压到画面交界。
+ */
+private val SUBTITLE_BAR_MIN = 28.dp
 
-/** 字幕在下黑边内的位置比例。 */
+/** 字幕在下黑边内的位置比例（距屏幕底部 = 黑边高度的该比例；越小越贴底）。 */
 private const val SUBTITLE_BAR_OFFSET_RATIO = 0.3f
 
 /** 字幕高度档位步长。 */

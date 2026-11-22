@@ -12,6 +12,8 @@
     <string name="login_server_placeholder">192.168.1.10:8096</string>
     <string name="login_username">用户名</string>
     <string name="login_password">密码</string>
+    <string name="login_remember">记住登录</string>
+    <string name="login_remember_hint">勾选后保存登录状态，下次自动登录</string>
     <string name="login_action">登录</string>
     <string name="login_action_loading">正在登录…</string>
     <string name="login_error_server">请填写服务器地址</string>
@@ -127,6 +129,10 @@
     <string name="player_info_container">封装</string>
     <string name="player_info_method">播放方式</string>
     <string name="player_info_audio">音轨</string>
+    <string name="player_info_audio_output">音频输出</string>
+    <string name="player_audio_out_pcm">PCM 解码（延迟可调）</string>
+    <string name="player_audio_out_bitstream">bitstream 直通（延迟无效）</string>
+    <string name="player_audio_out_pcm_fallback">PCM 解码 · 设备不支持直通</string>
     <string name="player_info_subtitle">字幕</string>
     <string name="player_info_speed">倍速</string>
     <string name="player_info_chapters">章节</string>

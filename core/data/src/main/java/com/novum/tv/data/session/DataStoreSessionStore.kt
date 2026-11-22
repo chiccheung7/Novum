@@ -48,15 +48,28 @@ class DataStoreSessionStore @Inject constructor(
             preferences[SessionKeys.UserId] = userId
             preferences[SessionKeys.UserName] = userName
             preferences[SessionKeys.ServerName] = serverName
+            preferences[SessionKeys.LastUsername] = userName
             if (preferences[SessionKeys.DeviceId].isNullOrBlank()) {
                 preferences[SessionKeys.DeviceId] = UUID.randomUUID().toString()
             }
         }
     }
 
+    override suspend fun saveIdentity(server: String, username: String) {
+        dataStore.edit { preferences ->
+            preferences[SessionKeys.Server] = server
+            preferences[SessionKeys.LastUsername] = username
+            // 「记住登录」关闭：确保不残留旧 token（否则会被当成已登录）
+            preferences.remove(SessionKeys.Token)
+            preferences.remove(SessionKeys.UserId)
+            preferences.remove(SessionKeys.UserName)
+            preferences.remove(SessionKeys.ServerName)
+        }
+    }
+
     override suspend fun clear() {
         dataStore.edit { preferences ->
-            // 刻意保留 Server：登录页需要预填，减少遥控器输入
+            // 刻意保留 Server / LastUsername：登录页需要预填，减少遥控器输入
             preferences.remove(SessionKeys.Token)
             preferences.remove(SessionKeys.UserId)
             preferences.remove(SessionKeys.UserName)
@@ -69,6 +82,13 @@ class DataStoreSessionStore @Inject constructor(
             if (throwable is IOException) emit(emptyPreferences()) else throw throwable
         }
         .map { preferences -> preferences[SessionKeys.Server].orEmpty() }
+        .first()
+
+    override suspend fun lastUsername(): String = dataStore.data
+        .catch { throwable ->
+            if (throwable is IOException) emit(emptyPreferences()) else throw throwable
+        }
+        .map { preferences -> preferences[SessionKeys.LastUsername].orEmpty() }
         .first()
 
     override suspend fun deviceId(): String {
@@ -99,6 +119,8 @@ private object SessionKeys {
     val UserName = stringPreferencesKey("session_uname")
     val ServerName = stringPreferencesKey("session_sname")
     val DeviceId = stringPreferencesKey("session_device_id")
+    /** 「记住登录」关闭时也保留的用户名，仅用于预填；不参与会话判定。 */
+    val LastUsername = stringPreferencesKey("session_last_username")
 }
 
 /** 从偏好快照构造会话；任一关键字段缺失即视为未登录。 */

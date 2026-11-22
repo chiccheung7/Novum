@@ -28,6 +28,8 @@ data class LoginUiState(
     val server: String = "",
     val username: String = "",
     val password: String = "",
+    /** 是否记住登录（保存 token 下次自动登录）；默认开。 */
+    val remember: Boolean = true,
     val loading: Boolean = false,
     val networkError: NovumError? = null,
     val missingField: LoginField? = null,
@@ -56,10 +58,19 @@ class LoginViewModel @Inject constructor(
     init {
         // 预填上次登录的服务器地址：电视上用遥控器重输域名成本很高
         viewModelScope.launch {
-            val last = runCatching { authRepository.lastServer() }.getOrDefault("")
-            if (last.isNotBlank()) _state.update { it.copy(server = last) }
+            val lastServer = runCatching { authRepository.lastServer() }.getOrDefault("")
+            val lastUser = runCatching { authRepository.lastUsername() }.getOrDefault("")
+            _state.update {
+                it.copy(
+                    server = lastServer.takeIf { s -> s.isNotBlank() } ?: it.server,
+                    username = lastUser.takeIf { u -> u.isNotBlank() } ?: it.username,
+                )
+            }
         }
     }
+
+    /** 切换「记住登录」。 */
+    fun onRememberChange(value: Boolean) = _state.update { it.copy(remember = value) }
 
     /** 服务器地址变化。 */
     fun onServerChange(value: String) = _state.update {
@@ -93,7 +104,12 @@ class LoginViewModel @Inject constructor(
 
         viewModelScope.launch {
             _state.update { it.copy(loading = true, networkError = null) }
-            when (val result = authRepository.login(current.server, current.username, current.password)) {
+            when (val result = authRepository.login(
+                rawServer = current.server,
+                username = current.username,
+                password = current.password,
+                remember = current.remember,
+            )) {
                 is NovumResult.Success -> _state.update { it.copy(loading = false, success = true) }
                 is NovumResult.Failure -> _state.update {
                     it.copy(loading = false, networkError = result.error)

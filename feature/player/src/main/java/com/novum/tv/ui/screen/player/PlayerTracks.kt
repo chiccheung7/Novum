@@ -144,6 +144,30 @@ internal fun buildTrackLabel(
     }
 }
 
+/**
+ * 音轨编码展示名：从 Media3 [Format] 的 codec/MIME 提取并规范化。
+ * 与详情页音频徽章同口径；无编码信息时返回 null（不占用行尾位置）。
+ */
+internal fun audioCodecLabel(format: Format): String? {
+    val mime = format.sampleMimeType ?: format.codecs
+    val raw = mime
+        ?.substringAfterLast('/', missingDelimiterValue = mime)
+        ?.substringBefore(',')
+        ?.trim()
+        ?.takeIf { it.isNotBlank() }
+        ?: return null
+    return when (raw.uppercase()) {
+        "TRUEHD", "MLP" -> "TrueHD"
+        "EAC3", "EC-3" -> "E-AC3"
+        "AC3" -> "AC-3"
+        "DTS-HD", "DTSHD" -> "DTS-HD"
+        "DTSX" -> "DTS:X"
+        "VORBIS" -> "Vorbis"
+        "OPUS" -> "Opus"
+        else -> raw.uppercase()
+    }
+}
+
 /** 双语轨标题关键词（服务端 DisplayTitle 常见写法）。 */
 private val DUAL_SUBTITLE_TITLE_KEYWORDS = listOf("双语", "中英", "简英")
 

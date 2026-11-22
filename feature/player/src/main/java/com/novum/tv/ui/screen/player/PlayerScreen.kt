@@ -305,6 +305,7 @@ fun PlayerScreen(
                     onMethodChanged = viewModel::onMethodChanged,
                     onRequestTranscode = viewModel::retryWithTranscode,
                     audioPassthrough = state.audioPassthrough,
+                    passthroughCapable = state.offloadCapable,
                     onSetPassthrough = { enabled ->
                         viewModel.setAudioPassthrough(enabled, player.currentPosition)
                     },

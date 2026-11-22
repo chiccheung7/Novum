@@ -19,6 +19,7 @@ object NoopAuthRepository : AuthRepository {
         rawServer: String,
         username: String,
         password: String,
+        remember: Boolean,
     ): NovumResult<Session> = NovumResult.Failure(NovumError.Unauthorized())
 
     override suspend fun restore(): Session? = null
@@ -43,9 +44,13 @@ object NoopSessionStore : SessionStore {
         serverName: String,
     ) = Unit
 
+    override suspend fun saveIdentity(server: String, username: String) = Unit
+
     override suspend fun clear() = Unit
 
     override suspend fun lastServer(): String = ""
+
+    override suspend fun lastUsername(): String = ""
 
     override suspend fun deviceId(): String = "test-device"
 }

@@ -56,6 +56,7 @@ import androidx.tv.material3.Text
 import com.novum.tv.core.designsystem.R
 import com.novum.tv.core.player.seekStepMs
 import com.novum.tv.core.player.audioLabel
+import com.novum.tv.core.player.audioOutputLabel
 import com.novum.tv.core.player.buildMediaItem
 import com.novum.tv.core.player.subtitleLabel
 import com.novum.tv.feature.player.BuildConfig
@@ -149,6 +150,8 @@ internal fun PlayerStage(
     onMethodChanged: (PlayMethod) -> Unit,
     onRequestTranscode: (Long) -> Unit,
     audioPassthrough: Boolean,
+    /** 设备是否具备压缩音频直通能力（信息面板判定音频输出路径用）。 */
+    passthroughCapable: Boolean = false,
     onSetPassthrough: (Boolean) -> Unit,
     onRetryNextLine: (Long) -> Unit,
     initialSpeed: Float = 1f,
@@ -165,6 +168,10 @@ internal fun PlayerStage(
     var cueText by remember { mutableStateOf("") }
     val cueHandler = remember { android.os.Handler(android.os.Looper.getMainLooper()) }
     var audioLabel by remember { mutableStateOf("") }
+    // 音频输出路径文案（信息面板实时展示）；取好在协程里捕获，避免 Composable 上下文外调用
+    val audioPcmText = stringResource(R.string.player_audio_out_pcm)
+    val audioBitstreamText = stringResource(R.string.player_audio_out_bitstream)
+    val audioPcmFallbackText = stringResource(R.string.player_audio_out_pcm_fallback)
     var subtitleLabel by remember { mutableStateOf("") }
     // 倍速：初始值来自设置记忆（跨片沿用），切档经回调持久化
     var speed by remember(plan.url) { mutableFloatStateOf(initialSpeed) }
@@ -205,6 +212,8 @@ internal fun PlayerStage(
     var backFocusTick by remember { mutableIntStateOf(0) }
     // 抽屉 tab 芯片行是否持有焦点：决定根节点要不要吞左右键（见 onPreviewKeyEvent）
     var drawerTabsFocused by remember { mutableStateOf(false) }
+    // 抽屉调节行（延迟/字号/高度）是否获焦：获焦时根节点放行左右键给无级调节
+    var drawerAdjusting by remember { mutableStateOf(false) }
     var audioTracks by remember { mutableStateOf<List<TrackOption>>(emptyList()) }
     var textTracks by remember { mutableStateOf<List<TrackOption>>(emptyList()) }
 
@@ -295,6 +304,8 @@ internal fun PlayerStage(
                             selected = group.isTrackSelected(trackIndex),
                             // 条目记忆按「标题+语言」定位轨道，构造选项时带上
                             language = format.language,
+                            // 音轨带编码标注（音轨 tab 行尾展示），字幕轨不带
+                            codec = if (type == C.TRACK_TYPE_AUDIO) audioCodecLabel(format) else null,
                         )
                         if (type == C.TRACK_TYPE_AUDIO) audio += option else text += option
                     }
@@ -451,6 +462,15 @@ internal fun PlayerStage(
             liveStats.bufferedAheadSeconds =
                 ((buffered.longValue - position.longValue).coerceAtLeast(0L)) / 1_000L
             liveStats.displayMode = displayModeText()
+            // 音频输出路径（信息面板实时展示）：当前音轨编码 + 直通开关 + 设备能力
+            liveStats.audioOutput = audioOutputLabel(
+                codec = player.audioFormat?.let { it.sampleMimeType ?: it.codecs },
+                passthrough = audioPassthrough,
+                deviceSupports = passthroughCapable,
+                pcmText = audioPcmText,
+                bitstreamText = audioBitstreamText,
+                pcmFallbackText = audioPcmFallbackText,
+            )
             delay(POSITION_TICK_MS)
         }
     }
@@ -756,7 +776,9 @@ internal fun PlayerStage(
                 // 被根节点吞掉就永远切不动
                 if (drawerVisible) {
                     return@onPreviewKeyEvent when (event.key) {
-                        Key.DirectionLeft, Key.DirectionRight -> !drawerTabsFocused
+                        // 调节行获焦时放行左右键给抽屉内的无级调节（onStep 消费）；
+                        // tab 行获焦时也放行（芯片间移焦）；其余内容行吞掉防逃逸控制条
+                        Key.DirectionLeft, Key.DirectionRight -> !drawerTabsFocused && !drawerAdjusting
                         else -> false
                     }
                 }
@@ -1010,6 +1032,7 @@ internal fun PlayerStage(
             visible = drawerVisible,
             initialTab = drawerTab,
             onTabsFocusChanged = { drawerTabsFocused = it },
+            onAdjustFocusChanged = { drawerAdjusting = it },
             audioTracks = audioTracks,
             textTracks = textTracks,
             passthrough = audioPassthrough,

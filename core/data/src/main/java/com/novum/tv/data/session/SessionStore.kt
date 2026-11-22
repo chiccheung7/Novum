@@ -33,6 +33,12 @@ interface SessionStore {
         serverName: String,
     )
 
+    /**
+     * 只保存服务器与用户名（「记住登录」关闭时）：供登录页预填，不落盘 token。
+     * 下次启动因无 token 仍进登录页，但地址/账号已填好。
+     */
+    suspend fun saveIdentity(server: String, username: String)
+
     /** 清除会话（退出登录），保留设备 id、服务器地址与设置。 */
     suspend fun clear()
 
@@ -42,6 +48,9 @@ interface SessionStore {
      * 退出登录不清它：电视上用遥控器重输一遍域名非常痛苦。
      */
     suspend fun lastServer(): String
+
+    /** 上次登录的用户名，用于登录页预填。 */
+    suspend fun lastUsername(): String
 
     /** 获取稳定的设备 id，不存在时生成并持久化。 */
     suspend fun deviceId(): String

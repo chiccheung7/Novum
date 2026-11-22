@@ -66,6 +66,30 @@ class DefaultAuthRepositoryTest {
     }
 
     @Test
+    fun rememberDisabledStoresIdentityOnly() = runTest(dispatcher) {
+        val api = FakeEmbyApi()
+        val store = FakeSessionStore()
+        val holder = SessionHolder()
+        val repository = DefaultAuthRepository(
+            clients = FixedProvider(api),
+            sessionStore = store,
+            sessionHolder = holder,
+            dispatchers = dispatchers,
+        )
+
+        val result = repository.login("192.168.5.26", "kid", "pw", remember = false)
+
+        assertTrue(result is NovumResult.Success)
+        // 不落盘会话：回到本机会被判为未登录
+        assertEquals(null, store.saved)
+        // 但仍记住服务器+用户名供预填
+        assertEquals("http://192.168.5.26:8096", store.identityServer)
+        assertTrue(store.identityUsername.isNotBlank())
+        // 本次内存会话照常建立，播放立即可用
+        assertEquals("token-1", holder.token)
+    }
+
+    @Test
     fun fallsBackToHttpsWhenHttpFails() = runTest(dispatcher) {
         val api = FakeEmbyApi(failingBaseUrls = setOf("http://tv.local:8096"))
         val repository = DefaultAuthRepository(
@@ -210,11 +234,22 @@ private class FakeSessionStore : SessionStore {
         saved = Session(server, token, userId, userName, serverName, "device-1")
     }
 
+    var identityServer: String = ""
+    var identityUsername: String = ""
+
+    override suspend fun saveIdentity(server: String, username: String) {
+        identityServer = server
+        identityUsername = username
+        saved = null
+    }
+
     override suspend fun clear() {
         saved = null
     }
 
-    override suspend fun lastServer(): String = saved?.server.orEmpty()
+    override suspend fun lastServer(): String = saved?.server ?: identityServer
+
+    override suspend fun lastUsername(): String = saved?.userName ?: identityUsername
 
     override suspend fun deviceId(): String = "device-1"
 }

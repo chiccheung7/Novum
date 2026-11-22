@@ -7,6 +7,7 @@ import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.focusGroup
+import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -31,10 +32,18 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.FocusManager
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -76,6 +85,8 @@ internal data class TrackOption(
     val label: String,
     val selected: Boolean,
     val language: String? = null,
+    /** 音轨编码展示名（如「AC-3」「TrueHD」）；字幕轨为 null。 */
+    val codec: String? = null,
 )
 
 /**
@@ -103,6 +114,9 @@ internal class PlayerLiveStats {
 
     /** 缓冲健康：前方已缓冲秒数。 */
     var bufferedAheadSeconds by mutableLongStateOf(0L)
+
+    /** 音频输出路径文案（实时）：如「PCM 解码」「bitstream 直通」；null = 拿不到。 */
+    var audioOutput by mutableStateOf<String?>(null)
 }
 
 /**
@@ -150,6 +164,8 @@ internal fun PlayerSettingsDrawer(
     visible: Boolean,
     initialTab: DrawerTab,
     onTabsFocusChanged: (Boolean) -> Unit,
+    /** 调节行（延迟/字号/高度）是否持有焦点的回调（父层据此放行左右键给无级调节）。 */
+    onAdjustFocusChanged: (Boolean) -> Unit = {},
     audioTracks: List<TrackOption>,
     textTracks: List<TrackOption>,
     passthrough: Boolean,
@@ -198,7 +214,17 @@ internal fun PlayerSettingsDrawer(
     ) {
         // 抽屉常驻组合（AnimatedVisibility 只改显隐），remember 保持上次所在 tab
         var currentTab by remember { mutableStateOf(initialTab) }
+        // 调节行获焦计数：多个调节行间焦点转移时 +1/-1 抵消，避免 false 闪烁
+        // 导致父层误吞左右键。>0 = 有调节行获焦 → 父层放行左右键给无级调节。
+        var adjustFocusCount by remember { mutableIntStateOf(0) }
+        fun onAdjustFocus(focused: Boolean) {
+            adjustFocusCount = (adjustFocusCount + if (focused) 1 else -1).coerceAtLeast(0)
+            onAdjustFocusChanged(adjustFocusCount > 0)
+        }
         val tabFocus = remember { FocusRequester() }
+        val scrollState = rememberScrollState()
+        val focusManager = LocalFocusManager.current
+        val drawerScope = rememberCoroutineScope()
         LaunchedEffect(Unit) {
             withFrameNanosCompat()
             runCatching { tabFocus.requestFocus() }
@@ -224,10 +250,32 @@ internal fun PlayerSettingsDrawer(
                 // 视口再内缩 [LIST_EDGE_INSET]，行贴边时距抽屉边框仍有呼吸位
                 .padding(horizontal = 24.dp)
                 .padding(vertical = LIST_EDGE_INSET)
-                .verticalScroll(rememberScrollState())
+                .verticalScroll(scrollState)
                 .padding(top = 24.dp, bottom = 28.dp)
                 // 抽屉是独立焦点组：内部导航由组内节点完成，不向控制条逃逸
                 .focusGroup()
+                // 信息面板（画质 tab）全是只读行、无可聚焦节点——上下键焦点移动
+                // 会失败，这里以滚动兜底，让长信息列表在电视上也能翻看完整。
+                // 焦点优先：能移动焦点就交给系统；移不动才滚动（与详情页同策略）。
+                .onPreviewKeyEvent { event ->
+                    if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                    if (currentTab != DrawerTab.Quality) return@onPreviewKeyEvent false
+                    when (event.key) {
+                        Key.DirectionDown -> {
+                            if (focusManager.moveFocus(FocusDirection.Down)) return@onPreviewKeyEvent true
+                            if (!scrollState.canScrollForward) return@onPreviewKeyEvent false
+                            drawerScope.launch { scrollState.scrollBy(DRAWER_SCROLL_STEP.toFloat()) }
+                            true
+                        }
+                        Key.DirectionUp -> {
+                            if (focusManager.moveFocus(FocusDirection.Up)) return@onPreviewKeyEvent true
+                            if (!scrollState.canScrollBackward) return@onPreviewKeyEvent false
+                            drawerScope.launch { scrollState.scrollBy(-DRAWER_SCROLL_STEP.toFloat()) }
+                            true
+                        }
+                        else -> false
+                    }
+                }
                 // 四向困焦：列表翻到顶/底、tab 行到头时
                 // 焦点搜索会逃出抽屉落到根节点（高亮凭空消失）——exit 一律取消
                 // 边界处焦点停在原地；抽屉内芯片↔内容的上下移动不受影响
@@ -279,6 +327,7 @@ internal fun PlayerSettingsDrawer(
                     subtitleOffsetLevel = subtitleOffsetLevel,
                     onSubtitleOffsetLevelChanged = onSubtitleOffsetLevelChanged,
                     onSelectText = onSelectText,
+                    onAdjustFocus = ::onAdjustFocus,
                 )
 
                 DrawerTab.Audio -> AudioTab(
@@ -288,6 +337,7 @@ internal fun PlayerSettingsDrawer(
                     onAudioDelayChanged = onAudioDelayChanged,
                     onSelectAudio = onSelectAudio,
                     onTogglePassthrough = onTogglePassthrough,
+                    onAdjustFocus = ::onAdjustFocus,
                 )
 
                 DrawerTab.Quality -> QualityTab(
@@ -362,15 +412,18 @@ private fun SubtitleTab(
     subtitleOffsetLevel: Int,
     onSubtitleOffsetLevelChanged: (Int) -> Unit,
     onSelectText: (TrackOption) -> Unit,
+    onAdjustFocus: (Boolean) -> Unit,
 ) {
     SectionLabel(stringResource(R.string.player_drawer_subtitle))
+    // 延迟/字号/高度：左右键无级调节（OK 保留原循环作为兼容）
     DrawerRow(
         label = stringResource(R.string.player_drawer_subtitle_delay),
         value = formatDelay(subtitleDelayMs),
         selected = subtitleDelayMs != 0L,
         onClick = { onSubtitleDelayChanged(if (subtitleDelayMs >= 2_000L) -2_000L else subtitleDelayMs + 100L) },
+        onStep = { dir -> onSubtitleDelayChanged((subtitleDelayMs + dir * 100L).coerceIn(-2_000L, 2_000L)) },
+        onAdjustFocus = onAdjustFocus,
     )
-    // 字幕字号：OK 循环 小→中→大→超大→小，与延迟微调同交互
     DrawerRow(
         label = stringResource(R.string.settings_subtitle_size),
         value = stringResource(
@@ -383,9 +436,10 @@ private fun SubtitleTab(
         ),
         selected = subtitleSize != 2,
         onClick = { onSubtitleSizeChanged(if (subtitleSize >= 4) 1 else subtitleSize + 1) },
+        onStep = { dir -> onSubtitleSizeChanged((subtitleSize + dir).coerceIn(1, 4)) },
+        onAdjustFocus = onAdjustFocus,
     )
-    // 字幕高度：五档以默认居中——OK 循环 默认→高一→高两→
-    // 低一→低两→默认（负档在满屏画面触底钳制，黑边内可继续下沉）
+    // 字幕高度：0=自适应黑边（默认）1/2 上移，3/4 下移；左右键逐档调节
     DrawerRow(
         label = stringResource(R.string.player_drawer_subtitle_height),
         value = stringResource(
@@ -399,6 +453,8 @@ private fun SubtitleTab(
         ),
         selected = subtitleOffsetLevel != 0,
         onClick = { onSubtitleOffsetLevelChanged(if (subtitleOffsetLevel >= 4) 0 else subtitleOffsetLevel + 1) },
+        onStep = { dir -> onSubtitleOffsetLevelChanged((subtitleOffsetLevel + dir).coerceIn(0, 4)) },
+        onAdjustFocus = onAdjustFocus,
     )
     textTracks.forEach { option ->
         DrawerRow(
@@ -419,6 +475,7 @@ private fun AudioTab(
     onAudioDelayChanged: (Long) -> Unit,
     onSelectAudio: (TrackOption) -> Unit,
     onTogglePassthrough: () -> Unit,
+    onAdjustFocus: (Boolean) -> Unit,
 ) {
     SectionLabel(stringResource(R.string.player_drawer_passthrough))
     DrawerRow(
@@ -432,11 +489,14 @@ private fun AudioTab(
         onClick = onTogglePassthrough,
     )
     // 音频延迟（音画同步微调）：PCM 路径生效（直通 bitstream 不经处理器）
+    // 左右键无级 ±100ms（OK 保留循环兼容）；是否生效见「画质」tab 的「音频输出」行
     DrawerRow(
         label = stringResource(R.string.player_drawer_audio_delay),
         value = formatDelay(audioDelayMs),
         selected = audioDelayMs != 0L,
         onClick = { onAudioDelayChanged(if (audioDelayMs >= 2_000L) -2_000L else audioDelayMs + 100L) },
+        onStep = { dir -> onAudioDelayChanged((audioDelayMs + dir * 100L).coerceIn(-2_000L, 2_000L)) },
+        onAdjustFocus = onAdjustFocus,
     )
     SectionLabel(stringResource(R.string.player_drawer_audio))
     if (audioTracks.isEmpty()) {
@@ -445,7 +505,7 @@ private fun AudioTab(
         audioTracks.forEach { option ->
             DrawerRow(
                 label = option.label,
-                value = null,
+                value = option.codec,
                 selected = option.selected,
                 onClick = { onSelectAudio(option) },
             )
@@ -496,6 +556,9 @@ private fun QualityTab(
             spec?.audioChannels?.let { String.format(channelsTemplate, it) },
         ).joinToString(" · ").ifBlank { null },
     )
+    // 音频输出路径：PCM 解码 / bitstream 直通——「音画延迟是否生效」就看这一行
+    // （延迟处理器只挂在 PCM 路径，bitstream 直通不经过，属预期行为）
+    InfoLine(R.string.player_info_audio_output, liveStats?.audioOutput)
     InfoLine(R.string.player_info_subtitle, subtitleLabel.ifBlank { null })
     liveStats?.let { stats ->
         InfoLine(
@@ -572,9 +635,31 @@ private fun DrawerRow(
     selected: Boolean,
     onClick: () -> Unit,
     focusRequester: FocusRequester? = null,
+    /**
+     * 左右键无级调节：非 null 时该行获焦会拦截左右键，按 [onStep] 步进
+     * （`@OptIn(ExperimentalComposeUiApi)`），并上报焦点给父层放行左右键。
+     * 传 `(-1/1)` 表示减/加一档。
+     */
+    onStep: ((Int) -> Unit)? = null,
+    /** 调节行获焦状态回调（父层据此决定是否吞掉左右键）。 */
+    onAdjustFocus: ((Boolean) -> Unit)? = null,
 ) {
     val bringIntoView = remember { BringIntoViewRequester() }
     val scope = rememberCoroutineScope()
+    val modifier = Modifier
+        .bringIntoViewRequester(bringIntoView)
+        .then(
+            if (onStep != null) {
+                Modifier.onPreviewKeyEvent { event ->
+                    if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                    when (event.key) {
+                        Key.DirectionLeft -> { onStep(-1); true }
+                        Key.DirectionRight -> { onStep(1); true }
+                        else -> false
+                    }
+                }
+            } else Modifier,
+        )
     NovumOptionRow(
         text = label,
         value = value,
@@ -583,8 +668,9 @@ private fun DrawerRow(
         focusRequester = focusRequester,
         onFocused = { focused ->
             if (focused) scope.launch { bringIntoView.bringIntoView() }
+            onAdjustFocus?.invoke(focused)
         },
-        modifier = Modifier.bringIntoViewRequester(bringIntoView),
+        modifier = modifier,
     )
 }
 
@@ -635,3 +721,6 @@ private val LIST_EDGE_INSET = 20.dp
 
 /** 滑入滑出时长。 */
 private const val DRAWER_ANIM_MS = 220
+
+/** 信息面板上下键单次滚动步长（px，约半屏信息行）。 */
+private const val DRAWER_SCROLL_STEP = 320

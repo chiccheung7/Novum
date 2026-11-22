@@ -44,6 +44,48 @@ fun buildMediaItem(plan: PlaybackPlan, subtitlesEnabled: Boolean): MediaItem {
     return builder.build()
 }
 
+/**
+ * 判断当前音频输出路径的文案（信息面板展示「音画延迟是否生效」的依据）。
+ *
+ * 延迟处理器 [DelayAudioProcessor] 只挂在 PCM 解码链路上；bitstream 直通
+ * 把压缩帧原样交给功放，不经过处理器——所以调延迟前先看这里。
+ *
+ * 判定口径：
+ * - 直通关闭 → 强制解码为 PCM；
+ * - 音轨本身是 PCM（LPCM/FLAC 等）→ 必然 PCM；
+ * - 压缩音轨且设备不支持该编码直通 → Media3 回退解码为 PCM；
+ * - 压缩音轨 + 直通开 + 设备支持 → bitstream 直通。
+ *
+ * @param codec 当前音轨的 MIME/codec 字符串（如 `audio/ac3`）；null 视为未知。
+ * @param passthrough 用户是否开启音频直通。
+ * @param deviceSupports 设备是否具备压缩音频直通能力。
+ * @param pcmText PCM 路径文案。
+ * @param bitstreamText 直通路径文案。
+ * @param pcmFallbackText 设备不支持直通而回退解码的文案。
+ */
+fun audioOutputLabel(
+    codec: String?,
+    passthrough: Boolean,
+    deviceSupports: Boolean,
+    pcmText: String,
+    bitstreamText: String,
+    pcmFallbackText: String,
+): String {
+    val lower = codec.orEmpty().lowercase()
+    val isCompressed = COMPRESSED_CODEC_HINTS.any { lower.contains(it) }
+    return when {
+        !passthrough -> pcmText
+        !isCompressed -> pcmText
+        !deviceSupports -> pcmFallbackText
+        else -> bitstreamText
+    }
+}
+
+/** 压缩音频编码的 MIME/codec 关键字（命中即视为 bitstream 候选）。 */
+private val COMPRESSED_CODEC_HINTS = listOf(
+    "ac3", "ec-3", "eac3", "truehd", "mlp", "dts", "dts-hd", "dtsx", "opus", "mpegh",
+)
+
 /** 当前音轨标签。 */
 @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
 fun Player.audioLabel(): String = trackLabel(C.TRACK_TYPE_AUDIO, "音轨")

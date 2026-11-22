@@ -42,6 +42,7 @@ class DefaultAuthRepository @Inject constructor(
         rawServer: String,
         username: String,
         password: String,
+        remember: Boolean,
     ): NovumResult<Session> = withContext(dispatchers.io) {
         val candidates = ServerAddress.candidates(rawServer)
         if (candidates.isEmpty()) {
@@ -65,13 +66,18 @@ class DefaultAuthRepository @Inject constructor(
                 val deviceId = sessionStore.deviceId()
                 val serverName = info.ServerName.orEmpty()
                 val userName = user.Name ?: username
-                sessionStore.save(
-                    server = baseUrl,
-                    token = token,
-                    userId = userId,
-                    userName = userName,
-                    serverName = serverName,
-                )
+                if (remember) {
+                    sessionStore.save(
+                        server = baseUrl,
+                        token = token,
+                        userId = userId,
+                        userName = userName,
+                        serverName = serverName,
+                    )
+                } else {
+                    // 不记住登录：只存服务器+用户名供预填，绝不落盘 token/身份
+                    sessionStore.saveIdentity(server = baseUrl, username = userName)
+                }
                 val session = Session(
                     server = baseUrl,
                     token = token,
@@ -99,6 +105,10 @@ class DefaultAuthRepository @Inject constructor(
 
     override suspend fun lastServer(): String = withContext(dispatchers.io) {
         runCatching { sessionStore.lastServer() }.getOrDefault("")
+    }
+
+    override suspend fun lastUsername(): String = withContext(dispatchers.io) {
+        runCatching { sessionStore.lastUsername() }.getOrDefault("")
     }
 
     override suspend fun logout() = withContext(dispatchers.io) {

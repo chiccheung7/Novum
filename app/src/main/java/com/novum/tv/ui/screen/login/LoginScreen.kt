@@ -7,15 +7,19 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.relocation.BringIntoViewRequester
+import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
@@ -25,8 +29,10 @@ import androidx.tv.material3.Text
 import com.novum.tv.core.designsystem.R
 import com.novum.tv.ui.common.userMessage
 import com.novum.tv.ui.component.NovumButton
+import com.novum.tv.ui.component.NovumOptionRow
 import com.novum.tv.ui.component.NovumSafeArea
 import com.novum.tv.ui.component.NovumTextField
+import kotlinx.coroutines.launch
 import com.novum.tv.ui.theme.NovumDimens
 import com.novum.tv.ui.theme.NovumPalette
 import com.novum.tv.ui.theme.NovumType
@@ -51,6 +57,8 @@ fun LoginScreen(
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val serverFocus = remember { FocusRequester() }
+    val scope = rememberCoroutineScope()
+    val buttonBringIntoView = remember { BringIntoViewRequester() }
     // 明文地址的显式确认：本次会话内确认过一次就不再重复打扰
     var cleartextAcknowledged by rememberSaveable { mutableStateOf(false) }
     var showCleartextConfirm by rememberSaveable { mutableStateOf(false) }
@@ -112,6 +120,17 @@ fun LoginScreen(
                 isPassword = true,
                 imeAction = ImeAction.Done,
             )
+            // 记住登录：勾选保存 token 自动登录；关闭则只预填地址+用户名
+            NovumOptionRow(
+                text = stringResource(R.string.login_remember),
+                value = if (state.remember) {
+                    stringResource(R.string.settings_state_on)
+                } else {
+                    stringResource(R.string.settings_state_off)
+                },
+                selected = state.remember,
+                onClick = { viewModel.onRememberChange(!state.remember) },
+            )
 
             val errorText = when {
                 state.missingField == LoginUiState.LoginField.Server ->
@@ -141,9 +160,17 @@ fun LoginScreen(
                     }
                 },
                 // 与密码框拉开间距，按钮使用确认框同规格宽度。
+                // bring-into-view：按钮是滚动容器末项，小屏/大字体下聚焦时
+                // 主动滚入视口，避免「登录按钮显示不全」。
                 modifier = Modifier
                     .padding(top = 8.dp)
-                    .width(148.dp),
+                    .width(148.dp)
+                    .bringIntoViewRequester(buttonBringIntoView)
+                    .onFocusChanged { focusState ->
+                        if (focusState.isFocused) {
+                            scope.launch { buttonBringIntoView.bringIntoView() }
+                        }
+                    },
                 // 定宽按钮的内容居中。
                 centerContent = true,
                 enabled = !state.loading,

@@ -380,9 +380,13 @@ private fun DetailBody(
                             seasonCount = if (data.isSeries) state.seasons.size else 0,
                         ),
                         genreTags = data.genres.take(GENRE_TAGS_COUNT),
-                        // 只显示动态范围（杜比视界/HDR10/…）
-                        // 视频编码与音频编码不再上屏（信息噪音）
-                        formatBadges = data.videoFormats,
+                        // 动态范围（杜比视界/HDR10/…）+ 音频格式徽章（音轨编码）。
+                        // 视频编码仍不上屏（信息噪音），但用户明确要求看到音轨格式。
+                        formatBadges = buildList {
+                            addAll(data.videoFormats)
+                            data.audioProfile?.let { add(it) }
+                            data.audioFormat?.let(::audioBadgeLabel)?.let { add(it) }
+                        },
                         overview = data.overview,
                     )
                     Spacer(modifier = Modifier.height(26.dp))
@@ -543,3 +547,21 @@ private val DETAIL_SCROLL_STEP = 460.dp
 
 /** 详情信息区顶部留白（主流详情页标题区起始 ≈10% 视口高的保守档）。 */
 private val DETAIL_INFO_TOP_INSET = 54.dp
+
+/**
+ * 音轨编码徽章展示名：把 Emby 的裸 Codec 值规范成易读标签。
+ * 未知编码原样大写返回，避免吞掉信息。
+ */
+private fun audioBadgeLabel(codec: String): String = when (codec.trim().uppercase()) {
+    "TRUEHD" -> "TrueHD"
+    "EAC3", "EC-3" -> "E-AC3"
+    "AC3" -> "AC-3"
+    "DTS" -> "DTS"
+    "DTS-HD", "DTSHD" -> "DTS-HD"
+    "DTSX" -> "DTS:X"
+    "FLAC" -> "FLAC"
+    "AAC" -> "AAC"
+    "MP3" -> "MP3"
+    "OPUS" -> "Opus"
+    else -> codec.trim().uppercase()
+}

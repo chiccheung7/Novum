@@ -24,6 +24,11 @@ interface AuthRepository {
         rawServer: String,
         username: String,
         password: String,
+        /**
+         * 是否记住登录：true 持久化 token 下次自动登录；false 只存服务器+用户名
+         * 供预填、不落盘 token（下次仍需登录）。默认 true 保持既有调用兼容。
+         */
+        remember: Boolean = true,
     ): NovumResult<Session>
 
     /**
@@ -38,4 +43,7 @@ interface AuthRepository {
 
 /** 上次登录的服务器地址，用于登录页预填；没有记录时返回空串。 */
     suspend fun lastServer(): String = ""
+
+    /** 上次登录的用户名，用于登录页预填；没有记录时返回空串。 */
+    suspend fun lastUsername(): String = ""
 }

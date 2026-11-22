@@ -69,6 +69,39 @@ class PlaybackSupportTest {
     }
 
     @Test
+    fun audioOutputPassthroughOffIsAlwaysPcm() {
+        // 直通关闭：无论音轨/设备能力，一律 PCM（延迟处理器生效）
+        assertEquals(
+            "pcm",
+            audioOutputLabel("audio/ac3", false, true, "pcm", "bitstream", "fallback"),
+        )
+    }
+
+    @Test
+    fun audioOutputCompressedWithDeviceSupportIsBitstream() {
+        assertEquals(
+            "bitstream",
+            audioOutputLabel("audio/truehd", true, true, "pcm", "bitstream", "fallback"),
+        )
+    }
+
+    @Test
+    fun audioOutputCompressedWithoutDeviceSupportFallsBackToPcm() {
+        assertEquals(
+            "fallback",
+            audioOutputLabel("audio/eac3", true, false, "pcm", "bitstream", "fallback"),
+        )
+    }
+
+    @Test
+    fun audioOutputPcmTrackStaysPcmEvenWhenPassthroughOn() {
+        assertEquals(
+            "pcm",
+            audioOutputLabel("audio/mp4a-latm", true, true, "pcm", "bitstream", "fallback"),
+        )
+    }
+
+    @Test
     fun onlyFirstSubtitleIsMarkedDefaultWhenEnabled() {
         val on = buildMediaItem(plan(listOf(subtitle("s1"), subtitle("s2"))), subtitlesEnabled = true)
             .localConfiguration?.subtitleConfigurations.orEmpty()
