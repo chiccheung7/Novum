@@ -1,0 +1,13 @@
+# FFmpeg 源码目录/软链（由 build.sh 下载并创建，体积大且不入库）
+decoder/src/main/jni/ffmpeg
+decoder/src/main/jni/ffmpeg/
+
+# 本地 SDK 路径
+local.properties
+
+# 构建产物
+.gradle/
+build/
+decoder/build/
+decoder/.cxx/
+*.aar
