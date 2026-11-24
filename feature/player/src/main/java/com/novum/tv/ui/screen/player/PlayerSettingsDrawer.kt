@@ -51,17 +51,25 @@ import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
+import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.tv.material3.Text
 import com.novum.tv.core.designsystem.R
 import com.novum.tv.model.Chapter
+import com.novum.tv.model.DanmuArea
+import com.novum.tv.model.DanmuConfig
+import com.novum.tv.model.DanmuSize
+import com.novum.tv.model.DanmuSpeed
 import com.novum.tv.model.Episode
 import com.novum.tv.model.PlaybackPlan
+import com.novum.tv.ui.common.userMessage
 import com.novum.tv.ui.component.NovumChip
 import com.novum.tv.ui.component.NovumOptionRow
+import com.novum.tv.ui.component.NovumTextField
 import com.novum.tv.ui.theme.NovumPalette
 import com.novum.tv.ui.theme.NovumShapes
 import com.novum.tv.ui.theme.NovumType
@@ -80,6 +88,10 @@ internal enum class DrawerTab(
     Overview(R.string.player_drawer_overview),
 
     Subtitle(R.string.player_drawer_subtitle),
+
+    /** 弹幕（UHDNOW 原生能力；开关/渲染参数/匹配与手动搜索）。 */
+    Danmaku(R.string.player_drawer_danmaku),
+
     Audio(R.string.player_drawer_audio),
     Quality(R.string.player_drawer_quality),
     Chapter(R.string.player_info_chapters),
@@ -225,6 +237,12 @@ internal fun PlayerSettingsDrawer(
     subtitleOffsetLevel: Int = 0,
     /** 字幕抬升切换回调（OK 循环档位，立即生效并持久化）。 */
     onSubtitleOffsetLevelChanged: (Int) -> Unit = {},
+    /** 弹幕会话（配置/加载状态/数据/偏移/搜索流程）。 */
+    danmu: DanmuSession = DanmuSession(),
+    /** 弹幕操作回调束（null = 弹幕交互不可用，tab 只展示状态）。 */
+    danmuActions: DanmuActions? = null,
+    /** 弹幕手动搜索的预填关键词（当前标题）。 */
+    danmuSearchPrefill: String = "",
     currentPosition: Long = 0L,
 ) {
     AnimatedVisibility(
@@ -382,6 +400,13 @@ internal fun PlayerSettingsDrawer(
                             subtitleOffsetLevel = subtitleOffsetLevel,
                             onSubtitleOffsetLevelChanged = onSubtitleOffsetLevelChanged,
                             onSelectText = onSelectText,
+                            onAdjustFocus = ::onAdjustFocus,
+                        )
+
+                        DrawerTab.Danmaku -> DanmakuTab(
+                            danmu = danmu,
+                            actions = danmuActions,
+                            prefill = danmuSearchPrefill,
                             onAdjustFocus = ::onAdjustFocus,
                         )
 
@@ -610,6 +635,251 @@ private fun SubtitleTab(
             onClick = { onSelectText(option) },
         )
     }
+}
+
+/**
+ * 弹幕 tab：开关 + 渲染参数调节（区域/透明度/字号/密度/速度/偏移）+
+ * 匹配状态 + 手动搜索（搜索片名 → 选动画 → 选分集）。
+ *
+ * 弹幕关闭时只显示开关行；搜索区只在弹幕开启且加载流程已启动后出现。
+ */
+@Composable
+private fun DanmakuTab(
+    danmu: DanmuSession,
+    actions: DanmuActions?,
+    prefill: String,
+    onAdjustFocus: (Boolean) -> Unit,
+) {
+    val config = danmu.config
+    SectionLabel(stringResource(R.string.player_drawer_danmaku))
+    DrawerRow(
+        label = stringResource(R.string.danmu_enabled),
+        value = stringResource(
+            if (config.enabled) R.string.settings_state_on else R.string.settings_state_off,
+        ),
+        selected = config.enabled,
+        onClick = { actions?.setEnabled(!config.enabled) },
+    )
+    if (!config.enabled) return
+
+    // 显示区域：上半屏（默认，不挡字幕）/ 全屏；左右键或 OK 切换
+    DrawerRow(
+        label = stringResource(R.string.danmu_area),
+        value = stringResource(
+            if (config.area == DanmuArea.Full) R.string.danmu_area_full else R.string.danmu_area_half,
+        ),
+        selected = config.area == DanmuArea.Full,
+        onClick = { actions?.updateConfig { it.toggleArea() } },
+        onStep = { actions?.updateConfig { it.toggleArea() } },
+        onAdjustFocus = onAdjustFocus,
+    )
+    // 透明度：10%–100%，步进 10%
+    DrawerRow(
+        label = stringResource(R.string.danmu_opacity),
+        value = "${(config.opacity * 100).toInt()}%",
+        selected = config.opacity != DanmuConfig().opacity,
+        onClick = { actions?.updateConfig { it.copy(opacity = nextStep(it.opacity, 0.1f, 0.1f..1f)) } },
+        onStep = { dir -> actions?.updateConfig { it.copy(opacity = (it.opacity + dir * 0.1f).coerceIn(0.1f, 1f)) } },
+        onAdjustFocus = onAdjustFocus,
+    )
+    // 字号：小 / 中 / 大（复用字幕字号文案）
+    DrawerRow(
+        label = stringResource(R.string.settings_subtitle_size),
+        value = stringResource(
+            when (config.size) {
+                DanmuSize.Small -> R.string.subtitle_size_small
+                DanmuSize.Large -> R.string.subtitle_size_large
+                else -> R.string.subtitle_size_medium
+            },
+        ),
+        selected = config.size != DanmuConfig().size,
+        onClick = {
+            actions?.updateConfig {
+                it.copy(size = when (it.size) { DanmuSize.Small -> DanmuSize.Medium; DanmuSize.Medium -> DanmuSize.Large; DanmuSize.Large -> DanmuSize.Small })
+            }
+        },
+        onStep = { dir ->
+            actions?.updateConfig {
+                it.copy(size = when { dir > 0 && it.size == DanmuSize.Small -> DanmuSize.Medium; dir > 0 && it.size == DanmuSize.Medium -> DanmuSize.Large; else -> DanmuSize.Small })
+            }
+        },
+        onAdjustFocus = onAdjustFocus,
+    )
+    // 密度：10%–100%，步进 10%
+    DrawerRow(
+        label = stringResource(R.string.danmu_density),
+        value = "${(config.density * 100).toInt()}%",
+        selected = config.density != DanmuConfig().density,
+        onClick = { actions?.updateConfig { it.copy(density = nextStep(it.density, 0.1f, 0.1f..1f)) } },
+        onStep = { dir -> actions?.updateConfig { it.copy(density = (it.density + dir * 0.1f).coerceIn(0.1f, 1f)) } },
+        onAdjustFocus = onAdjustFocus,
+    )
+    // 滚动速度：慢 / 标准 / 快
+    DrawerRow(
+        label = stringResource(R.string.danmu_speed),
+        value = stringResource(
+            when (config.speed) {
+                DanmuSpeed.Slow -> R.string.danmu_speed_slow
+                DanmuSpeed.Fast -> R.string.danmu_speed_fast
+                else -> R.string.danmu_speed_normal
+            },
+        ),
+        selected = config.speed != DanmuConfig().speed,
+        onClick = {
+            actions?.updateConfig {
+                it.copy(speed = when (it.speed) { DanmuSpeed.Slow -> DanmuSpeed.Normal; DanmuSpeed.Normal -> DanmuSpeed.Fast; DanmuSpeed.Fast -> DanmuSpeed.Slow })
+            }
+        },
+        onStep = { dir ->
+            actions?.updateConfig {
+                it.copy(speed = when { dir > 0 && it.speed == DanmuSpeed.Slow -> DanmuSpeed.Normal; dir > 0 && it.speed == DanmuSpeed.Normal -> DanmuSpeed.Fast; else -> DanmuSpeed.Slow })
+            }
+        },
+        onAdjustFocus = onAdjustFocus,
+    )
+    // 时间偏移：±0.1 秒步进（左右键），OK +0.1 秒，长按 Back 由行外部处理
+    DrawerRow(
+        label = stringResource(R.string.danmu_offset),
+        value = formatDanmuOffset(danmu.offsetMs),
+        selected = danmu.offsetMs != 0L,
+        onClick = { actions?.adjustOffset(DANMU_OFFSET_STEP_MS) },
+        onStep = { dir -> actions?.adjustOffset(dir * DANMU_OFFSET_STEP_MS) },
+        onAdjustFocus = onAdjustFocus,
+    )
+    if (danmu.offsetMs != 0L) {
+        DrawerRow(
+            label = stringResource(R.string.danmu_offset_reset),
+            value = null,
+            selected = false,
+            onClick = { actions?.resetOffset() },
+        )
+    }
+
+    // ---- 匹配状态 ----
+    SectionLabel(stringResource(R.string.danmu_match_section))
+    when (val load = danmu.load) {
+        is DanmuLoad.Loaded -> {
+            val suffix = if (load.manual) {
+                stringResource(R.string.danmu_status_manual_suffix)
+            } else {
+                ""
+            }
+            HintRow(
+                stringResource(R.string.danmu_status_count, load.count) +
+                    (load.episodeTitle?.let { " · $it" } ?: "") + suffix,
+            )
+            if (load.manual) {
+                DrawerRow(
+                    label = stringResource(R.string.danmu_auto_match),
+                    value = null,
+                    selected = false,
+                    onClick = { actions?.useAutoMatch() },
+                )
+            }
+        }
+
+        DanmuLoad.Matching -> HintRow(stringResource(R.string.danmu_status_matching))
+        DanmuLoad.Loading -> HintRow(stringResource(R.string.danmu_status_loading))
+        DanmuLoad.Unmatched -> HintRow(stringResource(R.string.danmu_status_unmatched))
+        is DanmuLoad.Failed -> {
+            HintRow(load.error.userMessage())
+            DrawerRow(
+                label = stringResource(R.string.danmu_retry),
+                value = null,
+                selected = false,
+                onClick = { actions?.retry() },
+            )
+        }
+
+        DanmuLoad.Idle -> Unit
+    }
+
+    // ---- 手动搜索（未匹配/失败/手动换源时的兜底入口，任何时候可用）----
+    SectionLabel(stringResource(R.string.danmu_search_section))
+    when (val search = danmu.search) {
+        DanmuSearch.Searching -> HintRow(stringResource(R.string.danmu_search_running))
+
+        is DanmuSearch.Results -> {
+            if (search.animes.isEmpty()) {
+                HintRow(stringResource(R.string.danmu_search_empty))
+            }
+            search.animes.forEach { anime ->
+                DrawerRow(
+                    label = anime.title ?: anime.bangumiId,
+                    value = null,
+                    selected = false,
+                    onClick = { actions?.openAnime(anime) },
+                )
+            }
+        }
+
+        is DanmuSearch.Episodes -> {
+            DrawerRow(
+                label = stringResource(R.string.danmu_search_back),
+                value = null,
+                selected = false,
+                onClick = { actions?.closeSearch() },
+            )
+            if (search.episodes.isEmpty()) {
+                HintRow(stringResource(R.string.danmu_episodes_empty))
+            }
+            search.episodes.forEach { episode ->
+                val active = (danmu.load as? DanmuLoad.Loaded)?.episodeId == episode.episodeId
+                DrawerRow(
+                    label = episode.title ?: episode.episodeId,
+                    value = null,
+                    selected = active,
+                    onClick = { actions?.selectEpisode(episode) },
+                )
+            }
+        }
+
+        is DanmuSearch.Failed -> {
+            HintRow(search.error.userMessage())
+            DrawerRow(
+                label = stringResource(R.string.danmu_retry),
+                value = null,
+                selected = false,
+                onClick = { actions?.closeSearch() },
+            )
+        }
+
+        DanmuSearch.Idle -> {
+            var keyword by remember(prefill) { mutableStateOf(prefill) }
+            NovumTextField(
+                value = keyword,
+                onValueChange = { keyword = it },
+                label = stringResource(R.string.danmu_search_label),
+                imeAction = ImeAction.Search,
+                keyboardActions = KeyboardActions(onSearch = { actions?.searchAnime(keyword) }),
+            )
+            DrawerRow(
+                label = stringResource(R.string.danmu_search_action),
+                value = null,
+                selected = false,
+                onClick = { actions?.searchAnime(keyword) },
+            )
+        }
+    }
+}
+
+/** 区域切换。 */
+private fun DanmuConfig.toggleArea(): DanmuConfig =
+    copy(area = if (area == DanmuArea.Full) DanmuArea.Half else DanmuArea.Full)
+
+/** OK 步进：到顶回绕（与左右步进的 coerce 行为互补）。 */
+private fun nextStep(value: Float, step: Float, range: ClosedFloatingPointRange<Float>): Float =
+    if (value + step > range.endInclusive) range.start else value + step
+
+/** 弹幕偏移步进（±0.1 秒）。 */
+internal const val DANMU_OFFSET_STEP_MS = 100L
+
+/** 偏移展示：0 显示「关」，其余按秒保留一位小数（如 `+0.3s`）。 */
+@Composable
+private fun formatDanmuOffset(ms: Long): String {
+    if (ms == 0L) return stringResource(R.string.player_delay_off)
+    val seconds = ms / 1000.0
+    return String.format(java.util.Locale.ROOT, "%+.1fs", seconds)
 }
 
 /** 音轨 tab：直通开关 + 音频延迟微调 + 音轨列表。 */

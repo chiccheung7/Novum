@@ -1,5 +1,10 @@
 package com.novum.tv.data.settings
 
+import com.novum.tv.model.DanmuArea
+import com.novum.tv.model.DanmuConfig
+import com.novum.tv.model.DanmuSize
+import com.novum.tv.model.DanmuSpeed
+
 /**
  * 应用设置快照（不可变）。
  *
@@ -23,6 +28,12 @@ package com.novum.tv.data.settings
  * @param autoPlayNext 自动连播：片尾显示
  *   「下一集 10 秒后播放」倒计时，任意键取消，归零换集；季末天然不连播
  *   （nextEpisodeId 按同季分集推导，季末为 null 时播放结束回详情页）。
+ * @param danmuEnabled 弹幕开关（UHDNOW 原生能力）：全局默认，播放抽屉即时调节写回。
+ * @param danmuOpacity 弹幕不透明度（0.1–1）。
+ * @param danmuDensity 弹幕密度（0.1–1，超出部分按比例丢弃）。
+ * @param danmuAreaFull 弹幕显示区域：false=上半屏（不挡字幕），true=全屏。
+ * @param danmuSize 弹幕字号档位：1=小 2=中 3=大。
+ * @param danmuSpeed 弹幕滚动速度档位：1=慢 2=标准 3=快。
  */
 data class AppSettings(
     val preferDirect: Boolean = true,
@@ -46,4 +57,34 @@ data class AppSettings(
     val pinnedLineName: String = "",
     val playbackSpeed: Float = 1f,
     val autoPlayNext: Boolean = true,
+    /** 弹幕开关：默认关（对齐官方网页播放器）；抽屉开/关即时写回。 */
+    val danmuEnabled: Boolean = false,
+    /** 弹幕不透明度（0.1–1），默认 0.7。 */
+    val danmuOpacity: Float = 0.7f,
+    /** 弹幕密度（0.1–1），默认 0.7。 */
+    val danmuDensity: Float = 0.7f,
+    /** 弹幕显示区域：false=上半屏（默认，不挡字幕），true=全屏。 */
+    val danmuAreaFull: Boolean = false,
+    /** 弹幕字号档位：1=小 2=中 3=大。 */
+    val danmuSize: Int = 2,
+    /** 弹幕滚动速度档位：1=慢 2=标准 3=快。 */
+    val danmuSpeed: Int = 2,
+)
+
+/** 把设置快照里的弹幕原始字段组装成渲染配置（档位 → 领域枚举）。 */
+fun AppSettings.danmuConfig(): DanmuConfig = DanmuConfig(
+    enabled = danmuEnabled,
+    area = if (danmuAreaFull) DanmuArea.Full else DanmuArea.Half,
+    opacity = danmuOpacity,
+    size = when (danmuSize) {
+        1 -> DanmuSize.Small
+        3 -> DanmuSize.Large
+        else -> DanmuSize.Medium
+    },
+    density = danmuDensity,
+    speed = when (danmuSpeed) {
+        1 -> DanmuSpeed.Slow
+        3 -> DanmuSpeed.Fast
+        else -> DanmuSpeed.Normal
+    },
 )

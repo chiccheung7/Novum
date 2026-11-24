@@ -183,6 +183,70 @@ class SettingsViewModel @Inject constructor(
         )
     }
 
+    /** 弹幕开关（UHDNOW 原生能力；播放抽屉的即时调节也写回同一存储）。 */
+    fun setDanmuEnabled(enabled: Boolean) {
+        update { it.copy(danmuEnabled = enabled) }
+        toastPref(R.string.danmu_enabled, enabled)
+    }
+
+    /** 弹幕显示区域：上半屏 ↔ 全屏。 */
+    fun cycleDanmuArea() {
+        val before = currentSettings().danmuAreaFull
+        update { it.copy(danmuAreaFull = !it.danmuAreaFull) }
+        toastCycled(
+            appContext.getString(R.string.danmu_area),
+            appContext.getString(if (before) R.string.danmu_area_half else R.string.danmu_area_full),
+        )
+    }
+
+    /** 弹幕字号循环：小 → 中 → 大 → 小。 */
+    fun cycleDanmuSize() {
+        val next = currentSettings().danmuSize % 3 + 1
+        update { it.copy(danmuSize = next) }
+        toastCycled(
+            appContext.getString(R.string.settings_subtitle_size),
+            appContext.getString(
+                when (next) {
+                    1 -> R.string.subtitle_size_small
+                    3 -> R.string.subtitle_size_large
+                    else -> R.string.subtitle_size_medium
+                },
+            ),
+        )
+    }
+
+    /** 弹幕滚动速度循环：慢 → 标准 → 快 → 慢。 */
+    fun cycleDanmuSpeed() {
+        val next = currentSettings().danmuSpeed % 3 + 1
+        update { it.copy(danmuSpeed = next) }
+        toastCycled(
+            appContext.getString(R.string.danmu_speed),
+            appContext.getString(
+                when (next) {
+                    1 -> R.string.danmu_speed_slow
+                    3 -> R.string.danmu_speed_fast
+                    else -> R.string.danmu_speed_normal
+                },
+            ),
+        )
+    }
+
+    /** 弹幕透明度循环：10% → … → 100% → 10%（步进 10%）。 */
+    fun cycleDanmuOpacity() {
+        val next = if (currentSettings().danmuOpacity >= 1f) 0.1f else currentSettings().danmuOpacity + 0.1f
+        val quantized = (next * 10).toInt() / 10f
+        update { it.copy(danmuOpacity = quantized) }
+        toastCycled(appContext.getString(R.string.danmu_opacity), "${(quantized * 100).toInt()}%")
+    }
+
+    /** 弹幕密度循环：10% → … → 100% → 10%（步进 10%）。 */
+    fun cycleDanmuDensity() {
+        val next = if (currentSettings().danmuDensity >= 1f) 0.1f else currentSettings().danmuDensity + 0.1f
+        val quantized = (next * 10).toInt() / 10f
+        update { it.copy(danmuDensity = quantized) }
+        toastCycled(appContext.getString(R.string.danmu_density), "${(quantized * 100).toInt()}%")
+    }
+
     /**
      * 退出登录：只有本地会话真正清除后才导航回登录页。
      *

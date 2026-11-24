@@ -63,4 +63,6 @@ class ResourceMediaStrings @Inject constructor(
             minutes % 60,
         )
     }
+
+    override fun danmuRateLimited(): String = context.getString(R.string.danmu_rate_limited)
 }

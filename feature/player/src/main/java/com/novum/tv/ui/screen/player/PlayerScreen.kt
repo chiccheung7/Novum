@@ -341,6 +341,9 @@ fun PlayerScreen(
                     bandwidthEstimate = { bandwidthMeter.bitrateEstimate },
                     displayModeText = { activity?.let(DisplayModeSwitcher::currentModeText) },
                     autoPlayNext = state.autoPlayNext,
+                    danmu = state.danmu,
+                    danmuActions = rememberDanmuActions(viewModel),
+                    danmuSearchPrefill = state.title,
                 )
             }
         }
@@ -349,6 +352,27 @@ fun PlayerScreen(
 
 /** 字幕日志标签。 */
 internal const val CUE_LOG_TAG = "NovumPlayer"
+
+/**
+ * 打包弹幕操作回调束（组合期创建一次，随 ViewModel 生命周期复用）。
+ *
+ * @param viewModel 播放页 ViewModel，弹幕操作的实际执行者。
+ */
+@Composable
+private fun rememberDanmuActions(viewModel: PlayerViewModel): DanmuActions = remember(viewModel) {
+    DanmuActions(
+        setEnabled = viewModel::setDanmuEnabled,
+        updateConfig = viewModel::updateDanmuConfig,
+        adjustOffset = viewModel::adjustDanmuOffset,
+        resetOffset = viewModel::resetDanmuOffset,
+        retry = viewModel::retryDanmu,
+        searchAnime = viewModel::searchDanmuAnime,
+        openAnime = viewModel::openDanmuAnime,
+        selectEpisode = viewModel::selectDanmuEpisode,
+        closeSearch = viewModel::closeDanmuSearch,
+        useAutoMatch = viewModel::useDanmuAutoMatch,
+    )
+}
 
 /** 视频尺寸日志标签（画面比例排查用）。 */
 private const val VIDEO_LOG_TAG = "NovumVideo"

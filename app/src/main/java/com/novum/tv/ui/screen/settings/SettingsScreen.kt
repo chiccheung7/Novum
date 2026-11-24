@@ -493,6 +493,58 @@ private fun SectionContent(
                         },
                         onAction = { viewModel.setAutoPlayNext(!settings.autoPlayNext) },
                     )
+                    // 弹幕（UHDNOW 原生能力）：设置页只给全局默认值，
+                    // 播放抽屉可对当前会话即时微调（写回同一存储，下次播放沿用）。
+                    SettingRow(
+                        label = stringResource(R.string.danmu_enabled),
+                        value = if (settings.danmuEnabled) {
+                            stringResource(R.string.settings_state_on)
+                        } else {
+                            stringResource(R.string.settings_state_off)
+                        },
+                        onAction = { viewModel.setDanmuEnabled(!settings.danmuEnabled) },
+                    )
+                    if (settings.danmuEnabled) {
+                        SettingRow(
+                            label = stringResource(R.string.danmu_area),
+                            value = stringResource(
+                                if (settings.danmuAreaFull) R.string.danmu_area_full else R.string.danmu_area_half,
+                            ),
+                            onAction = viewModel::cycleDanmuArea,
+                        )
+                        SettingRow(
+                            label = stringResource(R.string.settings_subtitle_size),
+                            value = stringResource(
+                                when (settings.danmuSize) {
+                                    1 -> R.string.subtitle_size_small
+                                    3 -> R.string.subtitle_size_large
+                                    else -> R.string.subtitle_size_medium
+                                },
+                            ),
+                            onAction = viewModel::cycleDanmuSize,
+                        )
+                        SettingRow(
+                            label = stringResource(R.string.danmu_speed),
+                            value = stringResource(
+                                when (settings.danmuSpeed) {
+                                    1 -> R.string.danmu_speed_slow
+                                    3 -> R.string.danmu_speed_fast
+                                    else -> R.string.danmu_speed_normal
+                                },
+                            ),
+                            onAction = viewModel::cycleDanmuSpeed,
+                        )
+                        SettingRow(
+                            label = stringResource(R.string.danmu_opacity),
+                            value = "${(settings.danmuOpacity * 100).toInt()}%",
+                            onAction = viewModel::cycleDanmuOpacity,
+                        )
+                        SettingRow(
+                            label = stringResource(R.string.danmu_density),
+                            value = "${(settings.danmuDensity * 100).toInt()}%",
+                            onAction = viewModel::cycleDanmuDensity,
+                        )
+                    }
                 }
 
                 SettingsSection.Subtitle -> {

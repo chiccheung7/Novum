@@ -66,4 +66,7 @@ interface MediaStrings {
      * 片长展示：「N 分钟 / N 小时 / N 小时 M 分钟」，与 Hero 信息块使用相同文案。
      */
     fun runtimeLabel(minutes: Int): String
+
+    /** 弹幕服务过频提示（弹幕仓储 429 响应的用户文案）。 */
+    fun danmuRateLimited(): String
 }

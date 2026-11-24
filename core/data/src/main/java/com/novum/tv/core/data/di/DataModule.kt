@@ -100,4 +100,15 @@ abstract class RepositoryModule {
     abstract fun bindSettingsRepository(
         repository: DataStoreSettingsRepository,
     ): SettingsRepository
+
+    /**
+     * 弹幕仓储绑定（UHDNOW 原生能力，非 UHD 服务器上调用会鉴权失败并静默降级）。
+     *
+     * @param repository 默认实现。
+     */
+    @Binds
+    @Singleton
+    abstract fun bindDanmuRepository(
+        repository: com.novum.tv.data.repository.DefaultDanmuRepository,
+    ): com.novum.tv.data.repository.DanmuRepository
 }

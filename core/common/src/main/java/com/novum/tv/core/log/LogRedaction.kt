@@ -33,6 +33,9 @@ object LogRedaction {
         Regex("""(?i)((?:x-emby-token|authorization|proxy-authorization)\s*[:=]\s*(?:bearer\s+)?)("[^"]*"|'[^']*'|[^\s,"']+)"""),
         // URL 里的 user:pass@host 形式
         Regex("""(?i)(://[^/\s:@]+:)([^/\s@]+)(@)"""),
+        // UHDNOW 弹幕端点：token 在 URL 路径里（/api/v1/danmu/{token}/api/v2/…），
+        // 异常信息一旦打出整条 URL，token 就随 logcat 泄漏
+        Regex("""(?i)(/api/v1/danmu/)([^/?#\s"'<>]+)"""),
     )
 
     /**

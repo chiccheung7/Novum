@@ -11,11 +11,19 @@ import com.novum.tv.core.designsystem.R
 import com.novum.tv.core.log.NovumLogger
 import com.novum.tv.core.result.NovumResult
 import com.novum.tv.core.state.UiState
+import com.novum.tv.data.repository.DanmuRepository
 import com.novum.tv.data.repository.ItemPlaybackPrefsStore
 import com.novum.tv.data.repository.MediaRepository
 import com.novum.tv.data.repository.PlaybackRepository
 import com.novum.tv.data.settings.SettingsRepository
+import com.novum.tv.data.settings.danmuConfig
 import com.novum.tv.model.Chapter
+import com.novum.tv.model.DanmuAnime
+import com.novum.tv.model.DanmuArea
+import com.novum.tv.model.DanmuConfig
+import com.novum.tv.model.DanmuEpisode
+import com.novum.tv.model.DanmuSize
+import com.novum.tv.model.DanmuSpeed
 import com.novum.tv.model.Episode
 import com.novum.tv.model.MediaDetail
 import com.novum.tv.model.PlayMethod
@@ -78,6 +86,8 @@ data class PlayerUiState(
     val versionStrategy: String = "",
     /** 自动连播（设置，默认开）：片尾倒计时 10 秒归零换集。 */
     val autoPlayNext: Boolean = true,
+    /** 弹幕会话（配置 + 加载状态 + 数据 + 偏移 + 手动搜索流程）。 */
+    val danmu: DanmuSession = DanmuSession(),
 ) {
 
     /** 播放计划数据，非成功态为 null。 */
@@ -102,6 +112,7 @@ class PlayerViewModel @Inject constructor(
     private val playback: PlaybackRepository,
     private val media: MediaRepository,
     private val settings: SettingsRepository,
+    private val danmuRepository: DanmuRepository,
     private val capability: CapabilityProvider,
     private val playbackPrefs: ItemPlaybackPrefsStore,
     private val logger: NovumLogger,
@@ -127,12 +138,27 @@ class PlayerViewModel @Inject constructor(
     /** PlaybackInfo 会话 id，进度上报原样回传；换线/强转码重取计划后同步更新。 */
     private var playSessionId: String? = null
 
+    /** 当前计划的资源文件名（弹幕自动匹配锚点）。 */
+    private var planFileName: String? = null
+
+    /** 手动选定/记忆的弹幕分集（null = 自动匹配）。 */
+    private var danmuEpisodeId: String? = null
+
+    /** 手动搜索任务（与弹幕加载任务分开取消，互不干扰）。 */
+    private var danmuSearchJob: Job? = null
+
     /**
      * 重入锁：load / 换线 / 强转码共用同一个计划任务。
      * 并发请求会让"先发出的慢响应"覆盖"后发出的新计划"（例如换线后又被旧直连结果顶回），
      * 取消旧任务 + 协程协作式取消保证最后发起的计划才是生效计划。
      */
     private var planJob: Job? = null
+
+    /**
+     * 弹幕任务锁：加载/重试/换匹配共用，换集或重开时取消旧任务
+     * 防止旧分集的慢响应覆盖新状态。
+     */
+    private var danmuJob: Job? = null
 
     /**
      * 倍速档是否已经采纳过设置快照。
@@ -226,6 +252,207 @@ class PlayerViewModel @Inject constructor(
     val audioPassthroughAvailable: Boolean =
         capability.capabilities.audioPassthrough.isNotEmpty()
 
+    // ---- 弹幕（UHDNOW 原生能力；非 UHD 服务器在鉴权处失败并静默降级）----
+
+    /**
+     * 启动弹幕加载：手动记忆的分集 > 资源文件名自动匹配 > 提示手动搜索。
+     *
+     * @param fileName 当前版本的资源文件名（可能为 null：服务端未下发 Path/Name）。
+     * @param manualEpisodeId 手动选定过的分集 id。
+     */
+    private fun startDanmu(fileName: String?, manualEpisodeId: String?) {
+        danmuJob?.cancel()
+        if (!_state.value.danmu.config.enabled) return
+        when {
+            manualEpisodeId != null -> danmuJob = viewModelScope.launch {
+                loadDanmuComments(manualEpisodeId, manual = true)
+            }
+
+            fileName != null -> danmuJob = viewModelScope.launch {
+                _state.update { it.copy(danmu = it.danmu.copy(load = DanmuLoad.Matching)) }
+                when (val matched = danmuRepository.match(fileName)) {
+                    is NovumResult.Success -> {
+                        val match = matched.value
+                        if (match == null) {
+                            _state.update { it.copy(danmu = it.danmu.copy(load = DanmuLoad.Unmatched)) }
+                        } else {
+                            loadDanmuComments(match.episodeId, manual = false, match.title)
+                        }
+                    }
+
+                    is NovumResult.Failure -> _state.update {
+                        it.copy(danmu = it.danmu.copy(load = DanmuLoad.Failed(matched.error)))
+                    }
+                }
+            }
+
+            // 没有文件名锚点：自动匹配无从下手，直接提示手动搜索
+            else -> _state.update { it.copy(danmu = it.danmu.copy(load = DanmuLoad.Unmatched)) }
+        }
+    }
+
+    /** 拉取指定分集的弹幕并进入 Loaded 态。 */
+    private suspend fun loadDanmuComments(episodeId: String, manual: Boolean, title: String? = null) {
+        _state.update { it.copy(danmu = it.danmu.copy(load = DanmuLoad.Loading)) }
+        when (val result = danmuRepository.comments(episodeId)) {
+            is NovumResult.Success -> _state.update { state ->
+                state.copy(
+                    danmu = state.danmu.copy(
+                        load = DanmuLoad.Loaded(episodeId, result.value.size, title, manual),
+                        comments = result.value,
+                    ),
+                )
+            }
+
+            is NovumResult.Failure -> _state.update { state ->
+                state.copy(danmu = state.danmu.copy(load = DanmuLoad.Failed(result.error)))
+            }
+        }
+    }
+
+    /**
+     * 弹幕开关（抽屉）：立即生效并持久化为全局默认；开启时若尚未加载则启动加载，
+     * 关闭时取消进行中的加载任务（否则抽屉会停在「正在匹配」）。
+     */
+    fun setDanmuEnabled(enabled: Boolean) {
+        _state.update { it.copy(danmu = it.danmu.copy(config = it.danmu.config.copy(enabled = enabled))) }
+        if (!enabled) {
+            danmuJob?.cancel()
+            danmuJob = null
+            _state.update { it.copy(danmu = it.danmu.copy(load = DanmuLoad.Idle)) }
+        }
+        viewModelScope.launch {
+            runCatching { settings.update { it.copy(danmuEnabled = enabled) } }
+                .onFailure { logger.w(TAG, "弹幕开关写入失败", it) }
+        }
+        if (enabled && _state.value.danmu.load == DanmuLoad.Idle) {
+            startDanmu(planFileName, danmuEpisodeId)
+        }
+    }
+
+    /**
+     * 弹幕渲染参数调节（透明度/区域/字号/密度/速度）：立即生效并写回全局设置。
+     */
+    fun updateDanmuConfig(transform: (DanmuConfig) -> DanmuConfig) {
+        val next = transform(_state.value.danmu.config)
+        _state.update { it.copy(danmu = it.danmu.copy(config = next)) }
+        viewModelScope.launch {
+            runCatching {
+                settings.update { s ->
+                    s.copy(
+                        danmuOpacity = next.opacity,
+                        danmuDensity = next.density,
+                        danmuAreaFull = next.area == DanmuArea.Full,
+                        danmuSize = when (next.size) {
+                            DanmuSize.Small -> 1
+                            DanmuSize.Large -> 3
+                            else -> 2
+                        },
+                        danmuSpeed = when (next.speed) {
+                            DanmuSpeed.Slow -> 1
+                            DanmuSpeed.Fast -> 3
+                            else -> 2
+                        },
+                    )
+                }
+            }.onFailure { logger.w(TAG, "弹幕偏好写入失败", it) }
+        }
+    }
+
+    /**
+     * 弹幕时间偏移微调（±100ms 步进，范围 ±1 小时）：按条目持久化。
+     *
+     * @param deltaMs 偏移增量（正=弹幕延后）。
+     */
+    fun adjustDanmuOffset(deltaMs: Long) {
+        val next = (_state.value.danmu.offsetMs + deltaMs).coerceIn(-DANMU_OFFSET_LIMIT_MS, DANMU_OFFSET_LIMIT_MS)
+        _state.update { it.copy(danmu = it.danmu.copy(offsetMs = next)) }
+        viewModelScope.launch {
+            runCatching { playbackPrefs.update(itemId = itemId, danmuOffsetMs = next) }
+                .onFailure { logger.w(TAG, "弹幕偏移写入失败", it) }
+        }
+    }
+
+    /** 重置弹幕偏移（回到 0，同样落盘记忆）。 */
+    fun resetDanmuOffset() {
+        _state.update { it.copy(danmu = it.danmu.copy(offsetMs = 0L)) }
+        viewModelScope.launch {
+            runCatching { playbackPrefs.update(itemId = itemId, danmuOffsetMs = 0L) }
+                .onFailure { logger.w(TAG, "弹幕偏移写入失败", it) }
+        }
+    }
+
+    /** 弹幕重试（失败/未匹配后手动触发）。 */
+    fun retryDanmu() {
+        startDanmu(planFileName, danmuEpisodeId)
+    }
+
+    /** 手动搜索动画（搜索词为当前标题或用户输入）。 */
+    fun searchDanmuAnime(keyword: String) {
+        val trimmed = keyword.trim()
+        if (trimmed.isEmpty()) return
+        danmuSearchJob?.cancel()
+        danmuSearchJob = viewModelScope.launch {
+            _state.update { it.copy(danmu = it.danmu.copy(search = DanmuSearch.Searching)) }
+            when (val result = danmuRepository.searchAnime(trimmed)) {
+                is NovumResult.Success -> _state.update { state ->
+                    state.copy(danmu = state.danmu.copy(search = DanmuSearch.Results(trimmed, result.value)))
+                }
+
+                is NovumResult.Failure -> _state.update { state ->
+                    state.copy(danmu = state.danmu.copy(search = DanmuSearch.Failed(result.error)))
+                }
+            }
+        }
+    }
+
+    /** 展开动画的分集列表（手动搜索第二步）。 */
+    fun openDanmuAnime(anime: DanmuAnime) {
+        danmuSearchJob?.cancel()
+        danmuSearchJob = viewModelScope.launch {
+            _state.update { it.copy(danmu = it.danmu.copy(search = DanmuSearch.Searching)) }
+            when (val result = danmuRepository.episodes(anime.bangumiId)) {
+                is NovumResult.Success -> _state.update { state ->
+                    state.copy(danmu = state.danmu.copy(search = DanmuSearch.Episodes(anime, result.value)))
+                }
+
+                is NovumResult.Failure -> _state.update { state ->
+                    state.copy(danmu = state.danmu.copy(search = DanmuSearch.Failed(result.error)))
+                }
+            }
+        }
+    }
+
+    /**
+     * 选定手动匹配的分集：拉取弹幕并按条目记忆（下次播放同一集直接恢复）。
+     */
+    fun selectDanmuEpisode(episode: DanmuEpisode) {
+        danmuEpisodeId = episode.episodeId
+        viewModelScope.launch {
+            runCatching { playbackPrefs.update(itemId = itemId, danmuEpisodeId = episode.episodeId) }
+                .onFailure { logger.w(TAG, "弹幕分集记忆写入失败", it) }
+        }
+        _state.update { it.copy(danmu = it.danmu.copy(search = DanmuSearch.Idle)) }
+        danmuJob?.cancel()
+        danmuJob = viewModelScope.launch { loadDanmuComments(episode.episodeId, manual = true, episode.title) }
+    }
+
+    /** 退出手动搜索（不改变当前匹配）。 */
+    fun closeDanmuSearch() {
+        _state.update { it.copy(danmu = it.danmu.copy(search = DanmuSearch.Idle)) }
+    }
+
+    /** 恢复自动匹配：清除手动分集记忆并重新按文件名匹配。 */
+    fun useDanmuAutoMatch() {
+        danmuEpisodeId = null
+        viewModelScope.launch {
+            runCatching { playbackPrefs.update(itemId = itemId, clearDanmuEpisodeId = true) }
+                .onFailure { logger.w(TAG, "弹幕分集记忆清除失败", it) }
+        }
+        _state.update { it.copy(danmu = it.danmu.copy(search = DanmuSearch.Idle)) }
+        startDanmu(planFileName, null)
+    }
+
     init {
         load()
     }
@@ -273,6 +500,8 @@ class PlayerViewModel @Inject constructor(
                 is NovumResult.Success -> {
                     method = result.value.method
                     playSessionId = result.value.playSessionId
+                    planFileName = result.value.fileName
+                    danmuEpisodeId = remembered?.danmuEpisodeId
                     speedAdopted = true
                     _state.update {
                         it.copy(
@@ -293,8 +522,14 @@ class PlayerViewModel @Inject constructor(
                             rememberedPrefs = remembered,
                             versionStrategy = snapshot?.versionStrategy.orEmpty(),
                             autoPlayNext = snapshot?.autoPlayNext ?: true,
+                            danmu = DanmuSession(
+                                config = snapshot?.danmuConfig() ?: DanmuConfig(),
+                                offsetMs = remembered?.danmuOffsetMs ?: 0L,
+                            ),
                         )
                     }
+                    // 弹幕跟随新计划启动：手动记忆的分集 > 文件名自动匹配
+                    startDanmu(result.value.fileName, remembered?.danmuEpisodeId)
                 }
 
                 is NovumResult.Failure -> _state.update {
@@ -452,6 +687,9 @@ class PlayerViewModel @Inject constructor(
 
 /** 续播位置低于该阈值视为「从头看」，此时才应用片头跳过。 */
 private const val SKIP_INTRO_RESUME_THRESHOLD_MS = 30_000L
+
+/** 弹幕偏移上限（±1 小时，协议口径）。 */
+internal const val DANMU_OFFSET_LIMIT_MS = 3_600_000L
 
 /** 日志标签（偏好/记忆写入失败留痕）。 */
 private const val TAG = "PlayerVM"

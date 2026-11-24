@@ -54,6 +54,12 @@ class DataStoreSettingsRepository @Inject constructor(
             preferences[SettingsKeys.PinnedLineName] = next.pinnedLineName
             preferences[SettingsKeys.PlaybackSpeed] = next.playbackSpeed
             preferences[SettingsKeys.AutoPlayNext] = next.autoPlayNext
+            preferences[SettingsKeys.DanmuEnabled] = next.danmuEnabled
+            preferences[SettingsKeys.DanmuOpacity] = next.danmuOpacity
+            preferences[SettingsKeys.DanmuDensity] = next.danmuDensity
+            preferences[SettingsKeys.DanmuAreaFull] = next.danmuAreaFull
+            preferences[SettingsKeys.DanmuSize] = next.danmuSize
+            preferences[SettingsKeys.DanmuSpeed] = next.danmuSpeed
         }
     }
 }
@@ -76,6 +82,12 @@ private object SettingsKeys {
     val PinnedLineName = stringPreferencesKey("pinned_line_name")
     val PlaybackSpeed = floatPreferencesKey("playback_speed")
     val AutoPlayNext = booleanPreferencesKey("auto_play_next")
+    val DanmuEnabled = booleanPreferencesKey("danmu_enabled")
+    val DanmuOpacity = floatPreferencesKey("danmu_opacity")
+    val DanmuDensity = floatPreferencesKey("danmu_density")
+    val DanmuAreaFull = booleanPreferencesKey("danmu_area_full")
+    val DanmuSize = intPreferencesKey("danmu_size")
+    val DanmuSpeed = intPreferencesKey("danmu_speed")
 }
 
 /** 把持久化层数据映射为不可变设置快照，缺失键回落到默认值。 */
@@ -99,6 +111,12 @@ private fun Preferences.toAppSettings(): AppSettings {
         pinnedLineName = this[SettingsKeys.PinnedLineName] ?: defaults.pinnedLineName,
         playbackSpeed = this[SettingsKeys.PlaybackSpeed] ?: defaults.playbackSpeed,
         autoPlayNext = this[SettingsKeys.AutoPlayNext] ?: defaults.autoPlayNext,
+        danmuEnabled = this[SettingsKeys.DanmuEnabled] ?: defaults.danmuEnabled,
+        danmuOpacity = this[SettingsKeys.DanmuOpacity] ?: defaults.danmuOpacity,
+        danmuDensity = this[SettingsKeys.DanmuDensity] ?: defaults.danmuDensity,
+        danmuAreaFull = this[SettingsKeys.DanmuAreaFull] ?: defaults.danmuAreaFull,
+        danmuSize = this[SettingsKeys.DanmuSize] ?: defaults.danmuSize,
+        danmuSpeed = this[SettingsKeys.DanmuSpeed] ?: defaults.danmuSpeed,
     )
 }
 
@@ -107,4 +125,8 @@ private fun AppSettings.sanitized(): AppSettings = copy(
     subtitleSize = subtitleSize.coerceIn(1, 4),
     subtitleOffsetLevel = subtitleOffsetLevel.coerceIn(0, 4),
     skipIntroSeconds = skipIntroSeconds.coerceIn(15, 600),
+    danmuOpacity = danmuOpacity.coerceIn(0.1f, 1f),
+    danmuDensity = danmuDensity.coerceIn(0.1f, 1f),
+    danmuSize = danmuSize.coerceIn(1, 3),
+    danmuSpeed = danmuSpeed.coerceIn(1, 3),
 )

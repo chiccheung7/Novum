@@ -40,6 +40,10 @@ class ItemPlaybackPrefsStore(
         val audioTrack: TrackRef? = null,
         /** 手动关闭过字幕（抽屉「关闭字幕」项）。 */
         val subtitleDisabled: Boolean = false,
+        /** 手动选定的弹幕分集（dandanplay episodeId）；null = 走自动匹配。 */
+        val danmuEpisodeId: String? = null,
+        /** 弹幕时间偏移（毫秒，正=延后）；只记用户改过的值，0 不写。 */
+        val danmuOffsetMs: Long = 0L,
     )
 
     private val mutex = Mutex()
@@ -64,9 +68,12 @@ class ItemPlaybackPrefsStore(
         subtitleTrack: TrackRef? = null,
         audioTrack: TrackRef? = null,
         subtitleDisabled: Boolean? = null,
+        danmuEpisodeId: String? = null,
+        danmuOffsetMs: Long? = null,
         clearMediaSourceId: Boolean = false,
         clearSubtitleTrack: Boolean = false,
         clearAudioTrack: Boolean = false,
+        clearDanmuEpisodeId: Boolean = false,
     ) = mutex.withLock {
         // 读盘失败就放弃本次写入：拿空表落盘会把文件里**其它条目**的记忆整片抹掉，
         // 用户下次播放会发现所有手动轨/版本记忆都没了。宁可这次不记。
@@ -77,6 +84,8 @@ class ItemPlaybackPrefsStore(
             subtitleTrack = if (clearSubtitleTrack) null else subtitleTrack ?: old.subtitleTrack,
             audioTrack = if (clearAudioTrack) null else audioTrack ?: old.audioTrack,
             subtitleDisabled = subtitleDisabled ?: old.subtitleDisabled,
+            danmuEpisodeId = if (clearDanmuEpisodeId) null else danmuEpisodeId ?: old.danmuEpisodeId,
+            danmuOffsetMs = danmuOffsetMs ?: old.danmuOffsetMs,
         )
         persistLocked(map)
     }

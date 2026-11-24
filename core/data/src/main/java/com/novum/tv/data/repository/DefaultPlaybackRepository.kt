@@ -146,6 +146,7 @@ class DefaultPlaybackRepository @Inject constructor(
                             fallbackUrl = urls.fallbackUrl,
                             fallbackMethod = urls.fallbackMethod,
                             playSessionId = info.PlaySessionId,
+                            fileName = source.danmuFileName(),
                         ),
                     )
                 }
@@ -439,6 +440,15 @@ private fun String?.toAbsoluteUrl(server: String): String? {
     } else {
         server.trimEnd('/') + "/" + path.trimStart('/')
     }
+}
+
+/**
+ * 弹幕匹配用的资源文件名：优先 `Path` 的文件段（去目录与查询串），
+ * 缺 Path 时回落 `Name`；两者都空返回 null（弹幕只能手动搜索匹配）。
+ */
+internal fun MediaSourceDto.danmuFileName(): String? {
+    val fromPath = Path?.substringAfterLast('/')?.substringBefore('?')?.takeIf { it.isNotBlank() }
+    return fromPath ?: Name?.takeIf { it.isNotBlank() }
 }
 
 /**

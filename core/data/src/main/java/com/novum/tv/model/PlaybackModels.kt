@@ -150,4 +150,9 @@ data class PlaybackPlan(
     /** 实际使用的线路 baseUrl，换线重试时用于排除。 */
     val lineBaseUrl: String? = null,
     val playSessionId: String? = null,
+    /**
+     * 当前版本的资源文件名（`MediaSource.Path` 的文件段，缺 Path 时用 `Name`）。
+     * UHDNOW 弹幕自动匹配按文件名定位分集；服务端不下发时为 null（弹幕只能手动搜索）。
+     */
+    val fileName: String? = null,
 )

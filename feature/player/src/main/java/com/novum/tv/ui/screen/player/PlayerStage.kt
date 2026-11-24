@@ -169,6 +169,12 @@ internal fun PlayerStage(
     displayModeText: () -> String? = { null },
     /** 自动连播（设置，默认开）：片尾窗口倒计时 10 秒归零换集。 */
     autoPlayNext: Boolean = true,
+    /** 弹幕会话（配置/加载状态/数据/偏移/搜索流程）。 */
+    danmu: DanmuSession = DanmuSession(),
+    /** 弹幕操作回调束（抽屉交互 → ViewModel）。 */
+    danmuActions: DanmuActions? = null,
+    /** 弹幕手动搜索的预填关键词（当前标题）。 */
+    danmuSearchPrefill: String = "",
 ) {
     var isPlaying by remember { mutableStateOf(true) }
     var buffering by remember { mutableStateOf(false) }
@@ -902,6 +908,15 @@ internal fun PlayerStage(
             )
         }
 
+        // 弹幕层：视频之上、字幕与控制层之下（默认上半屏，不与字幕抢位）
+        DanmuOverlay(
+            comments = danmu.comments,
+            config = danmu.config,
+            offsetMs = danmu.offsetMs,
+            player = player,
+            modifier = Modifier.fillMaxSize(),
+        )
+
         // 字幕落位：宽银幕影片时放进**下黑边区域**
         // 且与画面下缘保持距离（不紧贴黑边上部）——按视频比例反算黑边高度
         BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
@@ -1090,6 +1105,9 @@ internal fun PlayerStage(
                 onSubtitleSizeChanged = onSubtitleSizeChanged,
                 subtitleOffsetLevel = subtitleOffsetLevel,
                 onSubtitleOffsetLevelChanged = onSubtitleOffsetLevelChanged,
+                danmu = danmu,
+                danmuActions = danmuActions,
+                danmuSearchPrefill = danmuSearchPrefill,
                 onSelectAudio = { option ->
                     selectTrack(player, option, isText = false)
                     onRememberTrack(option, false)

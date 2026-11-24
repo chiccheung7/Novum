@@ -28,4 +28,6 @@ object FakeMediaStrings : MediaStrings {
         minutes % 60 == 0 -> "${minutes / 60} 小时"
         else -> "${minutes / 60} 小时 ${minutes % 60} 分钟"
     }
+
+    override fun danmuRateLimited(): String = "弹幕请求较多，请稍后重试"
 }

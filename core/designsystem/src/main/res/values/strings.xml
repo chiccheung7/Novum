@@ -182,6 +182,39 @@
     <string name="player_drawer_empty">暂无可切换轨道</string>
     <string name="player_drawer_subtitle_off">关闭字幕</string>
     <string name="player_drawer_reloading">正在按新音频设置重新加载…</string>
+
+    <!-- 弹幕（UHDNOW 原生能力；播放抽屉 + 设置页共用） -->
+    <string name="danmu_rate_limited">弹幕请求较多，请稍后重试</string>
+    <string name="player_drawer_danmaku">弹幕</string>
+    <string name="danmu_enabled">弹幕开关</string>
+    <string name="danmu_area">显示区域</string>
+    <string name="danmu_area_half">上半屏</string>
+    <string name="danmu_area_full">全屏</string>
+    <string name="danmu_opacity">透明度</string>
+    <string name="danmu_density">密度</string>
+    <string name="danmu_speed">滚动速度</string>
+    <string name="danmu_speed_slow">慢</string>
+    <string name="danmu_speed_normal">标准</string>
+    <string name="danmu_speed_fast">快</string>
+    <string name="danmu_offset">时间偏移</string>
+    <string name="danmu_offset_reset">重置偏移</string>
+    <string name="danmu_match_section">弹幕匹配</string>
+    <string name="danmu_status_matching">正在按文件名匹配弹幕…</string>
+    <string name="danmu_status_loading">正在加载弹幕…</string>
+    <string name="danmu_status_unmatched">未匹配到弹幕，可尝试手动搜索</string>
+    <string name="danmu_status_count">%1$d 条弹幕</string>
+    <string name="danmu_status_manual_suffix">（手动选择）</string>
+    <string name="danmu_retry">重试</string>
+    <string name="danmu_auto_match">重新自动匹配</string>
+    <string name="danmu_search_section">手动搜索</string>
+    <string name="danmu_search_label">搜索片名</string>
+    <string name="danmu_search_action">搜索</string>
+    <string name="danmu_search_running">正在搜索…</string>
+    <string name="danmu_search_empty">没有搜索结果</string>
+    <string name="danmu_search_back">返回搜索结果</string>
+    <string name="danmu_episodes_empty">该动画没有分集</string>
+    <string name="danmu_unavailable">该服务器没有弹幕服务或暂无权限</string>
+
     <string name="player_exit_title">退出播放？</string>
     <string name="player_exit_message">当前进度已保存，下次可以从这里继续看</string>
     <string name="player_exit_confirm">退出</string>

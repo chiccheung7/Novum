@@ -85,4 +85,22 @@ class LogRedactionTest {
         assertFalse(safe.contains("k1"))
         assertFalse(safe.contains("k2"))
     }
+
+    @Test
+    fun masksDanmuPathToken() {
+        // UHDNOW 弹幕端点的 token 在 URL 路径里：/api/v1/danmu/{token}/api/v2/…
+        val raw = "GET https://smart.uhdnow.com/api/v1/danmu/0f1e2d3c-SECRET/api/v2/match failed"
+        val safe = LogRedaction.redact(raw)
+
+        assertFalse(safe.contains("0f1e2d3c-SECRET"))
+        assertTrue(safe.contains("/api/v1/danmu/***/api/v2/match"))
+        // 诊断信息保留
+        assertTrue(safe.contains("failed"))
+    }
+
+    @Test
+    fun keepsUrlsWithoutDanmuPathUntouched() {
+        val raw = "GET https://smart.uhdnow.com/emby/Users/1/Items 200"
+        assertEquals(raw, LogRedaction.redact(raw))
+    }
 }

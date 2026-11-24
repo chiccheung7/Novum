@@ -21,6 +21,7 @@ import com.novum.tv.model.Season
 import com.novum.tv.model.Episode
 import com.novum.tv.testing.FakeCapabilityProvider
 import com.novum.tv.testing.MainDispatcherRule
+import com.novum.tv.testing.NoopDanmuRepository
 import com.novum.tv.testing.NoopNovumLogger
 import com.novum.tv.testing.FakeSettingsRepository
 import kotlinx.coroutines.CoroutineScope
@@ -118,6 +119,7 @@ class PlayerViewModelPlanReloadTest {
         playback = playback,
         media = EmptyMediaRepository,
         settings = settings,
+        danmuRepository = NoopDanmuRepository,
         capability = FakeCapabilityProvider(),
         playbackPrefs = ItemPlaybackPrefsStore(
             File(ApplicationProvider.getApplicationContext<Context>().filesDir, "test_player_prefs.json"),
