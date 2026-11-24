@@ -6,7 +6,7 @@ package com.novum.tv.core.network
  * 用户可能在登录页输入任意形式的地址：
  * `192.168.5.26`、`192.168.5.26:8096`、`http://tv.local`、`https://demo.example.com/`。
  * HTTP 默认 8096，HTTPS 默认 443（标准端口；部分自建 Emby 用 8920，需显式填写），这里统一补齐协议与端口，并去掉尾部斜杠，
- * 保证 Retrofit 的 baseUrl 合法（必须以 `/` 结尾，由调用方拼接）。
+ * 保证 Retrofit 的 baseUrl 合法（必须以 `/` 结尾，由调用方拼接）。反代子路径（如 `/emby`）会被保留。
  *
  * 纯函数实现，便于单元测试穷举输入。
  */
@@ -25,6 +25,7 @@ object ServerAddress {
      * - 显式带 `http://` 或 `https://` 时只返回该协议；
      * - 不带协议时先 HTTP（局域网自建服务器最常见），再 HTTPS 兜底；
      * - 不带端口时补默认端口；
+     * - 保留反代子路径（如 `https://tv.local/emby` → `https://tv.local:443/emby`）；
      * - 非法输入返回空列表。
      *
      * @param raw 用户原始输入。
@@ -56,6 +57,9 @@ object ServerAddress {
     private fun build(scheme: String, hostAndPort: String): String? {
         val hostPart = hostAndPort.substringBefore('/')
         if (hostPart.isBlank()) return null
+        // 反代场景常见的子路径不能丢弃，否则请求会打到站点根路径而 404。
+        val rawPath = hostAndPort.substringAfter('/', missingDelimiterValue = "")
+        val path = if (rawPath.isBlank()) "" else "/" + rawPath.trim('/')
 
         val hasPort = hostPart.substringAfterLast(':', missingDelimiterValue = "")
             .toIntOrNull() != null
@@ -65,7 +69,7 @@ object ServerAddress {
             val port = if (scheme == "https") DEFAULT_HTTPS_PORT else DEFAULT_HTTP_PORT
             "$hostPart:$port"
         }
-        return "$scheme://$hostWithPort"
+        return "$scheme://$hostWithPort$path"
     }
 
     /**

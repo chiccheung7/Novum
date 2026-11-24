@@ -76,9 +76,32 @@ class DefaultMediaRepositoryDetailTest {
         assertEquals(2, episodes.size)
         assertEquals(1, episodes.first().seasonIndex)
         assertEquals(1, episodes.first().index)
+        // 季 id 用于详情页默认季定位（网关可能不给 ParentIndexNumber）
+        assertEquals("season-1", episodes.first().seasonId)
         assertTrue(episodes.first().played)
         assertEquals(0L, episodes.first().progressMs)
         assertEquals(45, episodes.first().runtimeMinutes)
+    }
+
+    @Test
+    fun seasonCastMergesEpisodePeopleByFrequency() = runTest(dispatcher) {
+        val repository = repository(DetailApi())
+
+        val cast = (repository.seasonCast("series-1", "season-1") as NovumResult.Success).value
+
+        // 张若昀两集都在 → 排第一；李沁/客串同频次，按首次出现顺序
+        assertEquals(listOf("张若昀", "李沁", "王启年"), cast.map { it.name })
+        assertEquals("范闲", cast.first().role)
+        assertEquals("客串", cast.last().role)
+    }
+
+    @Test
+    fun seasonCastReturnsEmptyWhenPeopleMissing() = runTest(dispatcher) {
+        val repository = repository(NoPeopleApi())
+
+        val cast = (repository.seasonCast("series-1", "season-1") as NovumResult.Success).value
+
+        assertTrue("季级无演员时应为空，由页面回落剧集级", cast.isEmpty())
     }
 
     @Test
@@ -113,14 +136,50 @@ class DefaultMediaRepositoryDetailTest {
 
         val episodes = (repository.episodes("series-1", "season-1") as NovumResult.Success).value
 
-// 分集 16:9 卡统一使用剧集横版主视觉。
+        // 分集 16:9 卡统一使用剧集横版主视觉。
         // ——链首 = 剧集 Thumb
         assertTrue(
-            episodes.all {
-                it.seriesWideUrl!!.contains("/Items/series-1/Images/Thumb") &&
-                    it.seriesWideUrl!!.contains("tag=thumb-tag")
+            episodes.all { episode ->
+                episode.seriesWideUrl?.contains("/Items/series-1/Images/Thumb") == true &&
+                    episode.seriesWideUrl.contains("tag=thumb-tag")
             },
         )
+    }
+
+    @Test
+    fun seriesNextUpFiltersOtherSeriesReturnedByGateway() = runTest(dispatcher) {
+        // 网关忽略 SeriesId，把全库 NextUp 首条（别的剧）也返回：必须客户端过滤，
+        // 否则详情页会拿别的剧的分集当定位锚点，默认季错到第一季。
+        val repository = repository(WrongSeriesNextUpApi())
+
+        val hint = (repository.seriesNextUp("series-1") as NovumResult.Success).value
+
+        assertEquals("mine-ep", hint?.id)
+        assertEquals(2, hint?.seasonIndex)
+        assertEquals("season-2", hint?.seasonId)
+    }
+
+    @Test
+    fun seriesNextUpFallsBackToSeriesResume() = runTest(dispatcher) {
+        // NextUp 只给了别的剧集 → 回查该剧续播分集作为定位锚点
+        val repository = repository(ResumeFallbackApi())
+
+        val hint = (repository.seriesNextUp("series-1") as NovumResult.Success).value
+
+        assertEquals("resume-ep", hint?.id)
+        assertEquals("season-2", hint?.seasonId)
+    }
+
+    @Test
+    fun seriesNextUpAcceptsSoleCandidateWithoutSeriesId() = runTest(dispatcher) {
+        // 极简网关完全不下发 SeriesId：无从核对，但整批都缺该字段时首条就是本剧的，
+        // 采信它比直接返回 null（详情页退回第一季）更符合实际
+        val repository = repository(NoSeriesIdNextUpApi())
+
+        val hint = (repository.seriesNextUp("series-1") as NovumResult.Success).value
+
+        assertEquals("no-series-id-ep", hint?.id)
+        assertEquals("season-1", hint?.seasonId)
     }
 
     private fun repository(api: EmbyApi): DefaultMediaRepository {
@@ -209,6 +268,7 @@ private class DetailApi : EmbyApiStub() {
         seriesId: String,
         userId: String,
         seasonId: String?,
+        limit: Int?,
         fields: String,
     ): QueryResultDto<ItemDto> = QueryResultDto(
         Items = listOf(
@@ -218,9 +278,14 @@ private class DetailApi : EmbyApiStub() {
                 IndexNumber = 1,
                 ParentIndexNumber = 1,
                 SeriesId = "series-1",
+                SeasonId = "season-1",
                 SeriesPrimaryImageTag = "poster-tag",
                 SeriesThumbImageTag = "thumb-tag",
                 RunTimeTicks = 27_000_000_000L,
+                People = listOf(
+                    PersonDto(Name = "张若昀", Role = "范闲", Type = "Actor", Id = "p1", PrimaryImageTag = "t1"),
+                    PersonDto(Name = "李沁", Role = "林婉儿", Type = "Actor", Id = "p2"),
+                ),
                 UserData = UserDataDto(Played = true),
             ),
             ItemDto(
@@ -229,9 +294,14 @@ private class DetailApi : EmbyApiStub() {
                 IndexNumber = 2,
                 ParentIndexNumber = 1,
                 SeriesId = "series-1",
+                SeasonId = "season-1",
                 SeriesPrimaryImageTag = "poster-tag",
                 SeriesThumbImageTag = "thumb-tag",
                 RunTimeTicks = 27_000_000_000L,
+                People = listOf(
+                    PersonDto(Name = "张若昀", Role = "范闲", Type = "Actor", Id = "p1"),
+                    PersonDto(Name = "王启年", Role = "客串", Type = "GuestStar", Id = "p4"),
+                ),
                 UserData = UserDataDto(Played = false, PlaybackPositionTicks = 1_000_000L),
             ),
         ),
@@ -249,4 +319,89 @@ private class DetailApi : EmbyApiStub() {
 private class NoIdApi : EmbyApiStub() {
     override suspend fun detail(uid: String, itemId: String, fields: String): ItemDto =
         ItemDto(Name = "无 id 条目", Type = "Movie")
+}
+
+/** NextUp 忽略 SeriesId：首条是别的剧集，第二条才是本剧。 */
+private class WrongSeriesNextUpApi : EmbyApiStub() {
+    override suspend fun nextUp(
+        uid: String,
+        limit: Int,
+        fields: String,
+        seriesId: String?,
+    ): QueryResultDto<ItemDto> = QueryResultDto(
+        Items = listOf(
+            ItemDto(Id = "other-ep", SeriesId = "series-2", ParentIndexNumber = 1, IndexNumber = 1),
+            ItemDto(
+                Id = "mine-ep",
+                SeriesId = "series-1",
+                SeasonId = "season-2",
+                ParentIndexNumber = 2,
+                IndexNumber = 5,
+            ),
+        ),
+    )
+}
+
+/** 极简网关：分集响应里没有 SeriesId 字段（无从核对归属）。 */
+private class NoSeriesIdNextUpApi : EmbyApiStub() {
+    override suspend fun nextUp(
+        uid: String,
+        limit: Int,
+        fields: String,
+        seriesId: String?,
+    ): QueryResultDto<ItemDto> = QueryResultDto(
+        Items = listOf(
+            ItemDto(
+                Id = "no-series-id-ep",
+                SeasonId = "season-1",
+                ParentIndexNumber = 1,
+                IndexNumber = 2,
+            ),
+        ),
+    )
+}
+
+/** NextUp 只返回别的剧集；本剧的进度要从 Resume 回查。 */
+private class ResumeFallbackApi : EmbyApiStub() {
+    override suspend fun nextUp(
+        uid: String,
+        limit: Int,
+        fields: String,
+        seriesId: String?,
+    ): QueryResultDto<ItemDto> = QueryResultDto(
+        Items = listOf(ItemDto(Id = "other-ep", SeriesId = "series-2")),
+    )
+
+    override suspend fun resume(
+        uid: String,
+        limit: Int,
+        parentId: String?,
+        mediaTypes: String,
+        fields: String,
+    ): QueryResultDto<ItemDto> = QueryResultDto(
+        Items = listOf(
+            ItemDto(
+                Id = "resume-ep",
+                SeriesId = "series-1",
+                SeasonId = "season-2",
+                ParentIndexNumber = 2,
+                IndexNumber = 4,
+            ),
+        ),
+    )
+}
+
+/** 分集没有 People（服务端只在剧集级挂演职员）。 */
+private class NoPeopleApi : EmbyApiStub() {
+    override suspend fun episodes(
+        seriesId: String,
+        userId: String,
+        seasonId: String?,
+        limit: Int?,
+        fields: String,
+    ): QueryResultDto<ItemDto> = QueryResultDto(
+        Items = listOf(
+            ItemDto(Id = "ep-1", SeriesId = "series-1", SeasonId = "season-1", ParentIndexNumber = 1, IndexNumber = 1),
+        ),
+    )
 }

@@ -26,6 +26,12 @@ class LogRedactionTest {
     }
 
     @Test
+    fun masksQuotedTokenValues() {
+        assertFalse(LogRedaction.redact("api_key=\"abc123DEF456\"").contains("abc123DEF456"))
+        assertFalse(LogRedaction.redact("token='secret-value'").contains("secret-value"))
+    }
+
+    @Test
     fun masksEmbyTokenHeader() {
         val raw = "headers: X-Emby-Token: 0f1e2d3c4b5a, Accept: application/json"
         val safe = LogRedaction.redact(raw)
@@ -49,6 +55,20 @@ class LogRedactionTest {
         assertFalse(safe.contains("s3cr3t"))
         assertTrue(safe.contains("alice"))
         assertTrue(safe.contains("demo.example.com"))
+    }
+
+    @Test
+    fun masksTokenInJsonBody() {
+        // 登录响应的 AccessToken 常被整段打进日志：键是带引号的 JSON 键、分隔符是冒号，
+        // 与查询串的 key=value 不是同一形态，必须单独覆盖
+        val raw = """{"User":{"Name":"alice"},"AccessToken":"0f1e2d3c4b5a","ServerId":"srv-1"}"""
+        val safe = LogRedaction.redact(raw)
+
+        assertFalse(safe.contains("0f1e2d3c4b5a"))
+        assertTrue(safe.contains("\"AccessToken\":***"))
+        // 非敏感字段保持原样，日志仍可读
+        assertTrue(safe.contains("alice"))
+        assertTrue(safe.contains("srv-1"))
     }
 
     @Test

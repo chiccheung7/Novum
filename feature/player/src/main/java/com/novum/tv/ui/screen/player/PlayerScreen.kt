@@ -52,8 +52,9 @@ import androidx.compose.foundation.layout.height
  * 放进 ViewModel 会在页面销毁后继续持有解码器，属于典型泄漏。
  *
  * @param onBack 退出播放。
- * @param onOpenEpisode 换集（下一集浮钮或抽屉选集）；第二参数为本次播放版本
- *   （null = 按画质策略/服务端默认）；替换当前播放页避免回退栈堆积。
+ * @param onOpenEpisode 换集（下一集浮钮/抽屉选集/自动连播）；第二参数为本次播放版本
+ *   （null = 按画质策略/服务端默认），第三参数为本集是否已播完（收尾上报用）；
+ *   替换当前播放页避免回退栈堆积。
  * @param modifier 外部修饰符。
  * @param viewModel 播放页 ViewModel。
  */
@@ -61,7 +62,7 @@ import androidx.compose.foundation.layout.height
 @Composable
 fun PlayerScreen(
     onBack: () -> Unit,
-    onOpenEpisode: (itemId: String, mediaSourceId: String?) -> Unit,
+    onOpenEpisode: (itemId: String, mediaSourceId: String?, finished: Boolean) -> Unit,
     modifier: Modifier = Modifier,
     viewModel: PlayerViewModel = hiltViewModel(),
 ) {
@@ -247,6 +248,25 @@ fun PlayerScreen(
         }
     }
 
+    /**
+     * 收尾位置：决定服务端怎么记账。
+     *
+     * - `finished = true`（自动连播、片尾浮钮、自然播完）→ 上报完整时长：本集
+     *   判为已看，NextUp 前进到下一集；
+     * - `finished = false` 但已在该集最后 5% → 同样按看完上报（片尾处手动退出
+     *   多半就是看完了，按 92% 上报会一直留在「看到一半」）；
+     * - 其余 → 实际位置，避免把半集误标成已看。
+     */
+    val stopPosition: (finished: Boolean) -> Long = { finished ->
+        val duration = player.duration
+        val position = player.currentPosition
+        when {
+            finished -> if (duration > 0) duration else position
+            duration > 0 && position >= duration - duration / 20 -> duration
+            else -> position
+        }
+    }
+
     Box(
         modifier = modifier
             .fillMaxSize()
@@ -286,6 +306,7 @@ fun PlayerScreen(
                     videoAspectRatio = videoAspectRatio,
                     title = state.title,
                     logoUrl = state.logoUrl,
+                    overview = state.overview,
                     subtitle = state.subtitle,
                     subtitleSize = state.subtitleSize,
                     onSubtitleSizeChanged = viewModel::setSubtitleSize,
@@ -294,12 +315,17 @@ fun PlayerScreen(
                     subtitlesEnabled = subtitlesEnabled,
                     chapters = state.chapters,
                     nextEpisodeId = state.nextEpisodeId,
-                    onOpenEpisode = onOpenEpisode,
+                    onOpenEpisode = { nextId, sourceId, finished ->
+                        // 换集 = 本集结束：必须先上报停止再替换播放页，否则服务端
+                        // 收不到结束位置（该集停在"看到一半"，NextUp 不前进）
+                        viewModel.onStopped(stopPosition(finished))
+                        onOpenEpisode(nextId, sourceId, finished)
+                    },
                     episodes = state.episodes,
                     currentEpisodeId = state.currentEpisodeId,
                     versionStrategy = state.versionStrategy,
                     onExit = {
-                        viewModel.onStopped(player.currentPosition)
+                        viewModel.onStopped(stopPosition(false))
                         onBack()
                     },
                     onMethodChanged = viewModel::onMethodChanged,

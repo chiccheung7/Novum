@@ -32,12 +32,14 @@ class PersonIndexStore(
 
     /** 批量并入（同名覆盖）；无有效人物 id 的条目跳过。 */
     suspend fun addAll(members: List<CastMember>) {
-        val valid = members
-            .filter { !it.id.isNullOrBlank() }
-            .map { PersonRef(name = it.name, personId = it.id!!, imageUrl = it.imageUrl) }
+        val valid = members.mapNotNull { member ->
+            val personId = member.id?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
+            PersonRef(name = member.name, personId = personId, imageUrl = member.imageUrl)
+        }
         if (valid.isEmpty()) return
         mutex.withLock {
-            val map = loadLocked()
+            // 读不出来就不写：拿空表落盘会把已积累的索引整片抹掉（下次访问会重试读盘）
+            val map = loadLocked() ?: return@withLock
             valid.forEach { ref -> map[ref.name] = ref }
             writeLocked(map)
         }
@@ -48,22 +50,31 @@ class PersonIndexStore(
         mutex.withLock {
             val q = query.trim()
             if (q.isEmpty()) return@withLock emptyList()
-            loadLocked().values
+            loadLocked()?.values.orEmpty()
                 .filter { it.name.contains(q, ignoreCase = true) }
                 .sortedBy { it.name.length }
                 .take(limit)
         }
 
-    private suspend fun loadLocked(): MutableMap<String, PersonRef> {
+    /**
+     * 读取索引；**null = 本次读盘失败**（IO 异常），调用方应放弃写入。
+     *
+     * 文件不存在 / 内容为空 → 正常空表（还没写过）；内容损坏 → 当空表重建
+     * （索引是「见过即记」的可重建数据，卡死在损坏内容上更糟）；
+     * 真正读失败 → null，且不缓存，下次访问重试读盘。
+     */
+    private suspend fun loadLocked(): MutableMap<String, PersonRef>? {
         cache?.let { return it }
-        val loaded = withContext(ioDispatcher) {
+        val loaded: Map<String, PersonRef> = withContext(ioDispatcher) {
             runCatching {
-                storeFile.takeIf { f -> f.exists() }?.readText()
-                    ?.let { text -> json.decodeFromString<Map<String, PersonRef>>(text) }
+                if (!storeFile.exists()) return@runCatching emptyMap<String, PersonRef>()
+                val text = storeFile.readText()
+                if (text.isBlank()) return@runCatching emptyMap<String, PersonRef>()
+                runCatching { json.decodeFromString<Map<String, PersonRef>>(text) }
+                    .getOrElse { emptyMap<String, PersonRef>() }
             }.getOrNull()
-        } ?: emptyMap()
-        cache = loaded.toMutableMap()
-        return cache!!
+        } ?: return null
+        return loaded.toMutableMap().also { cache = it }
     }
 
     private suspend fun writeLocked(map: Map<String, PersonRef>) {

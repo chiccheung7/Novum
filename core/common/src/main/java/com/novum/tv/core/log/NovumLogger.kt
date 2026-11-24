@@ -41,12 +41,20 @@ class AndroidNovumLogger(debugEnabled: Boolean) : NovumLogger {
     }
 
     override fun w(tag: String, message: String, throwable: Throwable?) {
-        val safe = LogRedaction.redact(message)
-        if (throwable == null) Log.w(tag, safe) else Log.w(tag, safe, throwable)
+        Log.w(tag, logText(message, throwable))
     }
 
     override fun e(tag: String, message: String, throwable: Throwable?) {
+        Log.e(tag, logText(message, throwable))
+    }
+
+    /**
+     * 异常 message / 栈帧里常带完整请求 URL（含 api_key），直接把 Throwable 交给
+     * Log.w/e 会绕过脱敏。这里把堆栈转成文本后一并脱敏，仍保留完整诊断信息。
+     */
+    private fun logText(message: String, throwable: Throwable?): String {
         val safe = LogRedaction.redact(message)
-        if (throwable == null) Log.e(tag, safe) else Log.e(tag, safe, throwable)
+        if (throwable == null) return safe
+        return safe + "\n" + LogRedaction.redact(throwable.stackTraceToString())
     }
 }

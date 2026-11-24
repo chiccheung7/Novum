@@ -31,14 +31,14 @@ bash ffmpeg-decoder/build.sh
 
 脚本做四件事：
 
-1. 下载 FFmpeg `release/6.0` 源码到 `decoder/src/main/jni/ffmpeg/`（已存在则跳过）
+1. 下载 FFmpeg `release/6.0` 分支源码到 `decoder/src/main/jni/ffmpeg/`（已存在则跳过）；该分支可能继续更新，严格复现某次产物时请记录当时的 commit
 2. 用 NDK 编译 `ac3 eac3 truehd dca` 四个解码器的静态库到四个 ABI（已存在则跳过）
 3. 复用根工程的 Gradle wrapper 编译出 `decoder-release.aar`
 4. 复制到 `app/libs/media3-ffmpeg-decoder.aar` 并打印 SHA-256
 
 想换解码器：改 `build.sh` 里的 `ENABLED_DECODERS`，删除
-`decoder/src/main/jni/ffmpeg/android-libs/` 后重跑。ABI 下限 `ANDROID_ABI` 必须
-不大于 App 的 `minSdk`（24）。
+`decoder/src/main/jni/ffmpeg/android-libs/` 后重跑。`ANDROID_ABI` 实际是编译用的 Android API 级别，
+不能高于 App 的 `minSdk`（24）。
 
 单独只编译 AAR（FFmpeg 已就绪时）：
 

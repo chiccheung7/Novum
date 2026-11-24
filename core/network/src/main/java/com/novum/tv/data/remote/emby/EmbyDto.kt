@@ -86,6 +86,8 @@ data class ItemDto(
     val ImageTags: Map<String, String> = emptyMap(),
     val BackdropImageTags: List<String> = emptyList(),
     val SeriesId: String? = null,
+    /** 分集所属季 id；比 `ParentIndexNumber` 更可靠（部分网关不下发季序号）。 */
+    val SeasonId: String? = null,
     val SeriesName: String? = null,
     val SeriesPrimaryImageTag: String? = null,
     /** 所属剧集横版缩略图版本号。 */

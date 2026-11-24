@@ -10,15 +10,15 @@
 
 私有仓库原有的 `HARMONYOS-FONT-LICENSE.txt` 是历史字体资源遗留；公开源码快照已排除该无关文件，现有 Inter 使用上面的 OFL 许可。
 
-## FFmpeg 音频解码扩展：源码快照与 Release 的差异
+## FFmpeg 音频解码扩展：可重建源码与历史 Release 的差异
 
-私有基线包含 `app/libs/media3-ffmpeg-decoder.aar`，但无法定位它的完整源码、构建配置和许可材料。公开源码快照不包含该文件，也不包含带有它的旧 Git 历史。维护者选择同时发布原始 `ad5fe33` 的完整 APK；该 Release APK 保留此扩展，不能用本项目 Apache-2.0 许可证重新授权其中的 FFmpeg 二进制。
+当前源码在 `ffmpeg-decoder/` 收录了 Media3 FFmpeg 扩展的可重建工程：Media3 1.11.1 的 Java/JNI 包装层源码、FFmpeg 6.0 静态库编译脚本和一键构建脚本。构建产物 `app/libs/media3-ffmpeg-decoder.aar` 不入库；放入该路径后由 App 的 `OffloadRenderersFactory` 自动启用。未执行构建时，公开版只依赖电视平台解码器。构建脚本、启用的解码器和许可边界见 [扩展说明](ffmpeg-decoder/README.md)。
 
-AAR SHA-256：`1E094BEB7DFB709C262F5B7CC5B1F8A2EFFD1C6415446B1204F32866AF9E216E`。本地 AAR 的 Java 包为 `androidx.media3.decoder.ffmpeg`，四种 ABI 含 `libffmpegJNI.so`。提供的 FFmpegKit 总仓库尚未与此产物建立具体版本或构建关系；目前没有声称完整源码和构建材料已经提供。
+历史私有基线曾包含 `app/libs/media3-ffmpeg-decoder.aar`，但当时无法定位其完整源码、构建配置和许可材料；公开源码快照未包含该文件，也不包含带有它的旧 Git 历史。维护者同时发布了原始 `ad5fe33` 的完整 APK，其中保留该历史扩展。历史 AAR 的 SHA-256 为 `1E094BEB7DFB709C262F5B7CC5B1F8A2EFFD1C6415446B1204F32866AF9E216E`；该哈希仅对应旧产物（Java 包 `androidx.media3.decoder.ffmpeg`，四种 ABI 含 `libffmpegJNI.so`），不代表按当前脚本重建出的 AAR。
 
-不能把 AndroidX Media3 Java/JNI 包装层的 Apache-2.0 许可直接套用于 FFmpeg 及整个 AAR。FFmpeg 的适用许可取决于实际源码和构建配置；当前缺少依据，不能确认该产物的完整许可与再分发条件。参考 [Media3 FFmpeg 扩展文档](https://github.com/androidx/media/blob/release/libraries/decoder_ffmpeg/README.md) 与 [FFmpeg 许可说明](https://ffmpeg.org/legal.html)。
+Java/JNI 包装层来自 AndroidX Media3，适用 Apache-2.0；按当前脚本编译的 FFmpeg 静态库未启用 `--enable-gpl` 或 `--enable-nonfree`，适用 LGPL 2.1+，条款见 [FFmpeg 许可文本](ffmpeg-decoder/LICENSE_FFMPEG_LGPLv2.1.txt)。不能把包装层的 Apache-2.0 许可直接套用于 FFmpeg 二进制或整个 AAR；分发含该 AAR 的 APK 时须遵守 LGPL 的源码提供与许可声明要求。历史 Release APK 中 FFmpeg 的实际构建配置仍未核实，不能依据当前脚本反推其许可证，也不能把整个 APK 视为 Apache-2.0 授权。参考 [Media3 FFmpeg 扩展文档](https://github.com/androidx/media/blob/release/libraries/decoder_ffmpeg/README.md) 与 [FFmpeg 许可说明](https://ffmpeg.org/legal.html)。
 
-以后引入此类扩展时，需要提供源码版本、补丁、NDK/编译配置、可复现构建脚本和适用许可材料，再测试音频回退能力。公开版目前依赖平台解码器，不能保证私有基线中由扩展提供的音频软解能力。
+引入或升级此类扩展时，应同步包装层与 App 的 Media3 版本，核对 FFmpeg 版本、补丁、NDK/编译配置和许可材料，并实测音频回退能力。
 
 ## Maven 依赖
 

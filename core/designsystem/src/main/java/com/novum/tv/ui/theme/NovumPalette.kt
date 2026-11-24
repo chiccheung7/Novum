@@ -48,6 +48,21 @@ object NovumPalette {
      */
     val PaperFaint: Color = Color(0x8FFFFFFF)
 
+    /** 滚动条轨道：Border@.45（玻璃面板里只作"还有内容"的参照，不抢内容层级）。 */
+    val ScrollbarTrack: Color = Color(0x733A3A3C)
+
+    /** 滚动条滑块：Paper@.60。 */
+    val ScrollbarThumb: Color = Color(0x99F5F5F7)
+
+    /**
+     * 列表行「选中未聚焦」底色：白 12%。
+     *
+     * 抽屉/设置面板的底色本身就是玻璃黑，原先复用的 [Glass] 叠上去几乎不可见，
+     * 远看只剩文字亮度差。改用一层淡白底把选中行从面板上"抬"出来，
+     * 再配合左侧竖条与行尾对勾（形状差异），三米外也能一眼分辨。
+     */
+    val RowSelected: Color = Color(0x1FFFFFFF)
+
     /** 播放器控件常态底·主档 #141418@.55。 */
     val Accent: Color = Color(0xFFFFFFFF)
 

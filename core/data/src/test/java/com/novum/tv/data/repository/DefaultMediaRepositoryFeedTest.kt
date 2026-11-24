@@ -268,7 +268,7 @@ private open class FeedApi : EmbyApiStub() {
             TotalRecordCount = 2,
         )
 
-    override suspend fun resume(uid: String, limit: Int, mediaTypes: String, fields: String) =
+    override suspend fun resume(uid: String, limit: Int, parentId: String?, mediaTypes: String, fields: String) =
         QueryResultDto(
             Items = listOf(
                 ItemDto(

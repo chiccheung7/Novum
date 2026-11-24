@@ -14,7 +14,7 @@ package com.novum.tv.data.settings
  * @param audioLanguage 音轨语言偏好（空串表示自动选最高规格）。
  * @param failedVideoCodecs 播放失败回写的视频编码列表（逗号分隔，协商时排除）。
  * @param skipIntro 是否自动跳过片头。
- * @param skipIntroSeconds 片头长度（秒），范围 15–600。
+ * @param skipIntroSeconds 片头长度（秒），设置页档位 30 / 60 / 90 / 120。
  * @param pinnedLineUrl 手动锁定的线路地址；空串表示未锁定，由测速选择线路。
  *   切线只影响媒体流域名，API 鉴权域保持不变。
  * @param pinnedLineName 锁定线路的显示名（`data[].name`），与 [pinnedLineUrl]

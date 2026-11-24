@@ -9,6 +9,11 @@ import androidx.compose.ui.unit.dp
  * 背景铺满视口；标题、静止首尾卡与关键按钮共用 [SafeHorizontal] 对齐线。
  * 横卡与海报卡分别使用 [CardWidth]、[PosterCardWidth]，间距由宿主布局选择。
  * 横向滚动行通过 contentPadding 留出安全边距，焦点滚动同时计入缩放溢出。
+ *
+ * **所有数值都是 960×540dp 设计画布口径**（Android TV 官方布局基准，MDPI 1:1）。
+ * 应用根节点 `TvViewport` 会把各电视上报的 density 归一化到该基准，同一套 dp
+ * 在任何分辨率/密度下保持相同比例——这里不需要、也不应该再按某台机器的
+ * "实际画布"换算或写像素值。
  */
 object NovumDimens {
 

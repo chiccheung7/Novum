@@ -49,6 +49,8 @@ import coil3.request.ImageRequest
  * @param requestSize 显式解码尺寸（像素）。默认 null = 按布局约束解码；
  *   与 `ImageRequest.size()` **预取**配对时必须传——Coil 的缓存 key 含解码
  *   尺寸，两边必须保持一致。
+ * @param onLoadState 加载结果回调：true = 成功显示，false = 失败。供调用方
+ *   在图片盖上来之后收起自己的占位内容（如 [NovumAvatar] 的首字）。
  */
 @Composable
 fun NovumImage(
@@ -58,6 +60,7 @@ fun NovumImage(
     contentScale: ContentScale = ContentScale.Crop,
     alignment: Alignment = Alignment.Center,
     requestSize: IntSize? = null,
+    onLoadState: ((Boolean) -> Unit)? = null,
 ) {
     if (url.isNullOrBlank()) return
     var loaded by remember(url) { mutableStateOf(false) }
@@ -98,11 +101,13 @@ fun NovumImage(
             onSuccess = { value ->
                 fromMemoryCache = value.result.dataSource == DataSource.MEMORY_CACHE
                 loaded = true
+                onLoadState?.invoke(true)
             },
             onError = { value ->
                 // 静默失败排查入口（NovumImage 无 error 分支，失败恒隐形）：
                 // 没有这行日志，「图为什么没上屏」只能靠猜
                 Log.e("NovumImage", "load error: $url -> ${value.result.throwable}")
+                onLoadState?.invoke(false)
             },
         )
     }

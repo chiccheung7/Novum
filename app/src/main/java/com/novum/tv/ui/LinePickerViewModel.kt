@@ -13,6 +13,8 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 
 /**
@@ -44,12 +46,24 @@ class LinePickerViewModel @Inject constructor(
         .map { PinnedLine(url = it.pinnedLineUrl, name = it.pinnedLineName) }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), PinnedLine())
 
+    /** 在途测速任务：快速反复开关弹窗时只保留最后一次结果。 */
+    private var refreshJob: Job? = null
+
     /** 打开弹窗时拉取线路列表（带测速；重复打开重新拉，量小不缓存 UI 态）。 */
     fun refresh() {
+        refreshJob?.cancel()
         _failed.value = false
         _lines.value = null
-        viewModelScope.launch {
-            val probed = runCatching { lineProbe.lines() }.getOrNull()
+        refreshJob = viewModelScope.launch {
+            // 只吞真正的探测失败（404/超时是常态）；取消必须原样抛出，否则被取消的
+            // 旧任务会继续往下走，把 _failed 置 true 盖掉新一次刷新正在加载的状态
+            val probed = try {
+                lineProbe.lines()
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                null
+            }
             if (probed == null || probed.isEmpty()) {
                 // 单线路（接口未部署/退化）也视为失败态：列表里只有当前服务器，
                 // 没有「选择」可言，不如明确告知沿用当前地址

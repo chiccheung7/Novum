@@ -154,10 +154,11 @@ fun NovumNavHost(
         composable<PlayerRoute> {
             PlayerScreen(
                 onBack = { navController.popBackStack() },
-                onOpenEpisode = { itemId, mediaSourceId ->
+                onOpenEpisode = { itemId, mediaSourceId, _ ->
                     // 上一集/下一集/抽屉选集：替换当前播放页而不是叠加——否则退出
                     // 播放要按 N 次返回才能回详情页（每次 Back 都回到上一集的播放页）。
-                    // mediaSourceId 非空 = 抽屉「每次询问」里选定的本次播放版本
+                    // mediaSourceId 非空 = 抽屉「每次询问」里选定的本次播放版本；
+                    // finished 只给播放页收尾上报用（是否已看完），导航侧无关
                     val currentPlayerId = navController.currentBackStackEntry?.destination?.id
                     navController.navigate(PlayerRoute(itemId, mediaSourceId = mediaSourceId)) {
                         if (currentPlayerId != null) {

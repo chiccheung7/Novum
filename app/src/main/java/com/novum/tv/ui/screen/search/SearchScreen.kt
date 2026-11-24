@@ -5,7 +5,6 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.ui.draw.clip
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.layout.Box
@@ -129,6 +128,8 @@ fun SearchScreen(
                             if (keyword.isNotEmpty()) {
                                 submitted = true
                                 viewModel.search(keyword, SearchType.All)
+                                // 关键词未变化时防抖不会重启，这里必须同步刷新人物命中
+                                personViewModel.search(keyword)
                             }
                         },
                     ),
@@ -176,7 +177,10 @@ fun SearchScreen(
                         state = current,
                         onRetry = {
                             val keyword = query.trim()
-                            if (keyword.isNotEmpty()) viewModel.search(keyword, SearchType.All)
+                            if (keyword.isNotEmpty()) {
+                                viewModel.search(keyword, SearchType.All)
+                                personViewModel.search(keyword)
+                            }
                         },
                         emptyMessage = stringResource(R.string.search_empty),
                     )
@@ -185,7 +189,10 @@ fun SearchScreen(
                         state = current,
                         onRetry = {
                             val keyword = query.trim()
-                            if (keyword.isNotEmpty()) viewModel.search(keyword, SearchType.All)
+                            if (keyword.isNotEmpty()) {
+                                viewModel.search(keyword, SearchType.All)
+                                personViewModel.search(keyword)
+                            }
                         },
                     )
 
@@ -216,13 +223,11 @@ private fun PersonHitChip(
             .clickable(onClick = onClick),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        com.novum.tv.ui.component.NovumImage(
+        // 无头像的人物不再留空白圆：首字 + 姓名哈希底色占位
+        com.novum.tv.ui.component.NovumAvatar(
             url = person.imageUrl,
-            contentDescription = person.name,
-            modifier = Modifier
-                .size(72.dp)
-                .clip(androidx.compose.foundation.shape.CircleShape)
-                .background(NovumPalette.Surface),
+            name = person.name,
+            size = 72.dp,
         )
         Text(
             text = person.name,

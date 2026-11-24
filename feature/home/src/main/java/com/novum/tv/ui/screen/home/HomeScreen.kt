@@ -243,9 +243,32 @@ fun HomeContent(
     }
 
     // 当前展示作品同时驱动背景和 Hero 信息块。
-    var displayEntry by remember(feed) { mutableStateOf(feed.hero.firstOrNull()) }
-    var heroRotateIndex by remember(feed) { mutableIntStateOf(0) }
+    // 状态不随 feed 实例重建：ON_RESUME 静默刷新返回新 HomeFeed 时，
+    // 用户已轮播到的作品必须保留，否则返回首页会突然跳回第一张。
+    var displayEntry by remember { mutableStateOf(feed.hero.firstOrNull()) }
+    var heroRotateIndex by remember { mutableIntStateOf(0) }
     var lastInteractionAt by remember { mutableLongStateOf(SystemClock.uptimeMillis()) }
+
+    LaunchedEffect(feed) {
+        val heroes = feed.hero
+        if (heroes.isEmpty()) {
+            displayEntry = null
+            heroRotateIndex = 0
+            return@LaunchedEffect
+        }
+        // 优先按 id 找回当前作品；找不到（该作品下线）才回落到当前轮播下标。
+        // 找回后必须把**轮播下标**对齐到它的新位置：静默刷新可能插入/重排作品，
+        // 下标留在旧位置会让下一次自动轮播跳到无关作品、或原地重复同一部。
+        val matchedIndex = displayEntry
+            ?.let { current -> heroes.indexOfFirst { it.id == current.id } }
+            ?: -1
+        heroRotateIndex = if (matchedIndex >= 0) {
+            matchedIndex
+        } else {
+            heroRotateIndex.coerceIn(0, heroes.lastIndex)
+        }
+        displayEntry = heroes[heroRotateIndex]
+    }
 
     // 用户操作信号：任何按键 +1（轮播计时重置；DPAD 导航本身就是按键事件）
     var interactionTick by remember { mutableIntStateOf(0) }

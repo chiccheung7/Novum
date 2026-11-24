@@ -102,14 +102,17 @@ import com.novum.tv.ui.theme.NovumShapes
  * @param videoAspectRatio 视频显示宽高比（onVideoSizeChanged + SAR/DAR；null 回落满屏）。
  *   部分设备会忽略 Surface 的等比声明并拉伸解码帧，因此 Surface 按显示比例定型。
  * @param title 标题。
+ * @param overview 影片/剧集简介（抽屉「简介」页；分集缺简介时兜底）。
  * @param subtitle 播放方式描述（控制条标题下不再常驻展示，仅抽屉·画质 tab 消费）。
  * @param subtitleSize 字幕字号档位。
  * @param subtitleOffsetLevel 字幕抬升档位（0=默认居中 1/2 往高 3/4 往低（五档双向））。
  * @param subtitlesEnabled 是否默认开启字幕。
  * @param chapters 章节列表。
  * @param nextEpisodeId 下一集 id（播放结束浮钮；null 不显示）。
- * @param onOpenEpisode 换集（下一集浮钮/抽屉选集）：第二参数 = 本次播放版本
- *   null = 按画质策略/服务端默认。
+ * @param onOpenEpisode 换集（下一集浮钮/抽屉选集/自动连播）：第二参数 = 本次播放版本
+ *   null = 按画质策略/服务端默认；第三参数 `finished` = 本集是否已播完（自动连播、
+ *   片尾浮钮、自然播完为 true；抽屉中途选集为 false），供收尾上报区分「看完」与
+ *   「看一半换集」。
  * @param onExit 退出播放。
  * @param onMethodChanged 兜底切换后回调新的播放方式。
  * @param onRequestTranscode 请求服务端转码。
@@ -128,6 +131,7 @@ internal fun PlayerStage(
     title: String,
     /** 左上角 ClearLogo（标题位换透明底标题图）；null 回落文本标题。 */
     logoUrl: String?,
+    overview: String? = null,
     subtitle: String,
     subtitleSize: Int,
     /** 字幕字号切换回调（抽屉字幕 tab 的调节入口）。 */
@@ -138,8 +142,11 @@ internal fun PlayerStage(
     subtitlesEnabled: Boolean,
     chapters: List<Chapter>,
     nextEpisodeId: String?,
-    /** 换集：第二参数 = 本次播放版本（MediaSource id）；null = 按画质策略/服务端默认。 */
-    onOpenEpisode: (itemId: String, mediaSourceId: String?) -> Unit,
+    /**
+     * 换集：第二参数 = 本次播放版本（MediaSource id），null = 按画质策略/服务端默认；
+     * 第三参数 = 本集是否已播完（见 KDoc）。
+     */
+    onOpenEpisode: (itemId: String, mediaSourceId: String?, finished: Boolean) -> Unit,
     /** 当前季分集（抽屉「选集」页）；电影为空。 */
     episodes: List<Episode> = emptyList(),
     /** 当前播放分集 id（抽屉选集页高亮）；电影为 null。 */
@@ -167,14 +174,20 @@ internal fun PlayerStage(
     var buffering by remember { mutableStateOf(false) }
     var cueText by remember { mutableStateOf("") }
     val cueHandler = remember { android.os.Handler(android.os.Looper.getMainLooper()) }
+    val cueScheduler = remember(cueHandler) { CueDelayScheduler(cueHandler) { cueText = it } }
     var audioLabel by remember { mutableStateOf("") }
     // 音频输出路径文案（信息面板实时展示）；取好在协程里捕获，避免 Composable 上下文外调用
     val audioPcmText = stringResource(R.string.player_audio_out_pcm)
     val audioBitstreamText = stringResource(R.string.player_audio_out_bitstream)
     val audioPcmFallbackText = stringResource(R.string.player_audio_out_pcm_fallback)
     var subtitleLabel by remember { mutableStateOf("") }
-    // 倍速：初始值来自设置记忆（跨片沿用），切档经回调持久化
+    // 倍速：初始值来自设置记忆（跨片沿用），切档经回调持久化。
+    // 仅把值写进 State 不够——播放器实例不会自己套用记忆档，必须显式 setPlaybackSpeed。
     var speed by remember(plan.url) { mutableFloatStateOf(initialSpeed) }
+    LaunchedEffect(player, initialSpeed) {
+        speed = initialSpeed
+        player.setPlaybackSpeed(initialSpeed)
+    }
     // 画面缩放模式：按片源重置——切集/换片回到默认「适应」
     var scaleMode by remember(plan.url) { mutableStateOf(VideoScaleMode.Fit) }
     var notice by remember { mutableStateOf<String?>(null) }
@@ -256,6 +269,8 @@ internal fun PlayerStage(
     val chaptersLive by rememberUpdatedState(chapters)
     val playbackFailedLive by rememberUpdatedState(playbackFailed)
     val openEpisodeLive by rememberUpdatedState(onOpenEpisode)
+    // 字幕延迟在抽屉里实时变化，listener 只随 player 注册，必须读最新值
+    val subtitleDelayLive by rememberUpdatedState(subtitleDelayMs)
     var nextEpisodeDismissed by remember { mutableStateOf(false) }
     var nextEpisodeFocused by remember { mutableStateOf(false) }
     val nextEpisodeRequester = remember { FocusRequester() }
@@ -364,21 +379,30 @@ internal fun PlayerStage(
             override fun onPlaybackStateChanged(playbackState: Int) {
                 // 暂停时不显示缓冲动画：暂停状态下的 BUFFERING 是正常现象，转圈会让人以为卡住
                 buffering = playbackState == Player.STATE_BUFFERING && player.playWhenReady
-                // 播放完成自动退出：按结束位置上报停止（服务端
-                // 据此标记已看）后返回上一页；「下一集」由浮钮手动选择，不自动连播
-                if (playbackState == Player.STATE_ENDED) exitCallback()
+                if (playbackState == Player.STATE_ENDED) {
+                    val nextId = nextEpisodeIdLive
+                    // 片尾切换点贴近结尾时，位置轮询可能还没采到切换点就 ENDED；
+                    // 自动连播条件仍成立则在这里换集，否则走既有退出上报链路。
+                    if (!autoNextFired && autoNextEnabledLive && !autoNextCancelled &&
+                        !playbackFailedLive && nextId != null
+                    ) {
+                        autoNextFired = true
+                        autoNextSecondsLeft.intValue = 0
+                        // 自然播完/片尾换集：本集已看完
+                        openEpisodeLive(nextId, null, true)
+                    } else if (!autoNextFired) {
+                        exitCallback()
+                    }
+                    // autoNextFired 为 true 时换集已发起，不能再把新页 Pop 掉
+                }
             }
 
             override fun onCues(cueGroup: CueGroup) {
                 val text = cueGroup.cues
                     .mapNotNull { it.text?.toString()?.takeIf(String::isNotBlank) }
                     .joinToString("\n")
-                // 字幕延迟微调：正延迟 = 字幕推迟显示
-                if (subtitleDelayMs > 0) {
-                    cueHandler.postDelayed({ cueText = text }, subtitleDelayMs)
-                } else {
-                    cueText = text
-                }
+                // 字幕延迟微调：撤销上一条未执行任务，避免旧 cue 覆盖新 cue
+                cueScheduler.submit(text, subtitleDelayLive)
                 // 字幕是外挂文件，出问题时（轨已选中但屏幕没字）没有别的观测点，
                 // 这条日志是排查「字幕轨通、渲染不通」的唯一线索；Release 自动静默。
                 if (BuildConfig.DEBUG && text.isNotEmpty()) {
@@ -392,16 +416,19 @@ internal fun PlayerStage(
             }
 
             override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
-                // 只记录错误次数，真正切换放到 LaunchedEffect：listener 里读不到最新的兜底状态
-                playerErrorTick++
+                // 只记录错误次数，真正切换放到 LaunchedEffect：listener 里读不到最新的兜底状态。
+                // 播放器回调不保证在主线程，Compose State 统一投递到主线程再写。
+                cueHandler.post { playerErrorTick++ }
             }
 
             // 实时状态的画面尺寸（画质 tab）：与 PlayerScreen 里算显示比例的
             // 监听并存——那边要 SAR/DAR，这边只要原始宽高
             override fun onVideoSizeChanged(videoSize: VideoSize) {
                 if (videoSize.width > 0 && videoSize.height > 0) {
-                    liveStats.videoWidth = videoSize.width
-                    liveStats.videoHeight = videoSize.height
+                    cueHandler.post {
+                        liveStats.videoWidth = videoSize.width
+                        liveStats.videoHeight = videoSize.height
+                    }
                 }
             }
         }
@@ -413,12 +440,17 @@ internal fun PlayerStage(
                 droppedFrames: Int,
                 elapsedMs: Long,
             ) {
-                liveStats.droppedFrames += droppedFrames
+                // AnalyticsListener 可能在播放器线程回调，State 写入投递到主线程
+                cueHandler.post { liveStats.droppedFrames += droppedFrames }
             }
         }
         player.addListener(listener)
         player.addAnalyticsListener(analytics)
         onDispose {
+            cueScheduler.cancel()
+            // 丢帧/尺寸/错误等回调投递到主线程的写 State 任务随页面一起清掉，
+            // 避免已退出播放页后仍有积压任务写 Compose State
+            cueHandler.removeCallbacksAndMessages(null)
             player.removeListener(listener)
             player.removeAnalyticsListener(analytics)
         }
@@ -433,7 +465,11 @@ internal fun PlayerStage(
     LaunchedEffect(plan.url) {
         delay(PLAYBACK_START_TIMEOUT_MS)
         val ready = player.playbackState == Player.STATE_READY
-        if (!ready && player.playbackState != Player.STATE_ENDED) {
+        // 已经切过兜底/转码/失败时不再重复触发：fallback 流自身缓冲慢是正常现象，
+        // 旧定时器到点误判会把正在加载的 fallback 顶掉，无谓再走一次转码。
+        if (!ready && player.playbackState != Player.STATE_ENDED &&
+            !fallbackUsed && !transcodeRequested && !playbackFailed
+        ) {
             switchToFallback(player.currentPosition)
         }
     }
@@ -497,7 +533,8 @@ internal fun PlayerStage(
                     pos >= switchAt -> {
                         autoNextFired = true
                         autoNextSecondsLeft.intValue = 0
-                        openEpisodeLive(nextId, null)
+                        // 倒计时归零 = 按「看完」收尾
+                        openEpisodeLive(nextId, null, true)
                     }
 
                     pos >= windowStart -> autoNextSecondsLeft.intValue =
@@ -926,7 +963,8 @@ internal fun PlayerStage(
             modifier = Modifier.align(Alignment.BottomEnd),
         ) {
             NovumButton(
-                onClick = { nextEpisodeId?.let { onOpenEpisode(it, null) } },
+                // 浮钮只在片尾 60 秒内出现：点了就是「看完换下一集」
+                onClick = { nextEpisodeId?.let { onOpenEpisode(it, null, true) } },
                 modifier = Modifier
                     .padding(
                         end = NovumDimens.SafeHorizontal,
@@ -1029,68 +1067,70 @@ internal fun PlayerStage(
         // 文字显示不全」根治——根因 = 根级死区吞掉极端行的收尾补滚）
         NovumNoScrollDeadZone {
             PlayerSettingsDrawer(
-            visible = drawerVisible,
-            initialTab = drawerTab,
-            onTabsFocusChanged = { drawerTabsFocused = it },
-            onAdjustFocusChanged = { drawerAdjusting = it },
-            audioTracks = audioTracks,
-            textTracks = textTracks,
-            passthrough = audioPassthrough,
-            plan = plan,
-            subtitle = subtitle,
-            audioLabel = audioLabel,
-            subtitleLabel = subtitleLabel,
-            liveStats = liveStats,
-            chapters = chapters,
-            audioDelayMs = audioDelayMs,
-            onAudioDelayChanged = onAudioDelayChanged,
-            subtitleDelayMs = subtitleDelayMs,
-            onSubtitleDelayChanged = onSubtitleDelayChanged,
-            subtitleSize = subtitleSize,
-            onSubtitleSizeChanged = onSubtitleSizeChanged,
-            subtitleOffsetLevel = subtitleOffsetLevel,
-            onSubtitleOffsetLevelChanged = onSubtitleOffsetLevelChanged,
-            onSelectAudio = { option ->
-                selectTrack(player, option, isText = false)
-                onRememberTrack(option, false)
-            },
-            onSelectText = { option ->
-                selectTrack(player, option, isText = true)
-                onRememberTrack(option, true)
-            },
-            onTogglePassthrough = {
-                drawerVisible = false
-                onSetPassthrough(!audioPassthrough)
-                notice = reloadingNotice
-            },
-            currentPosition = scrubTarget ?: position.longValue,
-            onSelectChapter = { chapter ->
-                player.seekTo(chapter.startMs)
-                position.longValue = chapter.startMs
-                drawerVisible = false
-                controlsVisible = true
-            },
-            episodes = episodes,
-            currentEpisodeId = currentEpisodeId,
-            // 选集中的某一集：关抽屉后**直接换集播放**——
-            // 多版本 + 「优先视频质量 = 每次询问」时先弹版本层，选完按该版本起播
-            // 单版本/其他策略档直接换集（不绕回详情页）
-            onSelectEpisode = { episodeId ->
-                drawerVisible = false
-                // 点当前集本身不换集（避免无谓重载）
-                if (episodeId != currentEpisodeId) {
-                    val target = episodes.firstOrNull { it.id == episodeId }
-                    if (target != null &&
-                        target.versions.size > 1 &&
-                        versionStrategy.equals(ASK_STRATEGY, ignoreCase = true)
-                    ) {
-                        versionPickEpisode = target
-                    } else {
-                        onOpenEpisode(episodeId, null)
+                visible = drawerVisible,
+                initialTab = drawerTab,
+                onTabsFocusChanged = { drawerTabsFocused = it },
+                onAdjustFocusChanged = { drawerAdjusting = it },
+                audioTracks = audioTracks,
+                textTracks = textTracks,
+                passthrough = audioPassthrough,
+                plan = plan,
+                title = title,
+                subtitle = subtitle,
+                overview = overview,
+                audioLabel = audioLabel,
+                subtitleLabel = subtitleLabel,
+                liveStats = liveStats,
+                chapters = chapters,
+                audioDelayMs = audioDelayMs,
+                onAudioDelayChanged = onAudioDelayChanged,
+                subtitleDelayMs = subtitleDelayMs,
+                onSubtitleDelayChanged = onSubtitleDelayChanged,
+                subtitleSize = subtitleSize,
+                onSubtitleSizeChanged = onSubtitleSizeChanged,
+                subtitleOffsetLevel = subtitleOffsetLevel,
+                onSubtitleOffsetLevelChanged = onSubtitleOffsetLevelChanged,
+                onSelectAudio = { option ->
+                    selectTrack(player, option, isText = false)
+                    onRememberTrack(option, false)
+                },
+                onSelectText = { option ->
+                    selectTrack(player, option, isText = true)
+                    onRememberTrack(option, true)
+                },
+                onTogglePassthrough = {
+                    drawerVisible = false
+                    onSetPassthrough(!audioPassthrough)
+                    notice = reloadingNotice
+                },
+                currentPosition = scrubTarget ?: position.longValue,
+                onSelectChapter = { chapter ->
+                    player.seekTo(chapter.startMs)
+                    position.longValue = chapter.startMs
+                    drawerVisible = false
+                    controlsVisible = true
+                },
+                episodes = episodes,
+                currentEpisodeId = currentEpisodeId,
+                // 选集中的某一集：关抽屉后**直接换集播放**——
+                // 多版本 + 「优先视频质量 = 每次询问」时先弹版本层，选完按该版本起播
+                // 单版本/其他策略档直接换集（不绕回详情页）
+                onSelectEpisode = { episodeId ->
+                    drawerVisible = false
+                    // 点当前集本身不换集（避免无谓重载）
+                    if (episodeId != currentEpisodeId) {
+                        val target = episodes.firstOrNull { it.id == episodeId }
+                        if (target != null &&
+                            target.versions.size > 1 &&
+                            versionStrategy.equals(ASK_STRATEGY, ignoreCase = true)
+                        ) {
+                            versionPickEpisode = target
+                        } else {
+                            onOpenEpisode(episodeId, null, false)
+                        }
                     }
-                }
-            },
-            modifier = Modifier.align(Alignment.CenterEnd),
+                },
+                modifier = Modifier.align(Alignment.CenterEnd),
             )
         }
 
@@ -1104,7 +1144,7 @@ internal fun PlayerStage(
                 onSelect = { index ->
                     val version = episode.versions.getOrNull(index)
                     versionPickEpisode = null
-                    onOpenEpisode(episode.id, version?.sourceId)
+                    onOpenEpisode(episode.id, version?.sourceId, false)
                 },
                 onDismiss = { versionPickEpisode = null },
             )
@@ -1160,6 +1200,37 @@ internal fun PlayerStage(
                 }
             }
         }
+    }
+}
+
+/**
+ * 字幕延迟调度：新 cue 到达时先撤销上一条未执行的延迟任务，
+ * 延迟归零时立即显示且不再排任务，避免旧字幕覆盖新字幕。
+ */
+private class CueDelayScheduler(
+    private val handler: android.os.Handler,
+    private val onText: (String) -> Unit,
+) {
+    private var pending: Runnable? = null
+
+    fun submit(text: String, delayMs: Long) {
+        pending?.let(handler::removeCallbacks)
+        pending = null
+        if (delayMs > 0) {
+            val runnable = Runnable {
+                pending = null
+                onText(text)
+            }
+            pending = runnable
+            handler.postDelayed(runnable, delayMs)
+        } else {
+            onText(text)
+        }
+    }
+
+    fun cancel() {
+        pending?.let(handler::removeCallbacks)
+        pending = null
     }
 }
 

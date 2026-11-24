@@ -50,6 +50,9 @@ class DefaultAuthRepository @Inject constructor(
         }
 
         var lastError: NovumError = NovumError.Unknown()
+        // 多候选地址时，网络错误常常只是「另一个候选不可达」，而鉴权错误才是用户真正要修的。
+        // 不能让最后一条候选的网络错误覆盖前面更准确的 401。
+        var sawUnauthorized = false
         for (baseUrl in candidates) {
             try {
                 val api = clients.api(baseUrl)
@@ -60,6 +63,7 @@ class DefaultAuthRepository @Inject constructor(
                 val userId = user.Id
                 if (token.isNullOrBlank() || userId.isNullOrBlank()) {
                     lastError = NovumError.Unauthorized()
+                    sawUnauthorized = true
                     continue
                 }
 
@@ -91,10 +95,12 @@ class DefaultAuthRepository @Inject constructor(
             } catch (cancellation: CancellationException) {
                 throw cancellation
             } catch (throwable: Throwable) {
-                lastError = throwable.toNovumError()
+                val error = throwable.toNovumError()
+                if (error is NovumError.Unauthorized) sawUnauthorized = true
+                lastError = error
             }
         }
-        failureOf(lastError)
+        failureOf(if (sawUnauthorized) NovumError.Unauthorized() else lastError)
     }
 
     override suspend fun restore(): Session? = withContext(dispatchers.io) {

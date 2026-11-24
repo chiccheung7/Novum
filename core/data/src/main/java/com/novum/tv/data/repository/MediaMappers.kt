@@ -4,6 +4,7 @@ import com.novum.tv.data.remote.emby.EmbyImages
 import com.novum.tv.data.remote.emby.ItemDto
 import com.novum.tv.data.remote.emby.MediaSourceDto
 import com.novum.tv.data.remote.emby.MediaStreamDto
+import com.novum.tv.data.remote.emby.PersonDto
 import com.novum.tv.data.text.MediaStrings
 import com.novum.tv.model.CastMember
 import com.novum.tv.model.Chapter
@@ -167,22 +168,55 @@ private fun formatBitrate(bps: Long): String = when {
 
     /** People[] → 演职员模型（详情 cast 与本地人物索引共用）。 */
     internal fun ItemDto.toCastMembers(server: String, strings: MediaStrings): List<CastMember> =
-        People.mapNotNull { person ->
-            val name = person.Name ?: return@mapNotNull null
-            CastMember(
-                name = name,
-                role = person.Role?.takeIf { it.isNotBlank() } ?: person.Type.personTypeLabel(strings),
-                imageUrl = person.Id?.let { personId ->
-                    EmbyImages.primary(
-                        server = server,
-                        itemId = personId,
-                        tag = person.PrimaryImageTag,
-                        maxWidth = 240,
-                    )
-                },
-                id = person.Id,
-            )
+        People.toCastMembers(server, strings)
+
+    /** People[] → 演职员模型（详情/季级聚合共用）。 */
+    internal fun List<PersonDto>.toCastMembers(server: String, strings: MediaStrings): List<CastMember> =
+        mapNotNull { person -> person.toCastMember(server, strings) }
+
+    /**
+     * 多集 `People[]` 合并为季级演职员。
+     *
+     * 同一演员通常出现在整季各集，客串只出现在个别集：按**出现集数降序**排序，
+     * 同频次保持首次出现顺序（主角在前）。按人物 id 去重，缺 id 时按姓名。
+     */
+    internal fun List<ItemDto>.toSeasonCast(server: String, strings: MediaStrings): List<CastMember> {
+        val seen = LinkedHashMap<String, Pair<PersonDto, Int>>()
+        forEach { dto ->
+            for (person in dto.People) {
+                val name = person.Name?.takeIf { it.isNotBlank() } ?: continue
+                val key = person.Id?.takeIf { it.isNotBlank() } ?: name.lowercase()
+                val existing = seen[key]
+                seen[key] = if (existing == null) {
+                    person to 1
+                } else {
+                    existing.first to (existing.second + 1)
+                }
+            }
         }
+        return seen.values
+            .sortedByDescending { (_, count) -> count }
+            .mapNotNull { (person, _) -> person.toCastMember(server, strings) }
+            .take(MAX_CAST)
+    }
+
+    /** 单个人物 → 演职员模型；姓名缺失（无法上屏）返回 null。 */
+    private fun PersonDto.toCastMember(server: String, strings: MediaStrings): CastMember? {
+        val name = Name?.takeIf { it.isNotBlank() } ?: return null
+        return CastMember(
+            name = name,
+            role = Role?.takeIf { it.isNotBlank() } ?: Type.personTypeLabel(strings),
+            imageUrl = Id?.let { personId ->
+                EmbyImages.primary(
+                    server = server,
+                    itemId = personId,
+                    tag = PrimaryImageTag,
+                    maxWidth = 240,
+                )
+            },
+            id = Id,
+        )
+    }
 
     /**
      * Emby 条目 → 详情模型。
@@ -346,6 +380,7 @@ internal fun ItemDto.toEpisode(server: String, index: Int, strings: MediaStrings
         versions = MediaSources.mapIndexedNotNull { index, sourceDto ->
             sourceDto.toVersionOption(index, strings)
         }.distinctBy { it.sourceId },
+        seasonId = SeasonId,
     )
 }
 

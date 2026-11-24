@@ -15,7 +15,6 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Alignment
@@ -37,7 +36,7 @@ import com.novum.tv.model.Episode
 import com.novum.tv.ui.component.NovumButton
 import com.novum.tv.ui.component.NovumCard
 import com.novum.tv.ui.component.NovumFocusScrollScope
-import com.novum.tv.ui.component.NovumImage
+import com.novum.tv.ui.component.NovumAvatar
 import com.novum.tv.ui.component.tvFocusScale
 import com.novum.tv.ui.icon.NovumIcons
 import com.novum.tv.ui.theme.NovumDimens
@@ -260,6 +259,11 @@ internal fun CastRow(
     cast: List<CastMember>,
     onOpenPerson: (personId: String, personName: String) -> Unit,
 ) {
+    val listState = rememberLazyListState()
+    // 切季换人后回到行首：沿用上一季的滚动位置会从半截开始展示新演员
+    LaunchedEffect(cast) {
+        runCatching { listState.scrollToItem(0) }
+    }
     Column {
         Text(
             text = stringResource(R.string.detail_cast),
@@ -274,6 +278,7 @@ internal fun CastRow(
         // 空专注时它是惰性的，不会改变滚动行为（FocusContractTest，家规）
         NovumFocusScrollScope {
             LazyRow(
+                state = listState,
                 // 夹住式边距（Google TV 风格）：视口内缩 46dp，切边恒定不贴物理边
                 // 首卡 = 68 - 10（FocusBleed）+ 10 = 68dp，与标题左界对齐
                 modifier = Modifier.padding(horizontal = NovumDimens.SafeHorizontal - NovumDimens.FocusBleed),
@@ -285,7 +290,8 @@ internal fun CastRow(
                     bottom = NovumDimens.FocusBleed,
                 ),
             ) {
-                items(items = cast, key = { it.name + it.role.orEmpty() }) { member ->
+                // 同名同角色的群众演员很常见，必须用 id 作 key，否则重复 key 会让 LazyRow 崩溃
+                items(items = cast, key = { it.id ?: (it.name + it.role.orEmpty()) }) { member ->
                     CastAvatar(member = member, onOpenPerson = onOpenPerson)
                 }
             }
@@ -310,15 +316,12 @@ private fun CastAvatar(
             },
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        // 去掉头像下的 Surface(N10 #141418) 实底——它是不透明深灰
-        // 头像 PNG 的透明区 / 加载期会透出这层，聚焦放大时边缘灰边更明显
-        // 观感像「聚焦时多了一层浅遮罩」。无图时自然透明即可。
-        NovumImage(
+        // 无图/加载中由 NovumAvatar 画"首字 + 低饱和底色"占位：
+        // 一排演员里缺图的那几个不再是一块空白，加载完成再淡入真图
+        NovumAvatar(
             url = member.imageUrl,
-            contentDescription = member.name,
-            modifier = Modifier
-                .size(CAST_AVATAR_SIZE)
-                .clip(CircleShape),
+            name = member.name,
+            size = CAST_AVATAR_SIZE,
         )
         Spacer(modifier = Modifier.height(6.dp))
         Text(

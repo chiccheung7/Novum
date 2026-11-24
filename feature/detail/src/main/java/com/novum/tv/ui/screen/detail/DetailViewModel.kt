@@ -10,8 +10,10 @@ import com.novum.tv.core.designsystem.R
 import com.novum.tv.core.log.NovumLogger
 import com.novum.tv.core.result.NovumResult
 import com.novum.tv.core.state.UiState
+import com.novum.tv.data.repository.ItemPlaybackPrefsStore
 import com.novum.tv.data.repository.MediaRepository
 import com.novum.tv.data.settings.SettingsRepository
+import com.novum.tv.model.CastMember
 import com.novum.tv.model.Episode
 import com.novum.tv.model.MediaDetail
 import com.novum.tv.model.MediaVersionOption
@@ -28,6 +30,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
@@ -56,6 +59,14 @@ data class DetailUiState(
     val playedFailed: Boolean = false,
     val episodesFailed: Boolean = false,
 
+    /**
+     * 当前播放目标（剧集为当前集、电影为条目本身）记忆的版本 sourceId；
+     * 版本浮层据此高亮，选择后同步更新。
+     *
+     * 记忆键必须与播放层一致：播放器按**分集 id** 读取条目级偏好，详情页若
+     * 写剧集 id，选过的版本在起播时永远不会生效。
+     */
+    val rememberedMediaSourceId: String? = null,
     /**
      * 优先视频质量策略（设置页 `AppSettings.versionStrategy`，加
      * 「每次询问」档）：`ask` = 播放按钮 OK 时先弹版本选择；其余档由播放层按
@@ -87,6 +98,15 @@ data class DetailUiState(
      * 焦点保持在分集卡上不被抢走。
      */
     val episodeContextFromEntry: Boolean = false,
+
+    /**
+     * 当前季的演职员；null = 未加载/该季无演职员数据，页面回落到剧集条目级
+     * [MediaDetail.cast]。
+     *
+     * 剧集条目级 People 是全剧口径，分季换角/客串体现不出来；切季后按新季
+     * 重新聚合，加载期间先回落剧集级，避免演职员行闪烁消失。
+     */
+    val seasonCast: List<CastMember>? = null,
 ) {
 
     /** 详情数据，非成功态为 null。 */
@@ -176,7 +196,8 @@ data class DetailUiState(
  *
  * 加载策略：
  * 1. 先取条目详情并展示
- * 2. 若是剧集，再取季列表并自动选中第一季、加载该季分集
+ * 2. 若是剧集，再取季列表与 NextUp：默认季跟随正在看的那一集（季 id 优先、
+ *    季序号兜底），加载该季分集与季级演职员
  * 3. 任一失败只影响对应区域，详情已展示时不会整页回退到错误态。
  *
  * @param repository 媒体库仓储。
@@ -191,6 +212,7 @@ class DetailViewModel @Inject constructor(
     private val repository: MediaRepository,
     private val toast: ToastSink,
     private val settings: SettingsRepository,
+    private val playbackPrefs: ItemPlaybackPrefsStore,
     private val logger: NovumLogger,
     @ApplicationContext private val appContext: Context,
     savedStateHandle: SavedStateHandle,
@@ -206,6 +228,20 @@ class DetailViewModel @Inject constructor(
     private val _state = MutableStateFlow(DetailUiState())
     val state: StateFlow<DetailUiState> = _state.asStateFlow()
 
+    /** 分集加载任务：连续切季时取消旧请求，避免旧季结果覆盖新季。 */
+    private var episodesJob: Job? = null
+
+    /** 季级演职员任务：与分集同步切换，旧季演员不能覆盖新季。 */
+    private var seasonCastJob: Job? = null
+
+    /** 版本记忆读取任务：播放目标变化时只保留最后一次结果。 */
+    private var versionJob: Job? = null
+
+    /**
+     * 版本记忆读取代次：用户刚选过版本后，更早发出的读取不能把它覆盖回旧值。
+     */
+    private var versionEpoch = 0
+
     init {
         load()
         // 优先视频质量策略：设置页改动即时反映到播放按钮行为（「每次询问」档
@@ -220,14 +256,57 @@ class DetailViewModel @Inject constructor(
         }
     }
 
+    /**
+     * 读取**当前播放目标**的记忆版本，供版本浮层高亮。
+     *
+     * 播放层按分集 id 读取条目偏好（见 PlayerViewModel.load），这里必须用同一
+     * 个 id；电影则回落到条目 id。读取失败保持 null（走服务端默认）。
+     */
+    private fun refreshRememberedVersion() {
+        val targetId = _state.value.currentEpisode?.id ?: itemId
+        val epoch = versionEpoch
+        versionJob?.cancel()
+        versionJob = viewModelScope.launch {
+            val id = runCatching { playbackPrefs.get(targetId)?.mediaSourceId }.getOrNull()
+            // 读取期间用户可能已经选了新版本：代次变化就不回写旧值
+            if (epoch == versionEpoch) {
+                _state.update { it.copy(rememberedMediaSourceId = id) }
+            }
+        }
+    }
+
+    /**
+     * 详情页选定版本：按当前播放目标（分集/电影条目）持久化。
+     *
+     * 写入键与播放层读取键必须一致，否则「选过的版本」只影响本次带路由参数的
+     * 起播，下次直接点播放又回到默认版本。
+     */
+    fun rememberVersion(sourceId: String) {
+        val targetId = _state.value.currentEpisode?.id ?: itemId
+        versionEpoch++
+        versionJob?.cancel()
+        _state.update { it.copy(rememberedMediaSourceId = sourceId) }
+        viewModelScope.launch {
+            runCatching { playbackPrefs.update(itemId = targetId, mediaSourceId = sourceId) }
+                .onFailure { logger.w(TAG, "版本记忆写入失败", it) }
+        }
+    }
+
     /** 首次加载或错误态重试。 */
     fun load() {
+        episodesJob?.cancel()
+        seasonCastJob?.cancel()
+        versionJob?.cancel()
+        versionEpoch++
         viewModelScope.launch {
             _state.update {
                 it.copy(
                     detail = UiState.Loading,
                     seasons = emptyList(),
                     episodes = emptyList(),
+                    seasonCast = null,
+                    rememberedMediaSourceId = null,
+                    episodesFailed = false,
                     // 整页重载回剧级态：集级语境指向的分集随重载失效
                     episodeContextId = null,
                     episodeContextFromEntry = false,
@@ -236,12 +315,42 @@ class DetailViewModel @Inject constructor(
             when (val result = repository.detail(itemId)) {
                 is NovumResult.Success -> {
                     _state.update { it.copy(detail = UiState.Success(result.value)) }
-                    if (result.value.isSeries) loadSeasons()
+                    if (result.value.isSeries) {
+                        loadSeasons()
+                    } else {
+                        // 电影没有分集链路，详情到达即可按条目 id 读版本记忆
+                        refreshRememberedVersion()
+                    }
                 }
 
                 is NovumResult.Failure -> {
                     _state.update { it.copy(detail = UiState.Error(result.error)) }
                 }
+            }
+        }
+    }
+
+    /** 取消旧分集请求后再加载：连续切季只保留最后一次的结果。 */
+    private fun launchEpisodes(seasonId: String, nextUpHint: Episode? = null) {
+        episodesJob?.cancel()
+        episodesJob = viewModelScope.launch { loadEpisodes(seasonId, nextUpHint) }
+    }
+
+    /**
+     * 加载某季演职员并写回。
+     *
+     * 失败或空结果保持 null（页面回落剧集级演职员）；只在目标季仍是当前
+     * 选中季时写回，避免已取消请求的迟到结果覆盖新季。
+     */
+    private fun launchSeasonCast(seasonId: String) {
+        seasonCastJob?.cancel()
+        seasonCastJob = viewModelScope.launch {
+            val cast = when (val result = repository.seasonCast(itemId, seasonId)) {
+                is NovumResult.Success -> result.value.ifEmpty { null }
+                is NovumResult.Failure -> null
+            }
+            if (_state.value.selectedSeasonId == seasonId) {
+                _state.update { it.copy(seasonCast = cast) }
             }
         }
     }
@@ -259,6 +368,8 @@ class DetailViewModel @Inject constructor(
             it.copy(
                 selectedSeasonId = seasonId,
                 episodes = emptyList(),
+                // 先回落剧集级演职员，季级数据到达后再替换，避免出现空行
+                seasonCast = null,
                 episodesFailed = false,
                 currentEpisodeId = null,
                 // 集级语境只可能指向旧季分集，一并清空回剧级态
@@ -266,7 +377,8 @@ class DetailViewModel @Inject constructor(
                 episodeContextFromEntry = false,
             )
         }
-        viewModelScope.launch { loadEpisodes(seasonId) }
+        launchEpisodes(seasonId)
+        launchSeasonCast(seasonId)
     }
 
     /**
@@ -281,6 +393,8 @@ class DetailViewModel @Inject constructor(
         _state.update {
             it.copy(episodeContextId = episodeId, episodeContextFromEntry = false)
         }
+        // 播放目标换成这一集：版本高亮要跟着换（每集可各自记忆不同版本）
+        refreshRememberedVersion()
     }
 
     /** 返回键清空当前集选中（图标回落默认播放目标集，焦点由页面还给那张卡）。 */
@@ -288,6 +402,7 @@ class DetailViewModel @Inject constructor(
         _state.update {
             it.copy(episodeContextId = null, episodeContextFromEntry = false)
         }
+        refreshRememberedVersion()
     }
 
     /**
@@ -302,7 +417,9 @@ class DetailViewModel @Inject constructor(
             if (snapshot.seasons.isEmpty()) {
                 loadSeasons()
             } else if (seasonId != null) {
-                loadEpisodes(seasonId)
+                launchEpisodes(seasonId)
+                // 分集重试顺带重拉季级演职员：上次静默失败时这里可恢复
+                launchSeasonCast(seasonId)
             }
         }
     }
@@ -581,16 +698,22 @@ class DetailViewModel @Inject constructor(
                     }
                     val seasons = result.value
                     // 默认季：优先 NextUp 集所在季（用户需求「进入
-                    // 详情页显示当前集/新一集的状态」）；数据缺失时退回第一个
-                    // 还有未看的；再退回第一常规季（特别篇 index 0 不当默认）
+                    // 详情页显示当前集/新一集的状态」）。先按 **季 id** 匹配——
+                    // 部分网关不下发分集季序号（ParentIndexNumber 缺失时会被
+                    // 兜底成 1），按序号会错误落到第一季；再按序号，最后按
+                    // 「还有未看的季」/第一常规季（特别篇 index 0 不当默认）
                     val default = hint?.let { h ->
-                        seasons.firstOrNull { it.index == h.seasonIndex }
+                        seasons.firstOrNull { it.id == h.seasonId }
+                            ?: seasons.firstOrNull { it.index == h.seasonIndex }
                     }
                         ?: seasons.firstOrNull { (it.unplayedCount ?: 0) > 0 }
                         ?: seasons.firstOrNull { it.index > 0 }
                         ?: seasons.firstOrNull()
                     _state.update { it.copy(seasons = seasons, selectedSeasonId = default?.id) }
-                    if (default != null) loadEpisodes(default.id, nextUpHint = hint)
+                    if (default != null) {
+                        launchEpisodes(default.id, nextUpHint = hint)
+                        launchSeasonCast(default.id)
+                    }
                 }
 
                 is NovumResult.Failure -> {
@@ -605,25 +728,29 @@ class DetailViewModel @Inject constructor(
 
     private suspend fun loadEpisodes(seasonId: String, nextUpHint: Episode? = null) {
         when (val result = repository.episodes(seriesId = itemId, seasonId = seasonId)) {
-            is NovumResult.Success -> _state.update {
-                // 提示集就在本季 → 记为「当前集」，页面据此初始化信息块
-                // 并把选集行滚动到该集；提示集不在（NextUp 陈旧/跨季竞态）则不设。
-                // 无提示的重试路径保留既有定位不动。
-                val anchor = nextUpHint
-                    ?.takeIf { h -> result.value.any { it.id == h.id } }
-                    ?.id
-                val keepCurrent = nextUpHint == null
-                // 继续观看入口直达：进场有锚点即直接落集级
-                // 语境，fromEntry 标记让页面把首焦交给播放按钮；无锚点静默
-                // 回落剧级态
-                val entryContext = anchor?.takeIf { entryFocusCurrentEpisode }
-                it.copy(
-                    episodes = result.value,
-                    episodesFailed = false,
-                    currentEpisodeId = if (keepCurrent) it.currentEpisodeId else anchor,
-                    episodeContextId = entryContext ?: it.episodeContextId,
-                    episodeContextFromEntry = entryContext != null,
-                )
+            is NovumResult.Success -> {
+                _state.update {
+                    // 提示集就在本季 → 记为「当前集」，页面据此初始化信息块
+                    // 并把选集行滚动到该集；提示集不在（NextUp 陈旧/跨季竞态）则不设。
+                    // 无提示的重试路径保留既有定位不动。
+                    val anchor = nextUpHint
+                        ?.takeIf { h -> result.value.any { it.id == h.id } }
+                        ?.id
+                    val keepCurrent = nextUpHint == null
+                    // 继续观看入口直达：进场有锚点即直接落集级
+                    // 语境，fromEntry 标记让页面把首焦交给播放按钮；无锚点静默
+                    // 回落剧级态
+                    val entryContext = anchor?.takeIf { entryFocusCurrentEpisode }
+                    it.copy(
+                        episodes = result.value,
+                        episodesFailed = false,
+                        currentEpisodeId = if (keepCurrent) it.currentEpisodeId else anchor,
+                        episodeContextId = entryContext ?: it.episodeContextId,
+                        episodeContextFromEntry = entryContext != null,
+                    )
+                }
+                // 分集到达后播放目标才确定：此时才能按该集 id 读版本记忆
+                refreshRememberedVersion()
             }
 
             is NovumResult.Failure -> _state.update {

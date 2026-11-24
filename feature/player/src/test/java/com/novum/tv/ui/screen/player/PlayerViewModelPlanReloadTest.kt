@@ -8,6 +8,8 @@ import com.novum.tv.core.result.NovumResult
 import com.novum.tv.data.repository.ItemPlaybackPrefsStore
 import com.novum.tv.data.repository.MediaRepository
 import com.novum.tv.data.repository.PlaybackRepository
+import com.novum.tv.data.settings.AppSettings
+import com.novum.tv.data.settings.SettingsRepository
 import com.novum.tv.model.HomeFeed
 import com.novum.tv.model.MediaDetail
 import com.novum.tv.model.MediaLibrary
@@ -21,9 +23,12 @@ import com.novum.tv.testing.FakeCapabilityProvider
 import com.novum.tv.testing.MainDispatcherRule
 import com.novum.tv.testing.NoopNovumLogger
 import com.novum.tv.testing.FakeSettingsRepository
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
 import java.io.File
@@ -86,9 +91,29 @@ class PlayerViewModelPlanReloadTest {
         assertEquals("http://line-a:8096", call.excludeLine)
     }
 
+    @Test
+    fun `重取计划不会把倍速回写成快照里的旧档`() = runTest {
+        // 设置快照停在 1.0（模拟「刚改的倍速还没落盘」）：重取计划时若照抄快照，
+        // 用户在播放页调的 1.5x 会被打回 1.0，播放器按旧速度重建
+        val playback = RecordingPlaybackRepository()
+        val viewModel = viewModel(playback, StaleSettingsRepository(playbackSpeed = 1f))
+        advanceUntilIdle()
+        assertEquals(1f, viewModel.state.value.playbackSpeed)
+
+        viewModel.setPlaybackSpeed(1.5f)
+        advanceUntilIdle()
+        assertEquals(1.5f, viewModel.state.value.playbackSpeed)
+
+        // 直通切换走的就是 load(startOverrideMs)
+        viewModel.load(startOverrideMs = 20_000)
+        advanceUntilIdle()
+
+        assertEquals("重取计划必须沿用内存里的当前倍速", 1.5f, viewModel.state.value.playbackSpeed)
+    }
+
     private fun viewModel(
         playback: PlaybackRepository,
-        settings: FakeSettingsRepository,
+        settings: SettingsRepository,
     ) = PlayerViewModel(
         playback = playback,
         media = EmptyMediaRepository,
@@ -102,6 +127,9 @@ class PlayerViewModelPlanReloadTest {
         ),
         appContext = ApplicationProvider.getApplicationContext(),
         logger = NoopNovumLogger,
+        // 收尾上报用的是进程级作用域：测试里用 Unconfined 让它内联执行，避免用例
+        // 跑完后还有游离协程越过用例边界
+        appScope = CoroutineScope(Dispatchers.Unconfined),
         savedStateHandle = SavedStateHandle(mapOf("itemId" to ITEM_ID)),
     )
 
@@ -129,11 +157,37 @@ class PlayerViewModelPlanReloadTest {
             return NovumResult.Success(plan)
         }
 
-        override suspend fun reportStarted(itemId: String, positionMs: Long, method: PlayMethod) = Unit
+        override suspend fun reportStarted(
+            itemId: String,
+            positionMs: Long,
+            method: PlayMethod,
+            playSessionId: String?,
+        ) = Unit
 
-        override suspend fun reportProgress(itemId: String, positionMs: Long, method: PlayMethod) = Unit
+        override suspend fun reportProgress(
+            itemId: String,
+            positionMs: Long,
+            method: PlayMethod,
+            playSessionId: String?,
+        ) = Unit
 
-        override suspend fun reportStopped(itemId: String, positionMs: Long, method: PlayMethod) = Unit
+        override suspend fun reportStopped(
+            itemId: String,
+            positionMs: Long,
+            method: PlayMethod,
+            playSessionId: String?,
+        ) = Unit
+    }
+
+    /**
+     * 快照永远不变、写入被丢弃的设置假实现。
+     *
+     * 模拟「刚改的倍速还没落盘」：用来验证重取计划时不会照抄旧快照。
+     */
+    private class StaleSettingsRepository(playbackSpeed: Float) : SettingsRepository {
+        private val snapshot = AppSettings(playbackSpeed = playbackSpeed)
+        override val settings: Flow<AppSettings> = flowOf(snapshot)
+        override suspend fun update(transform: (AppSettings) -> AppSettings) = Unit
     }
 
     /**

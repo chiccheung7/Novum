@@ -34,38 +34,43 @@ import com.novum.tv.ui.theme.NovumTheme
  *
  * 焦点滚动死区也挂在根部：它只调整"焦点滚动多少距离"，
  * 对业务无感，但能消掉横移卡片时按下瞬间的上下抖动。
+ *
+ * 视口归一化（[TvViewport]）挂得最外：不同电视上报的 density 差异极大，
+ * 只有把画布统一到官方 960×540dp 基准，尺寸令牌的相对比例才处处一致。
  */
 @Composable
 fun NovumApp(entryViewModel: AppEntryViewModel = hiltViewModel()) {
     val entry by entryViewModel.entry.collectAsStateWithLifecycle()
 
-    NovumTheme {
-        NovumFocusScrollTuning {
-            val toastViewModel: NovumToastViewModel = hiltViewModel()
-            Box(modifier = Modifier.fillMaxSize()) {
-                CompositionLocalProvider(LocalNovumToast provides toastViewModel.controller) {
-                    when (entry) {
-                        AppEntryViewModel.Entry.Loading -> Box(
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .background(NovumPalette.Ink),
-                        )
+    TvViewport {
+        NovumTheme {
+            NovumFocusScrollTuning {
+                val toastViewModel: NovumToastViewModel = hiltViewModel()
+                Box(modifier = Modifier.fillMaxSize()) {
+                    CompositionLocalProvider(LocalNovumToast provides toastViewModel.controller) {
+                        when (entry) {
+                            AppEntryViewModel.Entry.Loading -> Box(
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .background(NovumPalette.Ink),
+                            )
 
-                        AppEntryViewModel.Entry.LoggedIn ->
-                            NovumNavHost(startDestination = HomeRoute)
+                            AppEntryViewModel.Entry.LoggedIn ->
+                                NovumNavHost(startDestination = HomeRoute)
 
-                        AppEntryViewModel.Entry.LoggedOut ->
-                            NovumNavHost(startDestination = LoginRoute)
+                            AppEntryViewModel.Entry.LoggedOut ->
+                                NovumNavHost(startDestination = LoginRoute)
+                        }
                     }
-                }
 
-                NovumToastHost(
-                    controller = toastViewModel.controller,
-                    modifier = Modifier
-                        .align(Alignment.BottomCenter)
-                        // 在底部安全区上沿再抬高 48dp。
-                        .padding(bottom = NovumDimens.SafeVertical + 48.dp),
-                )
+                    NovumToastHost(
+                        controller = toastViewModel.controller,
+                        modifier = Modifier
+                            .align(Alignment.BottomCenter)
+                            // 在底部安全区上沿再抬高 48dp。
+                            .padding(bottom = NovumDimens.SafeVertical + 48.dp),
+                    )
+                }
             }
         }
     }

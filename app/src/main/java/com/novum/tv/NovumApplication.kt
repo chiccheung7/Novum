@@ -36,6 +36,12 @@ class NovumApplication : Application(), SingletonImageLoader.Factory {
     @Inject
     lateinit var sessionHolder: SessionHolder
 
+    /**
+     * 图片请求共用同一个 OkHttpClient 连接池；callFactory 每张图都会被调用，
+     * 如果每次 new 一个 client，海报网格快滚时连接与线程会迅速膨胀。
+     */
+    private val imageClient: OkHttpClient by lazy { buildImageHttpClient() }
+
     override fun newImageLoader(context: PlatformContext): ImageLoader =
         ImageLoader.Builder(context)
             // 显式配置缓存：TV 内存远小于手机，内存缓存压到 20%；
@@ -54,7 +60,7 @@ class NovumApplication : Application(), SingletonImageLoader.Factory {
             .components {
                 add(
                     OkHttpNetworkFetcherFactory(
-                        callFactory = { imageHttpClient() },
+                        callFactory = { imageClient },
                     ),
                 )
                 // 快滚降载：长按连移窗口内延后非内存缓存的图片请求——
@@ -91,7 +97,7 @@ class NovumApplication : Application(), SingletonImageLoader.Factory {
      *
      * 不复用 API 客户端的连接池，避免图片请求与 JSON 请求互相排队。
      */
-    private fun imageHttpClient(): OkHttpClient = OkHttpClient.Builder()
+    private fun buildImageHttpClient(): OkHttpClient = OkHttpClient.Builder()
         .followRedirects(true)
         .followSslRedirects(true)
         .addInterceptor { chain ->

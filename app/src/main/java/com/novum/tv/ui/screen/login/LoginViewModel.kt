@@ -60,10 +60,13 @@ class LoginViewModel @Inject constructor(
         viewModelScope.launch {
             val lastServer = runCatching { authRepository.lastServer() }.getOrDefault("")
             val lastUser = runCatching { authRepository.lastUsername() }.getOrDefault("")
-            _state.update {
-                it.copy(
-                    server = lastServer.takeIf { s -> s.isNotBlank() } ?: it.server,
-                    username = lastUser.takeIf { u -> u.isNotBlank() } ?: it.username,
+            _state.update { current ->
+                // 只读空字段：DataStore 读取慢于遥控器输入时，不能覆盖用户已经敲下的内容
+                current.copy(
+                    server = current.server.takeIf { it.isNotBlank() }
+                        ?: lastServer.takeIf { it.isNotBlank() }.orEmpty(),
+                    username = current.username.takeIf { it.isNotBlank() }
+                        ?: lastUser.takeIf { it.isNotBlank() }.orEmpty(),
                 )
             }
         }

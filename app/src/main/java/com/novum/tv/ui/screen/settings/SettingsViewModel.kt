@@ -90,6 +90,13 @@ class SettingsViewModel @Inject constructor(
     private val _loggingOut = MutableStateFlow(false)
     val loggingOut: StateFlow<Boolean> = _loggingOut.asStateFlow()
 
+    /**
+     * 档位循环的同步游标：DataStore 回发可能慢于遥控器连续按键，
+     * 只读 StateFlow 快照会让两次点击算出同一个目标档。写成功后清空。
+     */
+    private var subtitleSizePending: Int? = null
+    private var skipIntroSecondsPending: Int? = null
+
     init {
         loadSessionLabel()
     }
@@ -138,11 +145,14 @@ class SettingsViewModel @Inject constructor(
 
     /** 字幕字号循环切换：小 → 中 → 大 → 超大 → 小。 */
     fun cycleSubtitleSize() {
-        // 必须同步读当前值算 next：update 内部的 transform 是异步执行的，
-        // 在 lambda 外读局部变量会拿到未赋值的初始档位，Toast 就永远显示同一档
-        val current = currentSettings().subtitleSize
+        // 同步游标 + DataStore 事务内写绝对档：连续快按不会都基于同一旧快照
+        val current = subtitleSizePending ?: currentSettings().subtitleSize
         val next = if (current >= MAX_SUBTITLE_SIZE) MIN_SUBTITLE_SIZE else current + 1
-        update { it.copy(subtitleSize = next) }
+        subtitleSizePending = next
+        update(
+            onSuccess = { if (subtitleSizePending == next) subtitleSizePending = null },
+            transform = { it.copy(subtitleSize = next) },
+        )
         toastCycled(appContext.getString(R.string.settings_subtitle_size), next.labelRes())
     }
 
@@ -160,9 +170,13 @@ class SettingsViewModel @Inject constructor(
 
     /** 片头时长循环切换：30 → 60 → 90 → 120 → 30 秒。 */
     fun cycleSkipIntroSeconds() {
-        val current = currentSettings().skipIntroSeconds
+        val current = skipIntroSecondsPending ?: currentSettings().skipIntroSeconds
         val next = SKIP_INTRO_STEPS.firstOrNull { it > current } ?: SKIP_INTRO_STEPS.first()
-        update { it.copy(skipIntroSeconds = next) }
+        skipIntroSecondsPending = next
+        update(
+            onSuccess = { if (skipIntroSecondsPending == next) skipIntroSecondsPending = null },
+            transform = { it.copy(skipIntroSeconds = next) },
+        )
         toastCycled(
             appContext.getString(R.string.settings_skip_intro_seconds),
             appContext.getString(R.string.settings_seconds, next),
@@ -170,19 +184,22 @@ class SettingsViewModel @Inject constructor(
     }
 
     /**
-     * 退出登录：清除本地会话后回调，由页面导航回登录页。
+     * 退出登录：只有本地会话真正清除后才导航回登录页。
      *
-     * @param onDone 会话清理完成后的导航回调。
+     * 清理失败却跳走会让用户以为已退出，下次启动又用磁盘上的旧 token 自动登录。
+     *
+     * @param onDone 会话清理成功后的导航回调。
      */
     fun logout(onDone: () -> Unit) {
         if (_loggingOut.value) return
         _loggingOut.value = true
         viewModelScope.launch {
-            // 清理失败时记录日志，导航仍继续返回登录页。
-            runCatching { authRepository.logout() }
-                .onFailure { logger.w(TAG, "退出登录清理失败", it) }
+            val result = runCatching { authRepository.logout() }
             _loggingOut.value = false
-            onDone()
+            result.onFailure {
+                logger.w(TAG, "退出登录清理失败", it)
+                toast.show(appContext.getString(R.string.settings_logout_failed))
+            }.onSuccess { onDone() }
         }
     }
 
@@ -199,8 +216,15 @@ class SettingsViewModel @Inject constructor(
         (uiState.value as? UiState.Success)?.data ?: AppSettings()
 
     /** 统一的写回入口：所有设置变更都走 DataStore 事务。 */
-    private fun update(transform: (AppSettings) -> AppSettings) {
-        viewModelScope.launch { settingsRepository.update(transform) }
+    private fun update(
+        onSuccess: (() -> Unit)? = null,
+        transform: (AppSettings) -> AppSettings,
+    ) {
+        viewModelScope.launch {
+            runCatching { settingsRepository.update(transform) }
+                .onSuccess { onSuccess?.invoke() }
+                .onFailure { logger.w(TAG, "设置写入失败", it) }
+        }
     }
 
     /** 开关类设置的 Toast：文案行内标签 + 开/关状态。 */

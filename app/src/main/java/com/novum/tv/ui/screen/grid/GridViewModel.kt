@@ -11,6 +11,7 @@ import javax.inject.Inject
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 
 /**
@@ -88,6 +89,9 @@ class GridViewModel @Inject constructor(
     private var startIndex = 0
     private var total = 0
     private var loading = false
+    private var loadJob: Job? = null
+    /** 请求序号：旧请求即使没有被及时取消，也不允许写回状态。 */
+    private var requestSeq = 0
 
     /**
      * 绑定数据源并加载第一页；数据源未变化时直接返回。
@@ -149,28 +153,10 @@ class GridViewModel @Inject constructor(
      * 刷新将分页归零，仅响应收藏数据源，绕过 start 的同源守卫。
      */
     fun refreshFavorites() {
-        val current = source as? GridSource.Favorites ?: return
-        viewModelScope.launch {
-            when (
-                val result = repository.items(
-                    parentId = null,
-                    startIndex = 0,
-                    limit = PAGE_SIZE,
-                    filters = FILTER_FAVORITE,
-                    includeItemTypes = current.type.embyIncludeItemTypes,
-                )
-            ) {
-                is NovumResult.Success -> {
-                    val page = result.value
-                    total = page.total
-                    startIndex = page.items.size
-                    _totalCount.value = page.total
-                    _state.value = if (page.items.isEmpty()) UiState.Empty() else UiState.Success(page.items)
-                }
-
-                is NovumResult.Failure -> Unit
-            }
-        }
+        if (source !is GridSource.Favorites) return
+        // 与首屏/分页共用同一请求队列：返回页时若还有在途 loadMore，
+        // 不能让两个协程同时改 total/startIndex 和列表状态。
+        load(reset = true, silent = true)
     }
 
     /** 错误态重试。 */
@@ -191,42 +177,65 @@ class GridViewModel @Inject constructor(
         load(reset = true)
     }
 
-    private fun load(reset: Boolean) {
+    /**
+     * 发起请求：新请求一律取消在途请求，并通过序号拦住已无法取消的迟达结果。
+     *
+     * @param reset 是否回到第一页。
+     * @param silent 静默刷新（收藏页返回）：不进入 Loading，失败保留已有内容。
+     */
+    private fun load(reset: Boolean, silent: Boolean = false) {
         val current = source ?: return
-        if (loading) return
+        loadJob?.cancel()
+        val seq = ++requestSeq
+        val start = if (reset) 0 else startIndex
+        // 静默刷新失败要还原分页游标：列表内容还在，游标却被清零会让
+        // 「滚动到底加载更多」永久失效（startIndex >= total）。
+        val previousStart = startIndex
+        val previousTotal = total
+        val previousCount = _totalCount.value
         loading = true
-        viewModelScope.launch {
-            if (reset) {
-                _state.value = UiState.Loading
-                startIndex = 0
-            }
-            when (val result = fetch(current)) {
+        if (reset) {
+            startIndex = 0
+            total = 0
+            if (!silent) _state.value = UiState.Loading
+        }
+        loadJob = viewModelScope.launch {
+            when (val result = fetch(current, start)) {
                 is NovumResult.Success -> {
+                    if (seq != requestSeq) return@launch
                     val page = result.value
                     total = page.total
-                    startIndex += page.items.size
+                    startIndex = start + page.items.size
                     _totalCount.value = page.total
                     val merged = if (reset) page.items else currentItems() + page.items
                     _state.value = if (merged.isEmpty()) UiState.Empty() else UiState.Success(merged)
                 }
 
                 is NovumResult.Failure -> {
-                    if (reset) {
-                        _state.value = UiState.Error(result.error)
-                    } else {
-                        _state.value = UiState.Success(currentItems())
+                    if (seq != requestSeq) return@launch
+                    when {
+                        reset && !silent -> _state.value = UiState.Error(result.error)
+                        !reset -> _state.value = UiState.Success(currentItems())
+                        else -> {
+                            startIndex = previousStart
+                            total = previousTotal
+                            _totalCount.value = previousCount
+                        }
                     }
                 }
             }
-            loading = false
+            if (seq == requestSeq) loading = false
         }
     }
 
-    private suspend fun fetch(source: GridSource): NovumResult<com.novum.tv.model.MediaPage> =
+    private suspend fun fetch(
+        source: GridSource,
+        start: Int,
+    ): NovumResult<com.novum.tv.model.MediaPage> =
         when (source) {
             is GridSource.Library -> repository.items(
                 parentId = source.libraryId,
-                startIndex = startIndex,
+                startIndex = start,
                 limit = PAGE_SIZE,
                 sortBy = _sortOption.value.embySortBy,
                 ascending = !_sortDescending.value,
@@ -234,7 +243,7 @@ class GridViewModel @Inject constructor(
 
             is GridSource.Favorites -> repository.items(
                 parentId = null,
-                startIndex = startIndex,
+                startIndex = start,
                 limit = PAGE_SIZE,
                 filters = FILTER_FAVORITE,
                 includeItemTypes = source.type.embyIncludeItemTypes,
@@ -245,7 +254,7 @@ class GridViewModel @Inject constructor(
 
             is GridSource.Search -> repository.items(
                 parentId = null,
-                startIndex = startIndex,
+                startIndex = start,
                 limit = PAGE_SIZE,
                 sortBy = SORT_BY_NAME,
                 searchTerm = source.query,

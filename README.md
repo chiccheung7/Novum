@@ -2,7 +2,7 @@
 
 面向 Android TV 的 Emby 媒体客户端，使用 Kotlin、Jetpack Compose for TV 和 Media3 构建，通过遥控器浏览和播放自己的媒体库。
 
-当前源码排除了 FFmpeg 预编译 AAR，需要的可以自己编译。
+当前源码不附带 FFmpeg 预编译 AAR；`ffmpeg-decoder/` 提供从源码重建该扩展的脚本，按需构建后把 AAR 放入 `app/libs/`。
 
 ## 功能
 
@@ -26,6 +26,8 @@
 
 Windows 使用 `gradlew.bat`。Debug APK 位于 `app/build/outputs/apk/debug/`。
 
+可选的 FFmpeg 音频扩展需要额外安装 NDK `26.3.11579264` 与 CMake `3.22.1`，构建步骤见 [FFmpeg 扩展说明](ffmpeg-decoder/README.md)；不构建时 App 也能正常编译。
+
 ```sh
 ./gradlew :app:assembleRelease
 ```
@@ -34,9 +36,9 @@ Windows 使用 `gradlew.bat`。Debug APK 位于 `app/build/outputs/apk/debug/`�
 
 ### 音频解码
 
-公开源码不附带 `media3-ffmpeg-decoder.aar`。Media3 使用电视平台解码器；电视不支持的音频格式可能无法播放，或需要服务端转码。完整私有基线中的 FFmpeg 音频软解兜底不属于这份公开源码的功能保证。详情见 [第三方资产说明](THIRD_PARTY_NOTICES.md)。
+公开源码不附带 AAR 二进制。`ffmpeg-decoder/` 收录了 Media3 1.11.1 FFmpeg 扩展的 Java/JNI 源码与构建脚本，可按 [扩展说明](ffmpeg-decoder/README.md) 从 FFmpeg 6.0 重建 AC3/E-AC3/DTS/DTS-HD/TrueHD 软解 AAR；放入 `app/libs/` 后由 `OffloadRenderersFactory` 自动启用，平台解码器仍优先。未构建 AAR 时，Media3 只使用电视平台解码器；不支持的格式需要服务端转码。FFmpeg 二进制及 AAR 适用 LGPL 2.1+，不属于本项目 Apache-2.0 的授权范围，详见 [第三方资产说明](THIRD_PARTY_NOTICES.md)。
 
-[Release](https://github.com/chiccheung7/Novum/releases/tag/v0.1.0-ad5fe33) 提供从原始 `ad5fe33` 构建的完整 APK，其中保留历史 FFmpeg 扩展。因此 Release APK 与这份不含 AAR 的源码构建产物在音频软解能力上存在差异；该扩展的完整构建来源仍未核实，不能将整个 APK 都视为 Apache-2.0 授权。各文件 SHA-256 和第三方说明随 Release 提供。
+[Release](https://github.com/chiccheung7/Novum/releases/tag/v0.1.0-ad5fe33) 提供从原始 `ad5fe33` 构建的历史 APK，其中保留来源未核实的旧版 FFmpeg 扩展。它与当前源码按上述脚本重建的 AAR 并非同一产物，音频软解能力可能存在差异；不能把整个历史 APK 视为 Apache-2.0 授权。各文件 SHA-256 和第三方说明随 Release 提供。
 
 ## 项目结构
 
@@ -53,6 +55,7 @@ Windows 使用 `gradlew.bat`。Debug APK 位于 `app/build/outputs/apk/debug/`�
 | `feature/player` | 播放界面与控制 |
 | `core/testing` | 测试共用实现 |
 | `benchmark` | 性能测试 |
+| `ffmpeg-decoder` | 可选 FFmpeg 扩展的源码与 AAR 构建脚本（独立工程，不参与 App 日常构建） |
 
 ## 参与与隐私
 

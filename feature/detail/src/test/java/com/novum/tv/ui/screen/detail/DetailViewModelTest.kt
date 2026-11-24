@@ -6,9 +6,11 @@ import androidx.test.core.app.ApplicationProvider
 import com.novum.tv.core.error.NovumError
 import com.novum.tv.core.result.NovumResult
 import com.novum.tv.core.state.UiState
+import com.novum.tv.data.repository.ItemPlaybackPrefsStore
 import com.novum.tv.data.repository.MediaRepository
 import com.novum.tv.data.settings.AppSettings
 import com.novum.tv.data.settings.SettingsRepository
+import com.novum.tv.model.CastMember
 import com.novum.tv.model.Episode
 import com.novum.tv.model.HomeFeed
 import com.novum.tv.model.MediaDetail
@@ -20,6 +22,8 @@ import com.novum.tv.testing.MainDispatcherRule
 import com.novum.tv.testing.RecordingToastSink
 import com.novum.tv.testing.NoopNovumLogger
 import com.novum.tv.testing.FakeSettingsRepository
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
@@ -33,6 +37,7 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
+import java.io.File
 import org.robolectric.annotation.Config
 
 /**
@@ -77,6 +82,7 @@ class DetailViewModelTest {
             repository = repository,
             toast = RecordingToastSink(),
             settings = ThrowingSettingsRepository(),
+            playbackPrefs = newPrefsStore(),
             logger = NoopNovumLogger,
             appContext = ApplicationProvider.getApplicationContext<Context>(),
             savedStateHandle = SavedStateHandle(mapOf("itemId" to "m1")),
@@ -148,6 +154,61 @@ class DetailViewModelTest {
         val state = viewModel.state.value
         assertEquals("默认季应跟随 NextUp 集所在季", "s2", state.selectedSeasonId)
         assertEquals("当前集应记为提示集", "e20", state.currentEpisodeId)
+    }
+
+    @Test
+    fun nextUpHintMatchesSeasonByIdWhenSeasonIndexMissing() = runTest {
+        // 网关不下发分集 ParentIndexNumber 时，映射会兜底 seasonIndex=1；
+        // 若只按序号匹配就会错误打开第一季。季 id 才是可靠锚点。
+        val seasons = listOf(
+            season("s1", index = 1, unplayed = 4),
+            season("s2", index = 2, unplayed = 2),
+        )
+        val repository = FakeDetailRepository(
+            detail = seriesDetail(),
+            seasons = seasons,
+            episodesFor = mapOf("s2" to listOf(episode("e20", seasonIndex = 2, seasonId = "s2"))),
+            nextUpHint = episode("e20", seasonIndex = 1, seasonId = "s2"),
+        )
+        val (viewModel, _) = viewModel(repository, itemId = "se1")
+        advanceUntilIdle()
+
+        val state = viewModel.state.value
+        assertEquals("季 id 命中时应跟随提示季，而不是序号兜底的第一季", "s2", state.selectedSeasonId)
+        assertEquals("当前集仍应锚定提示集", "e20", state.currentEpisodeId)
+    }
+
+    @Test
+    fun seasonCastFollowsSelectedSeasonAndFallsBackWhenEmpty() = runTest {
+        val seasons = listOf(
+            season("s1", index = 1, unplayed = 2),
+            season("s2", index = 2, unplayed = 0),
+            season("s3", index = 3, unplayed = 0),
+        )
+        val repository = FakeDetailRepository(
+            detail = seriesDetail(),
+            seasons = seasons,
+            episodesFor = mapOf(
+                "s1" to listOf(episode("e1")),
+                "s2" to listOf(episode("e2", seasonIndex = 2)),
+                "s3" to listOf(episode("e3", seasonIndex = 3)),
+            ),
+            castFor = mapOf(
+                "s1" to listOf(CastMember(name = "S1 演员", role = "主角", imageUrl = null, id = "p1")),
+                "s2" to listOf(CastMember(name = "S2 演员", role = "主角", imageUrl = null, id = "p2")),
+            ),
+        )
+        val (viewModel, _) = viewModel(repository, itemId = "se1")
+        advanceUntilIdle()
+        assertEquals("默认季演员应已加载", listOf("S1 演员"), viewModel.state.value.seasonCast?.map { it.name })
+
+        viewModel.selectSeason("s2")
+        advanceUntilIdle()
+        assertEquals("切季后应换成新季演员", listOf("S2 演员"), viewModel.state.value.seasonCast?.map { it.name })
+
+        viewModel.selectSeason("s3")
+        advanceUntilIdle()
+        assertNull("该季无演员数据时应回落剧集级", viewModel.state.value.seasonCast)
     }
 
     @Test
@@ -620,6 +681,42 @@ class DetailViewModelTest {
         assertTrue("部分失败应提示", toast.texts.any { it.contains("部分") })
     }
 
+    @Test
+    fun rememberedVersionFollowsCurrentEpisode() = runTest {
+        // 版本记忆是「按分集」存的（播放层按分集 id 读偏好）。详情页若按剧集 id 读，
+        // 选过的版本永远不生效；同时切集后高亮必须跟着换集，而不是一直停在上一集。
+        val prefs = newPrefsStore()
+        prefs.update("e1", mediaSourceId = "src-a")
+        prefs.update("e2", mediaSourceId = "src-b")
+        val repository = FakeDetailRepository(
+            detail = seriesDetail(),
+            seasons = listOf(season("s1", index = 1, unplayed = 2)),
+            episodesFor = mapOf("s1" to listOf(episode("e1", seasonId = "s1"), episode("e2", seasonId = "s1"))),
+            nextUpHint = episode("e2", seasonId = "s1"),
+        )
+        val vm = DetailViewModel(
+            repository = repository,
+            toast = RecordingToastSink(),
+            settings = FakeSettingsRepository(),
+            playbackPrefs = prefs,
+            logger = NoopNovumLogger,
+            appContext = ApplicationProvider.getApplicationContext<Context>(),
+            savedStateHandle = SavedStateHandle(mapOf("itemId" to "se1")),
+        )
+        advanceUntilIdle()
+
+        assertEquals("进场锚点当前集 = e2", "e2", vm.state.value.currentEpisodeId)
+        assertEquals("高亮应取当前集记忆的版本", "src-b", vm.state.value.rememberedMediaSourceId)
+
+        vm.selectEpisode("e1")
+        advanceUntilIdle()
+        assertEquals("切集后高亮跟着换", "src-a", vm.state.value.rememberedMediaSourceId)
+
+        vm.clearEpisodeContext()
+        advanceUntilIdle()
+        assertEquals("清选中回落锚点集版本", "src-b", vm.state.value.rememberedMediaSourceId)
+    }
+
     private fun detailData(viewModel: DetailViewModel): MediaDetail {
         val state = viewModel.state.value
         return (state.detail as? UiState.Success)?.data
@@ -661,7 +758,12 @@ private fun season(id: String, index: Int, unplayed: Int?): Season = Season(
     unplayedCount = unplayed,
 )
 
-private fun episode(id: String, played: Boolean = false, seasonIndex: Int = 1): Episode = Episode(
+private fun episode(
+    id: String,
+    played: Boolean = false,
+    seasonIndex: Int = 1,
+    seasonId: String? = null,
+): Episode = Episode(
     id = id,
     title = "分集 $id",
     seasonIndex = seasonIndex,
@@ -671,6 +773,7 @@ private fun episode(id: String, played: Boolean = false, seasonIndex: Int = 1): 
     runtimeMinutes = 45,
     imageUrl = null,
     overview = null,
+    seasonId = seasonId,
 )
 
 /** 最小 FakeMediaRepository：详情链路与写操作有行为，其余不会被详情页触达。 */
@@ -684,6 +787,8 @@ private open class FakeDetailRepository(
         { _, played -> NovumResult.Success(played) },
     /** NextUp 进场定位提示；null = 服务端无下一集（追平且无上新）。 */
     private val nextUpHint: Episode? = null,
+    /** 季 id → 季级演职员；缺省 = 该季无演职员数据（页面回落剧集级）。 */
+    private val castFor: Map<String, List<CastMember>> = emptyMap(),
     /** 剧集级 Played 的聚合回传值：标记单集后重拉详情时用它；null = 沿用初始 detail。 */
     private val seriesPlayedOnRefresh: Boolean? = null,
 ) : MediaRepository {
@@ -726,6 +831,9 @@ private open class FakeDetailRepository(
     override suspend fun episodes(seriesId: String, seasonId: String?): NovumResult<List<Episode>> =
         NovumResult.Success(episodesFor[seasonId].orEmpty())
 
+    override suspend fun seasonCast(seriesId: String, seasonId: String): NovumResult<List<CastMember>> =
+        NovumResult.Success(castFor[seasonId].orEmpty())
+
     // 进场定位提示
     override suspend fun seriesNextUp(seriesId: String): NovumResult<Episode?> =
         NovumResult.Success(nextUpHint)
@@ -756,6 +864,7 @@ private fun viewModel(
         repository = repository,
         toast = toast,
         settings = FakeSettingsRepository(AppSettings(versionStrategy = versionStrategy)),
+        playbackPrefs = newPrefsStore(),
         logger = NoopNovumLogger,
         appContext = ApplicationProvider.getApplicationContext<Context>(),
         savedStateHandle = SavedStateHandle(
@@ -767,6 +876,21 @@ private fun viewModel(
     )
     return vm to toast
 }
+
+/**
+ * 每个 ViewModel 用独立临时文件，避免版本记忆在测试间互相污染。
+ *
+ * @param ioDispatcher 文件 IO 调度器：**默认 Unconfined**——真实 IO 线程上的读写
+ *   不会被 `advanceUntilIdle` 等待，续体会在用例结束后才回到 Main，撞上
+ *   `Dispatchers.setMain` 的切换（报 "Dispatchers.Main is used concurrently"），
+ *   断言也可能读到更新前的状态。
+ */
+private fun newPrefsStore(
+    ioDispatcher: CoroutineDispatcher = Dispatchers.Unconfined,
+) = ItemPlaybackPrefsStore(
+    File.createTempFile("novum-detail-prefs", ".json"),
+    ioDispatcher = ioDispatcher,
+)
 
 /** 设置流首次订阅即抛（错误路径断言用）。 */
 private class ThrowingSettingsRepository : SettingsRepository {

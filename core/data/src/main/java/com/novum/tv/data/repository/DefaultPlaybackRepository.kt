@@ -145,6 +145,7 @@ class DefaultPlaybackRepository @Inject constructor(
                             videoSpec = source.videoSpec(),
                             fallbackUrl = urls.fallbackUrl,
                             fallbackMethod = urls.fallbackMethod,
+                            playSessionId = info.PlaySessionId,
                         ),
                     )
                 }
@@ -230,29 +231,52 @@ class DefaultPlaybackRepository @Inject constructor(
         }
     }
 
-    override suspend fun reportStarted(itemId: String, positionMs: Long, method: PlayMethod) {
-        report(itemId, positionMs, method, started = true)
+    override suspend fun reportStarted(
+        itemId: String,
+        positionMs: Long,
+        method: PlayMethod,
+        playSessionId: String?,
+    ) {
+        report(itemId, positionMs, method, playSessionId, started = true)
     }
 
-    override suspend fun reportProgress(itemId: String, positionMs: Long, method: PlayMethod) {
-        report(itemId, positionMs, method, started = false)
+    override suspend fun reportProgress(
+        itemId: String,
+        positionMs: Long,
+        method: PlayMethod,
+        playSessionId: String?,
+    ) {
+        report(itemId, positionMs, method, playSessionId, started = false)
     }
 
-    override suspend fun reportStopped(itemId: String, positionMs: Long, method: PlayMethod) {
+    override suspend fun reportStopped(
+        itemId: String,
+        positionMs: Long,
+        method: PlayMethod,
+        playSessionId: String?,
+    ) {
         withContext(dispatchers.io) {
             val api = apiOrNull() ?: return@withContext
             runCatching {
-                api.reportPlaybackStopped(body = progressBody(itemId, positionMs, method))
+                api.reportPlaybackStopped(
+                    body = progressBody(itemId, positionMs, method, playSessionId),
+                )
             }.onFailure { logger.w(TAG, "停止播放上报失败", it) }
         }
     }
 
     /** 开始 / 进度上报共用同一套容错：失败只记日志，不打断播放。 */
-    private suspend fun report(itemId: String, positionMs: Long, method: PlayMethod, started: Boolean) {
+    private suspend fun report(
+        itemId: String,
+        positionMs: Long,
+        method: PlayMethod,
+        playSessionId: String?,
+        started: Boolean,
+    ) {
         withContext(dispatchers.io) {
             val api = apiOrNull() ?: return@withContext
             runCatching {
-                val body = progressBody(itemId, positionMs, method)
+                val body = progressBody(itemId, positionMs, method, playSessionId)
                 if (started) api.reportPlaybackStarted(body) else api.reportPlaybackProgress(body)
             }.onFailure { logger.w(TAG, "播放进度上报失败", it) }
         }
@@ -260,16 +284,21 @@ class DefaultPlaybackRepository @Inject constructor(
 
     private fun apiOrNull() = runCatching { clients.api(sessionHolder.server) }.getOrNull()
 
-    private fun progressBody(itemId: String, positionMs: Long, method: PlayMethod) =
-        PlaybackProgressDto(
-            ItemId = itemId,
-            PositionTicks = positionMs * TICKS_PER_MS,
-            PlayMethod = when (method) {
-                PlayMethod.DirectPlay -> "DirectPlay"
-                PlayMethod.DirectStream -> "DirectStream"
-                PlayMethod.Transcode -> "Transcode"
-            },
-        )
+    private fun progressBody(
+        itemId: String,
+        positionMs: Long,
+        method: PlayMethod,
+        playSessionId: String?,
+    ) = PlaybackProgressDto(
+        ItemId = itemId,
+        PositionTicks = positionMs * TICKS_PER_MS,
+        PlayMethod = when (method) {
+            PlayMethod.DirectPlay -> "DirectPlay"
+            PlayMethod.DirectStream -> "DirectStream"
+            PlayMethod.Transcode -> "Transcode"
+        },
+        PlaySessionId = playSessionId,
+    )
 
     /** 无播放信息时的兜底：Emby 标准静态流。 */
     private fun fallbackPlan(server: String, itemId: String, startPositionMs: Long): PlaybackPlan {
@@ -308,20 +337,29 @@ class DefaultPlaybackRepository @Inject constructor(
         val transcodePath = source.TranscodingUrl
 
         if (forceTranscode) {
+            val absolute = (transcodePath ?: directPath).toAbsoluteUrl(server)
             return ResolvedUrls(
-                primaryUrl = (transcodePath ?: directPath).toAbsoluteUrl(server)
-                    ?: fallbackPlan(server, itemId, 0L).url,
-                primaryMethod = if (transcodePath != null) PlayMethod.Transcode else PlayMethod.DirectStream,
+                primaryUrl = absolute ?: fallbackPlan(server, itemId, 0L).url,
+                // 没有任何可用地址时实际播的是静态流（DirectPlay），不能上报 DirectStream
+                primaryMethod = when {
+                    absolute == null -> PlayMethod.DirectPlay
+                    transcodePath != null -> PlayMethod.Transcode
+                    else -> PlayMethod.DirectStream
+                },
                 fallbackUrl = null,
                 fallbackMethod = null,
             )
         }
 
         if (!preferDirect) {
-            val primary = transcodePath ?: directPath
+            val absolute = (transcodePath ?: directPath).toAbsoluteUrl(server)
             return ResolvedUrls(
-                primaryUrl = primary.toAbsoluteUrl(server) ?: fallbackPlan(server, itemId, 0L).url,
-                primaryMethod = if (transcodePath != null) PlayMethod.Transcode else PlayMethod.DirectStream,
+                primaryUrl = absolute ?: fallbackPlan(server, itemId, 0L).url,
+                primaryMethod = when {
+                    absolute == null -> PlayMethod.DirectPlay
+                    transcodePath != null -> PlayMethod.Transcode
+                    else -> PlayMethod.DirectStream
+                },
                 fallbackUrl = null,
                 fallbackMethod = null,
             )
@@ -448,7 +486,7 @@ private fun MediaSourceDto.externalSubtitles(
                 }
             }
             val constructed = if (stream.IsExternal && !stream.Codec.isNullOrBlank()) {
-                "$server/Videos/$itemId/${Id.orEmpty()}/Subtitles/$index/Stream.${stream.Codec?.lowercase()}"
+                "${server.trimEnd('/')}/Videos/$itemId/${Id.orEmpty()}/Subtitles/$index/Stream.${stream.Codec?.lowercase()}"
             } else {
                 null
             }

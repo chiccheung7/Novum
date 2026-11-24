@@ -218,6 +218,37 @@ class DefaultMediaRepository @Inject constructor(
             }
         }
 
+    /**
+     * 季级演职员：取该季分集的 `People[]` 合并。
+     *
+     * 剧集条目只挂全剧演职员，季级换角/客串只能从分集拿。按出现集数排序，
+     * 主角（每集都在）在前、客串在后；请求失败由页面回落剧集级演职员。
+     */
+    override suspend fun seasonCast(seriesId: String, seasonId: String): NovumResult<List<CastMember>> =
+        withContext(dispatchers.io) {
+            val server = sessionHolder.server
+            val userId = sessionHolder.userId
+            if (server.isBlank() || userId.isBlank()) {
+                return@withContext failureOf(NovumError.Unauthorized())
+            }
+            safeCall {
+                val cast = clients.api(server)
+                    .episodes(
+                        seriesId = seriesId,
+                        userId = userId,
+                        seasonId = seasonId,
+                        // 长剧集不必整季拉取：前若干集已覆盖常驻主创与主要客串
+                        limit = CAST_SAMPLE_EPISODES,
+                        fields = "${EmbyApi.EPISODE_FIELDS},People",
+                    )
+                    .Items
+                    .toSeasonCast(server, strings)
+                // 季级出现的演员同样进本地人物索引（搜名字能命中）
+                personIndex.addAll(cast)
+                cast
+            }
+        }
+
     override suspend fun seriesNextUp(seriesId: String): NovumResult<Episode?> =
         withContext(dispatchers.io) {
             val server = sessionHolder.server
@@ -226,14 +257,36 @@ class DefaultMediaRepository @Inject constructor(
                 return@withContext failureOf(NovumError.Unauthorized())
             }
             safeCall {
+                val api = clients.api(server)
                 // 单剧集 NextUp——详情页默认定位的「当前集」。字段用
                 // 分集口径（带 MediaSources），让焦点集的多版本信息开箱即用；
                 // 全部看完且无上新时服务端返回空列表 → null（页面回落剧集级）。
-                clients.api(server)
-                    .nextUp(uid = userId, limit = 1, fields = EmbyApi.EPISODE_FIELDS, seriesId = seriesId)
-                    .Items
-                    .firstOrNull()
-                    ?.let { dto -> dto.toEpisode(server, index = 0, strings = strings) }
+                //
+                // 部分 Emby 兼容网关会忽略 SeriesId，直接返回全库 NextUp。
+                // 必须在客户端按 SeriesId 再过滤，否则详情页会拿别的剧集的分集当
+                // 定位锚点，默认季随之错到第一季（提示集不在本剧任何一季里）。
+                // 取一批而不是 1 条：网关忽略 SeriesId 时，本剧的那条会排在这批
+                // 里面，limit=1 就只能拿到别剧的分集然后整体失败。
+                val candidates = api.nextUp(
+                    uid = userId,
+                    limit = NEXTUP_HINT_LIMIT,
+                    fields = EmbyApi.EPISODE_FIELDS,
+                    seriesId = seriesId,
+                ).Items
+                val next = candidates.firstOrNull { dto -> dto.SeriesId == seriesId }
+                    // 极简网关可能完全不下发 SeriesId（无从核对）：只有整批都缺该
+                    // 字段时才采信首条，避免把「有 SeriesId 但都不是本剧」当本剧
+                    ?: candidates
+                        .takeIf { list -> list.isNotEmpty() && list.all { it.SeriesId == null } }
+                        ?.first()
+                // NextUp 被网关忽略/为空时，回落到该剧最近的续播分集（同样按
+                // SeriesId 过滤，防止 ParentId 也被忽略）。仍无进度则返回 null。
+                val hint = next ?: api.resume(
+                    uid = userId,
+                    limit = RESUME_HINT_LIMIT,
+                    parentId = seriesId,
+                ).Items.firstOrNull { dto -> dto.SeriesId == seriesId }
+                hint?.let { dto -> dto.toEpisode(server, index = 0, strings = strings) }
             }
         }
 
@@ -362,20 +415,24 @@ class DefaultMediaRepository @Inject constructor(
                 val mergedResume = (
                     resumeDtoItems +
                         nextUpItems.await().orEmpty()
+                            .filter { dto -> dto.isUnfinishedForResume() }
                             .filter { dto -> dto.Id !in resumeIds && dto.SeriesId !in resumeSeriesIds }
-                            // 同剧集的多个 NextUp 只留首个（一部剧一张卡）
-                            .distinctBy { dto -> dto.SeriesId }
+                            // 同剧集的多个 NextUp 只留首个；SeriesId 缺失时按分集 id 去重，
+                            // 不能把所有无剧集归属的条目折叠成一张卡。
+                            .distinctBy { dto -> dto.SeriesId ?: dto.Id }
                     )
                     .distinctBy { dto -> dto.Id }
                     .take(HOME_ROW_RESUME_LIMIT)
 
                 // Hero 优先使用热播候选；数量不足时从电影、剧集和各库最新条目构建候选池。
                 // 两条路径都按同一规则洗牌并限制容量。
+                // 先按「可展示」过滤再判断数量：热播候选里常混入没有背景图的
+                // 合集/低质量条目，若按过滤前数量走热播分支，结果会不足甚至为空，
+                // 且永远不会进入电影/剧集/latest 三级兜底。
                 val hot = hotPicks.await().orEmpty()
-                    .filter { dto -> dto.Id !in resumeIds }
+                    .filter { dto -> dto.Id !in resumeIds && dto.BackdropImageTags.isNotEmpty() }
                 val hero = if (hot.size >= HERO_LIMIT) {
-                    hot.filter { it.BackdropImageTags.isNotEmpty() }
-                        .seededShuffle(_heroSeedProvider())
+                    hot.seededShuffle(_heroSeedProvider())
                         .take(HERO_LIMIT)
                 } else {
                     heroRotationPool(
@@ -430,5 +487,29 @@ class DefaultMediaRepository @Inject constructor(
     }
 }
 
+/**
+ * NextUp 条目是否适合放进「继续观看」行。
+ *
+ * NextUp 服务端偶尔会把已看完/已追平的剧集再次返回；这类条目没有可续播进度，
+ * 放进继续观看行会出现「点进去没有进度」的空壳卡。UserData 缺失时不过滤，
+ * 避免服务端精简字段导致所有 NextUp 被误杀。
+ */
+private fun com.novum.tv.data.remote.emby.ItemDto.isUnfinishedForResume(): Boolean {
+    val data = UserData ?: return true
+    return !data.Played && data.PlayedPercentage < 100.0
+}
+
 /** 日志标签。 */
 private const val TAG = "MediaRepo"
+
+/** 季级演职员取样集数：足够覆盖常驻主创与主要客串，又不至于整季大请求。 */
+private const val CAST_SAMPLE_EPISODES = 24
+
+/** NextUp 为空时回查续播列表的条数上限。 */
+private const val RESUME_HINT_LIMIT = 12
+
+/**
+ * 单剧集 NextUp 的取样条数：网关忽略 `SeriesId` 时用来在客户端捞出本剧那条，
+ * 太小会漏、太大浪费，8 条足够覆盖若干在追剧集。
+ */
+private const val NEXTUP_HINT_LIMIT = 8

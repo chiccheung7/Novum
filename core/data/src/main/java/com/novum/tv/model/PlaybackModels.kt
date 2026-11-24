@@ -132,6 +132,7 @@ data class VideoSpec(
  * @param videoSpec 视频规格，供播放器信息面板展示。
  * @param fallbackUrl 直连失败时改用的转码地址；没有可用的转码地址时为 null。
  * @param fallbackMethod 兜底地址对应的播放方式。
+ * @param playSessionId PlaybackInfo 会话 id，进度上报原样回传以便服务端归并会话。
  */
 data class PlaybackPlan(
     val url: String,
@@ -148,4 +149,5 @@ data class PlaybackPlan(
     val lineLabel: String? = null,
     /** 实际使用的线路 baseUrl，换线重试时用于排除。 */
     val lineBaseUrl: String? = null,
+    val playSessionId: String? = null,
 )

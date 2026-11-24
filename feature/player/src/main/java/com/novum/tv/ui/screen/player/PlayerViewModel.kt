@@ -6,6 +6,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.navigation.toRoute
 import com.novum.tv.core.capability.CapabilityProvider
+import com.novum.tv.core.data.di.ApplicationScope
 import com.novum.tv.core.designsystem.R
 import com.novum.tv.core.log.NovumLogger
 import com.novum.tv.core.result.NovumResult
@@ -61,6 +62,8 @@ data class PlayerUiState(
     val episodes: List<Episode> = emptyList(),
     /** 当前播放的分集 id（抽屉选集页高亮当前集用）；电影为 null。 */
     val currentEpisodeId: String? = null,
+    /** 影片/剧集简介（抽屉「简介」页兜底：电影只有它，分集缺简介时也用它）。 */
+    val overview: String? = null,
     /** 记忆的倍速档：起播即应用、切换即持久化。 */
     val playbackSpeed: Float = 1f,
     /** 音频 offload 能力位：直通探测非空 → 渲染器工厂开 DSP offload。 */
@@ -91,6 +94,7 @@ data class PlayerUiState(
  * @param media 媒体仓储，用于取标题与续播位置。
  * @param capability 设备能力：决定是否开启音频 offload。
  * @param logger 日志门面（偏好写入失败留痕）。
+ * @param appScope 进程级作用域：只给「页面离场也必须送达」的停止上报用。
  * @param savedStateHandle 路由参数载体。
  */
 @HiltViewModel
@@ -102,6 +106,7 @@ class PlayerViewModel @Inject constructor(
     private val playbackPrefs: ItemPlaybackPrefsStore,
     private val logger: NovumLogger,
     @ApplicationContext private val appContext: Context,
+    @ApplicationScope private val appScope: CoroutineScope,
     savedStateHandle: SavedStateHandle,
 ) : ViewModel() {
 
@@ -119,12 +124,24 @@ class PlayerViewModel @Inject constructor(
     /** 记录当前播放方式，退出时上报要用。 */
     private var method: PlayMethod = PlayMethod.DirectPlay
 
+    /** PlaybackInfo 会话 id，进度上报原样回传；换线/强转码重取计划后同步更新。 */
+    private var playSessionId: String? = null
+
     /**
      * 重入锁：load / 换线 / 强转码共用同一个计划任务。
      * 并发请求会让"先发出的慢响应"覆盖"后发出的新计划"（例如换线后又被旧直连结果顶回），
      * 取消旧任务 + 协程协作式取消保证最后发起的计划才是生效计划。
      */
     private var planJob: Job? = null
+
+    /**
+     * 倍速档是否已经采纳过设置快照。
+     *
+     * 只有首次取计划时从设置读倍速；之后重取计划（直通切换、换线、强转码重载）
+     * 一律沿用内存里的当前档。否则：用户在播放页调了倍速 → 设置写入尚未落盘（或
+     * 快照仍是旧值）→ 切直通触发重载 → 倍速被回写成旧档，播放器按旧速度重建。
+     */
+    private var speedAdopted = false
 
     private fun replan(block: suspend CoroutineScope.() -> Unit) {
         planJob?.cancel()
@@ -242,6 +259,8 @@ class PlayerViewModel @Inject constructor(
                 } else {
                     resumeMs
                 }
+            // 倍速只在首次取计划时采纳设置快照；重取计划沿用内存当前档（见 speedAdopted）
+            val speed = if (speedAdopted) _state.value.playbackSpeed else snapshot?.playbackSpeed ?: 1f
 
             when (
                 val result = playback.plan(
@@ -253,18 +272,21 @@ class PlayerViewModel @Inject constructor(
             ) {
                 is NovumResult.Success -> {
                     method = result.value.method
+                    playSessionId = result.value.playSessionId
+                    speedAdopted = true
                     _state.update {
                         it.copy(
                             plan = UiState.Success(result.value),
                             title = title,
                             logoUrl = detail?.logoUrl,
+                            overview = detail?.overview,
                             subtitle = result.value.method.label(appContext),
                             subtitlesEnabled = subtitlesEnabled,
                             subtitleSize = subtitleSize,
                             subtitleOffsetLevel = subtitleOffsetLevel,
                             chapters = detail?.chapters.orEmpty(),
                             audioPassthrough = snapshot?.audioPassthrough ?: true,
-                            playbackSpeed = snapshot?.playbackSpeed ?: 1f,
+                            playbackSpeed = speed,
                             offloadCapable = audioPassthroughAvailable,
                             preferredAudioLanguage = snapshot?.audioLanguage.orEmpty(),
                             preferredSubtitleLanguage = snapshot?.subtitleLanguage.orEmpty(),
@@ -341,6 +363,7 @@ class PlayerViewModel @Inject constructor(
             when (val result = playback.plan(itemId, positionMs, excludeLine = currentLine)) {
                 is NovumResult.Success -> {
                     method = result.value.method
+                    playSessionId = result.value.playSessionId
                     _state.update {
                         it.copy(plan = UiState.Success(result.value), subtitle = result.value.method.label(appContext))
                     }
@@ -377,6 +400,7 @@ class PlayerViewModel @Inject constructor(
             when (val result = playback.plan(itemId, positionMs, forceTranscode = true)) {
                 is NovumResult.Success -> {
                     method = result.value.method
+                    playSessionId = result.value.playSessionId
                     _state.update {
                         it.copy(
                             plan = UiState.Success(result.value),
@@ -399,7 +423,7 @@ class PlayerViewModel @Inject constructor(
      *   写死 0 会把服务端「继续观看」进度先打回开头。
      */
     fun onStarted(positionMs: Long) {
-        viewModelScope.launch { playback.reportStarted(itemId, positionMs, method) }
+        viewModelScope.launch { playback.reportStarted(itemId, positionMs, method, playSessionId) }
     }
 
     /**
@@ -408,16 +432,21 @@ class PlayerViewModel @Inject constructor(
      * @param positionMs 当前位置。
      */
     fun onProgress(positionMs: Long) {
-        viewModelScope.launch { playback.reportProgress(itemId, positionMs, method) }
+        viewModelScope.launch { playback.reportProgress(itemId, positionMs, method, playSessionId) }
     }
 
     /**
      * 上报停止播放。
      *
-     * @param positionMs 退出位置。
+     * 换集/退出的同一帧内播放页就会被替换或销毁，`viewModelScope` 随之取消——
+     * 挂在它上面的请求会在 `withContext(io)` 边界被中断，服务端收不到本集结束
+     * 位置（该集永远停在"看到一半"，继续观看/NextUp 不前进）。因此停止上报走
+     * 进程级 [appScope]：页面没了请求也要送达。
+     *
+     * @param positionMs 退出位置（片尾附近由界面传完整时长，见 PlayerScreen）。
      */
     fun onStopped(positionMs: Long) {
-        viewModelScope.launch { playback.reportStopped(itemId, positionMs, method) }
+        appScope.launch { playback.reportStopped(itemId, positionMs, method, playSessionId) }
     }
 }
 

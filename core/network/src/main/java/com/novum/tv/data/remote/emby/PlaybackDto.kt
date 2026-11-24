@@ -227,6 +227,7 @@ data class MediaStreamDto(
  * @param IsPaused 是否暂停。
  * @param CanSeek 是否允许拖动。
  * @param PlayMethod `DirectPlay` / `DirectStream` / `Transcode`。
+ * @param PlaySessionId PlaybackInfo 返回的会话 id，服务端据此把进度归并到本次播放。
  */
 @Serializable
 data class PlaybackProgressDto(
@@ -235,4 +236,5 @@ data class PlaybackProgressDto(
     val IsPaused: Boolean = false,
     val CanSeek: Boolean = true,
     val PlayMethod: String = "DirectPlay",
+    val PlaySessionId: String? = null,
 )

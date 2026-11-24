@@ -153,6 +153,7 @@ data class Season(
  * @param seriesWideUrl 所属剧集的 16:9 主视觉（按 Thumb → Backdrop → 海报顺序取图；缺失回落
  *   [imageUrl]）。
  * @param overview 分集简介。
+ * @param seasonId 所属季 id；服务端未下发季序号时，详情页用它定位默认季。
  */
 data class Episode(
     val id: String,
@@ -173,6 +174,8 @@ data class Episode(
     val premiereDate: String? = null,
     /** 该集的多版本选项；单版本为空。 */
     val versions: List<MediaVersionOption> = emptyList(),
+    /** 所属季 id（Emby `SeasonId`）；详情页默认季定位优先按 id 匹配。 */
+    val seasonId: String? = null,
 ) {
     /**
      * 观看进度比例（0f–1f）：未开始 / 已看完 → null（不画进度条）。

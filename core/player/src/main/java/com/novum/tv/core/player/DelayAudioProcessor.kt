@@ -12,8 +12,11 @@ import java.nio.ByteOrder
  *
  * 实现口径：
  * - **逐帧处理**（帧 = 声道数 × 位深字节），避免撕裂样本；
- * - 延迟变更运行时生效：每个输入批次都会重新读取 provider，滞留量变化时
- *   重建环形缓冲并保留最近的未输出样本，无需重配置播放器；
+ * - 延迟变更运行时生效：每个输入批次都会重新读取 provider。正延迟变化时
+ *   重建环形缓冲并保留最近的未输出样本；切到负延迟时丢弃已缓冲样本，
+ *   随后只丢弃输入流开头的等量样本并立即输出其余样本，无需重配置播放器；
+ * - **负延迟是单向调节**：已丢弃的样本无法恢复。从 -100ms 调到 -50ms 时不再
+ *   补丢，听感会保持 -100ms 直到下一次 seek/flush（不插入静音制造更长空档）；
  * - 仅 16-bit PCM 生效；直通 bitstream 由 AudioSink 直传不经处理器——
  *   直通模式音画延迟调不了是硬件语义（界面文案会标注）。
  */
@@ -40,6 +43,14 @@ class DelayAudioProcessor(
     /** 负延迟模式下的剩余丢弃字节数。 */
     private var dropBytes = 0
 
+    /**
+     * 当前负延迟档已丢弃的字节数。
+     *
+     * 运行时把 -100ms 调到 -200ms 只需补丢 100ms；没有这个累计值，每次
+     * 调档都会从当前输入再丢一整个目标量，实际提前量越调越大。
+     */
+    private var negativeDropApplied = 0
+
     private var pending = ByteArray(0)
     private var readPos = 0
     private var writePos = 0
@@ -62,14 +73,16 @@ class DelayAudioProcessor(
         }
         sampleRate = rate
         frameBytes = channels * 2
+        negativeDropApplied = 0
         currentDelayMs = delayMsProvider().coerceIn(MIN_DELAY_MS, MAX_DELAY_MS)
         applyDelay(currentDelayMs, preserveBuffered = false)
         return outputFormat
     }
 
-    /** 按给定延迟重建环形缓冲；运行时调整时保留尚未吐出的样本。 */
+    /** 按给定延迟重建环形缓冲；正延迟调整时保留尚未吐出的样本，切负延迟一律丢弃。 */
     private fun applyDelay(delayMs: Long, preserveBuffered: Boolean) {
-        val kept = if (preserveBuffered && pending.isNotEmpty() && buffered > 0) {
+        negate = delayMs < 0
+        val kept = if (!negate && preserveBuffered && pending.isNotEmpty() && buffered > 0) {
             ByteArray(buffered).also { out ->
                 for (i in 0 until buffered) {
                     out[i] = pending[(readPos + i) % pending.size]
@@ -78,10 +91,11 @@ class DelayAudioProcessor(
         } else {
             ByteArray(0)
         }
-        negate = delayMs < 0
         val absFrames = Math.round(sampleRate / 1000f * Math.abs(delayMs))
         targetBytes = absFrames * frameBytes
-        dropBytes = if (negate) targetBytes else 0
+        // 负延迟只补足目标与已丢量之间的差额；切换回非负档时重置累计
+        dropBytes = if (negate) (targetBytes - negativeDropApplied).coerceAtLeast(0) else 0
+        if (!negate) negativeDropApplied = 0
         active = absFrames > 0
         val capacity = maxOf(targetBytes, frameBytes)
         pending = ByteArray(capacity)
@@ -116,15 +130,26 @@ class DelayAudioProcessor(
             passthrough(inputBuffer)
             return
         }
-        // 负延迟：丢帧（音频提前）
-        if (dropBytes > 0) {
-            val drop = minOf(inputBuffer.remaining(), dropBytes)
-            inputBuffer.position(inputBuffer.position() + drop)
-            dropBytes -= drop
+        if (negate) {
+            // 负延迟 = 从输入流开头丢弃等量样本后立刻输出，不能再入环滞留，
+            // 否则稳定后的净效果会变成正延迟。
+            if (dropBytes > 0) {
+                val drop = minOf(inputBuffer.remaining(), dropBytes)
+                inputBuffer.position(inputBuffer.position() + drop)
+                dropBytes -= drop
+                negativeDropApplied += drop
+            }
+            val advanced = ByteArray(inputBuffer.remaining())
+            inputBuffer.get(advanced)
+            emit(advanced)
+            return
         }
-        // 正延迟：入环滞留，超出目标滞留量的帧输出
+        // 正延迟：入环滞留，超出目标滞留量的帧输出。
+        // 先扩容：一批输入可能大于当前环容量，直接写会把尚未读出的旧样本盖掉
+        // （输出变成最新样本，听感是周期性跳帧/重复）。
         val input = ByteArray(inputBuffer.remaining())
         inputBuffer.get(input)
+        ensureCapacity(buffered + input.size)
         var offset = 0
         while (offset < input.size) {
             val chunk = minOf(input.size - offset, pending.size - writePos)
@@ -150,6 +175,20 @@ class DelayAudioProcessor(
             copied += chunk
         }
         emit(out)
+    }
+
+    /** 确保环形缓冲能容纳 [required] 字节；扩容时按逻辑顺序搬运未读样本。 */
+    private fun ensureCapacity(required: Int) {
+        if (pending.size >= required) return
+        var newSize = maxOf(pending.size, frameBytes)
+        while (newSize < required) newSize *= 2
+        val grown = ByteArray(newSize)
+        for (i in 0 until buffered) {
+            grown[i] = pending[(readPos + i) % pending.size]
+        }
+        pending = grown
+        readPos = 0
+        writePos = buffered % newSize
     }
 
     /** Media3 约定：输出 buffer 必须 position=0、limit=有效字节数。 */
@@ -198,6 +237,7 @@ class DelayAudioProcessor(
         buffered = 0
         readPos = 0
         writePos = 0
+        negativeDropApplied = 0
         dropBytes = if (negate) targetBytes else 0
         outputBuffer = EMPTY
     }

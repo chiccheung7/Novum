@@ -4,17 +4,22 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.focusGroup
-import androidx.compose.foundation.gestures.scrollBy
+import androidx.compose.foundation.gestures.animateScrollBy
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.relocation.BringIntoViewRequester
@@ -30,14 +35,16 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.focus.FocusRequester
-import androidx.compose.ui.focus.FocusManager
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
@@ -46,6 +53,7 @@ import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.tv.material3.Text
 import com.novum.tv.core.designsystem.R
@@ -57,6 +65,7 @@ import com.novum.tv.ui.component.NovumOptionRow
 import com.novum.tv.ui.theme.NovumPalette
 import com.novum.tv.ui.theme.NovumShapes
 import com.novum.tv.ui.theme.NovumType
+import kotlin.math.roundToInt
 import kotlinx.coroutines.launch
 
 /** 播放设置抽屉的分区。 */
@@ -66,6 +75,10 @@ internal enum class DrawerTab(
 ) {
     /** 选集（抽屉内直接换集，不必退回详情页）。 */
     Episodes(R.string.detail_episodes),
+
+    /** 当前集简介（独立一页，不与选集挤在一起）。 */
+    Overview(R.string.player_drawer_overview),
+
     Subtitle(R.string.player_drawer_subtitle),
     Audio(R.string.player_drawer_audio),
     Quality(R.string.player_drawer_quality),
@@ -122,18 +135,21 @@ internal class PlayerLiveStats {
 /**
  * 播放设置抽屉，按 tab 显示不同设置。
  *
- * 从右侧滑入，包含五个 tab（[DrawerTab]）：
+ * 从右侧滑入，包含六个 tab（[DrawerTab]）：
  * - **选集**：当前季分集列表，OK 直接换集。
+ * - **简介**：当前集（电影为整部）的完整简介，独立成页可滚动。
  * - **字幕**：字幕延迟、字号和字幕轨道列表。
  * - **音轨**：音频直通、延迟和音轨列表。
  * - **画质**：只读播放规格与实时状态。
  * - **章节**：章节列表，OK 跳转并关闭抽屉。
  *
- * 音频延迟只在音轨 tab 调节，字幕延迟只在字幕 tab 调节。
+ * 结构：**固定头（标题 + tab） + 独立滚动内容区**。之前标题、tab 与内容共用一个
+ * 滚动容器，往下翻几行就切不了 tab；内容区还有一层自己的滚动与滚动条/边渐隐，
+ * 只读页（画质/简介）没有可聚焦行时按上下键整页翻。
  *
  * 焦点约定：
  * - 打开时焦点落在当前 tab 芯片上；左右键移动焦点，OK 切换 tab。
- * - 内容行焦点不逃逸到控制条；上下键在行间移动。
+ * - 内容行焦点不逃逸到控制条；上下键在行间移动，无可移动目标时滚动内容。
  * - 内容行获焦后滚入可视区；Back 关闭并将焦点还给「播放设置」按钮。
  *
  * @param visible 是否可见。
@@ -143,6 +159,7 @@ internal class PlayerLiveStats {
  * @param textTracks 字幕列表（第一项为「关闭字幕」，selected 表示当前关闭状态）。
  * @param passthrough 音频直通当前值。
  * @param plan 播放计划（画质 tab 的规格来源）。
+ * @param title 影片/剧集标题（简介 tab 页首；分集标题优先）。
  * @param subtitle 播放方式描述（画质 tab 的规格行）。
  * @param audioLabel 当前音轨。
  * @param subtitleLabel 当前字幕。
@@ -157,6 +174,7 @@ internal class PlayerLiveStats {
  * @param modifier 外部修饰符。
  * @param liveStats 播放实时状态；null 时不渲染实时状态行。
  * @param currentPosition 当前播放位置（章节 tab 高亮「当前章」用）。
+ * @param overview 影片/剧集简介（简介 tab 在分集无简介时兜底；电影用）。
  */
 @OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
 @Composable
@@ -164,12 +182,15 @@ internal fun PlayerSettingsDrawer(
     visible: Boolean,
     initialTab: DrawerTab,
     onTabsFocusChanged: (Boolean) -> Unit,
+    /** 抽屉容器修饰符（右侧滑入层的对齐锚点等）。 */
+    modifier: Modifier = Modifier,
     /** 调节行（延迟/字号/高度）是否持有焦点的回调（父层据此放行左右键给无级调节）。 */
     onAdjustFocusChanged: (Boolean) -> Unit = {},
     audioTracks: List<TrackOption>,
     textTracks: List<TrackOption>,
     passthrough: Boolean,
     plan: PlaybackPlan,
+    title: String = "",
     subtitle: String,
     audioLabel: String,
     subtitleLabel: String,
@@ -178,8 +199,6 @@ internal fun PlayerSettingsDrawer(
     onSelectText: (TrackOption) -> Unit,
     onTogglePassthrough: () -> Unit,
     onSelectChapter: (Chapter) -> Unit,
-    /** 抽屉容器修饰符（右侧滑入层的对齐锚点等）。 */
-    modifier: Modifier = Modifier,
     /** 播放实时状态（画质 tab「实时播放状态」分区）；null = 未提供，不渲染该分区。 */
     liveStats: PlayerLiveStats? = null,
     /** 当前季分集（选集 tab）；电影为空。 */
@@ -188,6 +207,8 @@ internal fun PlayerSettingsDrawer(
     currentEpisodeId: String? = null,
     /** 选集 tab 选中某集（由外部换集：替换当前播放页）。 */
     onSelectEpisode: (String) -> Unit = {},
+    /** 影片/剧集简介（简介 tab 兜底；电影只有它）。 */
+    overview: String? = null,
     /** 音频延迟毫秒（音画同步微调；直通 bitstream 路径不生效）。 */
     audioDelayMs: Long = 0L,
     /** 音频延迟 ±100ms 步进回调。 */
@@ -222,13 +243,38 @@ internal fun PlayerSettingsDrawer(
             onAdjustFocusChanged(adjustFocusCount > 0)
         }
         val tabFocus = remember { FocusRequester() }
-        val scrollState = rememberScrollState()
+        val tabRowScroll = rememberScrollState()
+        // 内容区独立滚动：标题与 tab 固定在上方，翻到列表底部也能直接切 tab
+        val contentScroll = rememberScrollState()
         val focusManager = LocalFocusManager.current
         val drawerScope = rememberCoroutineScope()
         LaunchedEffect(Unit) {
             withFrameNanosCompat()
             runCatching { tabFocus.requestFocus() }
         }
+        // 切 tab 内容整页换掉：滚动位置必须归零，否则从长列表底部切到短内容会停在半截
+        LaunchedEffect(currentTab) {
+            contentScroll.scrollTo(0)
+        }
+
+        /**
+         * 上下键：优先交给焦点系统（内容行之间移动，获焦行自带 bring-into-view）；
+         * 没有可移动的焦点目标（只读页/列表到头）才整页滚动。
+         */
+        fun verticalKey(direction: FocusDirection): Boolean {
+            if (focusManager.moveFocus(direction)) return true
+            val down = direction == FocusDirection.Down
+            if (down && !contentScroll.canScrollForward) return false
+            if (!down && !contentScroll.canScrollBackward) return false
+            // 按视口高度的 85% 翻页：一屏多一点，读起来不会"跳过头"
+            val viewport = contentScroll.viewportSize.takeIf { it > 0 } ?: return false
+            val step = viewport * DRAWER_SCROLL_PAGE_RATIO * if (down) 1f else -1f
+            drawerScope.launch {
+                contentScroll.animateScrollBy(step, tween(DRAWER_SCROLL_ANIM_MS))
+            }
+            return true
+        }
+
         Column(
             modifier = Modifier
                 .width(DRAWER_WIDTH)
@@ -243,115 +289,159 @@ internal fun PlayerSettingsDrawer(
                     color = NovumPalette.Border,
                     shape = NovumShapes.Large,
                 )
-                // 水平/上下内边距在 scroll 之外 = 固定框；内容首尾留白在 scroll 之内
-                // （随内容滚）：标题不顶上边框、末行不贴底边框。
-                // 「选集列表最上最下显示不全」：行焦点进视口时
-                // bring-into-view 把它贴到滚动视口边缘（= 抽屉圆角边），看着像被切——
-                // 视口再内缩 [LIST_EDGE_INSET]，行贴边时距抽屉边框仍有呼吸位
-                .padding(horizontal = 24.dp)
-                .padding(vertical = LIST_EDGE_INSET)
-                .verticalScroll(scrollState)
-                .padding(top = 24.dp, bottom = 28.dp)
                 // 抽屉是独立焦点组：内部导航由组内节点完成，不向控制条逃逸
                 .focusGroup()
-                // 信息面板（画质 tab）全是只读行、无可聚焦节点——上下键焦点移动
-                // 会失败，这里以滚动兜底，让长信息列表在电视上也能翻看完整。
-                // 焦点优先：能移动焦点就交给系统；移不动才滚动（与详情页同策略）。
-                .onPreviewKeyEvent { event ->
-                    if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
-                    if (currentTab != DrawerTab.Quality) return@onPreviewKeyEvent false
-                    when (event.key) {
-                        Key.DirectionDown -> {
-                            if (focusManager.moveFocus(FocusDirection.Down)) return@onPreviewKeyEvent true
-                            if (!scrollState.canScrollForward) return@onPreviewKeyEvent false
-                            drawerScope.launch { scrollState.scrollBy(DRAWER_SCROLL_STEP.toFloat()) }
-                            true
-                        }
-                        Key.DirectionUp -> {
-                            if (focusManager.moveFocus(FocusDirection.Up)) return@onPreviewKeyEvent true
-                            if (!scrollState.canScrollBackward) return@onPreviewKeyEvent false
-                            drawerScope.launch { scrollState.scrollBy(-DRAWER_SCROLL_STEP.toFloat()) }
-                            true
-                        }
-                        else -> false
-                    }
-                }
                 // 四向困焦：列表翻到顶/底、tab 行到头时
                 // 焦点搜索会逃出抽屉落到根节点（高亮凭空消失）——exit 一律取消
                 // 边界处焦点停在原地；抽屉内芯片↔内容的上下移动不受影响
-                .focusProperties { exit = { FocusRequester.Cancel } },
-            verticalArrangement = Arrangement.spacedBy(8.dp),
+                .focusProperties { onExit = { FocusRequester.Cancel } }
+                // 上下键：焦点优先、翻页兜底（只读页没有可聚焦行，靠这条才翻得动）
+                .onPreviewKeyEvent { event ->
+                    if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                    when (event.key) {
+                        Key.DirectionDown -> verticalKey(FocusDirection.Down)
+                        Key.DirectionUp -> verticalKey(FocusDirection.Up)
+                        else -> false
+                    }
+                },
         ) {
-            Text(
-                text = stringResource(R.string.player_drawer_title),
-                style = NovumType.Section,
-                color = NovumPalette.Paper,
-                modifier = Modifier.padding(bottom = 4.dp),
-            )
-
-            // tab 行：选中 = 深底 + 短线；焦点 = 白底黑字（NovumChip 统一语义）。
-            //      左右键交给焦点系统在芯片间移焦（容器已四向困焦，到头停住）
-            //      OK 才经 onClick 切 tab 并更新内容（的预期模型）
-            //      tabFocus 固定挂在 initialTab 芯片上——挂在 currentTab 上会在切
-            //      tab 时改写聚焦节点的修饰链，焦点凭空消失 ----
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-                // 焦点上报给父层：焦点在 tab 行时根节点放行左右键（芯片间移焦），
-                // 在内容行时根节点吞掉左右键（防逃逸到控制条）
-                modifier = Modifier.onFocusChanged { onTabsFocusChanged(it.hasFocus) },
+            // ---- 固定头：标题 + tab（不随内容滚动）----
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(start = 24.dp, end = 24.dp, top = 24.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                DrawerTab.entries.forEach { tab ->
-                    NovumChip(
-                        label = stringResource(tab.labelRes),
-                        selected = tab == currentTab,
-                        onClick = { currentTab = tab },
-                        focusRequester = tabFocus.takeIf { tab == initialTab },
-                    )
+                Text(
+                    text = stringResource(R.string.player_drawer_title),
+                    style = NovumType.Section,
+                    color = NovumPalette.Paper,
+                )
+
+                // tab 行：选中 = 淡白底 + 底部短线；焦点 = 白底黑字（NovumChip 统一语义）。
+                // 六个 tab 在 480dp 面板内刚好放得下；横向可滚只作窄面板/长文案的兜底。
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    // 焦点上报给父层：焦点在 tab 行时根节点放行左右键（芯片间移焦），
+                    // 在内容行时根节点吞掉左右键（防逃逸到控制条）
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(tabRowScroll)
+                        .onFocusChanged { onTabsFocusChanged(it.hasFocus) },
+                ) {
+                    DrawerTab.entries.forEach { tab ->
+                        NovumChip(
+                            label = stringResource(tab.labelRes),
+                            selected = tab == currentTab,
+                            onClick = { currentTab = tab },
+                            focusRequester = tabFocus.takeIf { tab == initialTab },
+                        )
+                    }
                 }
             }
-            Spacer(modifier = Modifier.height(4.dp))
 
-            when (currentTab) {
-                DrawerTab.Episodes -> EpisodesTab(
-                    episodes = episodes,
-                    currentEpisodeId = currentEpisodeId,
-                    onSelectEpisode = onSelectEpisode,
-                )
+            // 固定头与滚动内容之间的分隔线（内缩，避开面板圆角）
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 24.dp, vertical = 12.dp)
+                    .height(1.dp)
+                    .background(NovumPalette.Border.copy(alpha = 0.6f)),
+            )
 
-                DrawerTab.Subtitle -> SubtitleTab(
-                    textTracks = textTracks,
-                    subtitleDelayMs = subtitleDelayMs,
-                    onSubtitleDelayChanged = onSubtitleDelayChanged,
-                    subtitleSize = subtitleSize,
-                    onSubtitleSizeChanged = onSubtitleSizeChanged,
-                    subtitleOffsetLevel = subtitleOffsetLevel,
-                    onSubtitleOffsetLevelChanged = onSubtitleOffsetLevelChanged,
-                    onSelectText = onSelectText,
-                    onAdjustFocus = ::onAdjustFocus,
-                )
+            // ---- 滚动内容区 ----
+            Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .verticalScroll(contentScroll)
+                        .padding(horizontal = 24.dp)
+                        // 首行留一点空隙、末行不贴面板底边
+                        .padding(top = 4.dp, bottom = 28.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    when (currentTab) {
+                        DrawerTab.Episodes -> EpisodesTab(
+                            episodes = episodes,
+                            currentEpisodeId = currentEpisodeId,
+                            onSelectEpisode = onSelectEpisode,
+                        )
 
-                DrawerTab.Audio -> AudioTab(
-                    audioTracks = audioTracks,
-                    passthrough = passthrough,
-                    audioDelayMs = audioDelayMs,
-                    onAudioDelayChanged = onAudioDelayChanged,
-                    onSelectAudio = onSelectAudio,
-                    onTogglePassthrough = onTogglePassthrough,
-                    onAdjustFocus = ::onAdjustFocus,
-                )
+                        DrawerTab.Overview -> OverviewTab(
+                            title = title,
+                            episode = episodes.firstOrNull { it.id == currentEpisodeId },
+                            overview = overview,
+                        )
 
-                DrawerTab.Quality -> QualityTab(
-                    plan = plan,
-                    subtitle = subtitle,
-                    audioLabel = audioLabel,
-                    subtitleLabel = subtitleLabel,
-                    liveStats = liveStats,
-                )
+                        DrawerTab.Subtitle -> SubtitleTab(
+                            textTracks = textTracks,
+                            subtitleDelayMs = subtitleDelayMs,
+                            onSubtitleDelayChanged = onSubtitleDelayChanged,
+                            subtitleSize = subtitleSize,
+                            onSubtitleSizeChanged = onSubtitleSizeChanged,
+                            subtitleOffsetLevel = subtitleOffsetLevel,
+                            onSubtitleOffsetLevelChanged = onSubtitleOffsetLevelChanged,
+                            onSelectText = onSelectText,
+                            onAdjustFocus = ::onAdjustFocus,
+                        )
 
-                DrawerTab.Chapter -> ChapterTab(
-                    chapters = chapters,
-                    currentPosition = currentPosition,
-                    onSelectChapter = onSelectChapter,
+                        DrawerTab.Audio -> AudioTab(
+                            audioTracks = audioTracks,
+                            passthrough = passthrough,
+                            audioDelayMs = audioDelayMs,
+                            onAudioDelayChanged = onAudioDelayChanged,
+                            onSelectAudio = onSelectAudio,
+                            onTogglePassthrough = onTogglePassthrough,
+                            onAdjustFocus = ::onAdjustFocus,
+                        )
+
+                        DrawerTab.Quality -> QualityTab(
+                            plan = plan,
+                            subtitle = subtitle,
+                            audioLabel = audioLabel,
+                            subtitleLabel = subtitleLabel,
+                            liveStats = liveStats,
+                        )
+
+                        DrawerTab.Chapter -> ChapterTab(
+                            chapters = chapters,
+                            currentPosition = currentPosition,
+                            onSelectChapter = onSelectChapter,
+                        )
+                    }
+                }
+
+                // 上下边缘渐隐：提示"上面/下面还有内容"，只读页尤其需要
+                if (contentScroll.canScrollBackward) {
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.TopCenter)
+                            .fillMaxWidth()
+                            .height(DRAWER_EDGE_FADE)
+                            .background(
+                                Brush.verticalGradient(
+                                    listOf(NovumPalette.GlassDeep, Color.Transparent),
+                                ),
+                            ),
+                    )
+                }
+                if (contentScroll.canScrollForward) {
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.BottomCenter)
+                            .fillMaxWidth()
+                            .height(DRAWER_EDGE_FADE)
+                            .background(
+                                Brush.verticalGradient(
+                                    listOf(Color.Transparent, NovumPalette.GlassDeep),
+                                ),
+                            ),
+                    )
+                }
+
+                DrawerScrollIndicator(
+                    state = contentScroll,
+                    modifier = Modifier.align(Alignment.CenterEnd),
                 )
             }
         }
@@ -364,6 +454,8 @@ internal fun PlayerSettingsDrawer(
  * 行文与详情页选集卡同口径「SxxExx · 集标题」；当前集以选中态标记
  * 有进度的集在行尾显示剩余时长、已看完显示「已看完」。换集由外部走
  * `onOpenEpisode`（替换当前播放页，不叠加返回栈）。
+ *
+ * 集简介已独立成「简介」页，这里只留列表——长简介不再把选集挤到屏幕外。
  *
  * @param episodes 当前季分集；空 = 电影/分集列表不可用，给空态提示。
  * @param currentEpisodeId 当前播放分集 id。
@@ -378,24 +470,6 @@ private fun EpisodesTab(
     if (episodes.isEmpty()) {
         HintRow(stringResource(R.string.player_drawer_empty))
         return
-    }
-    // 当前集简介：详情页已撤下当前集信息区，集简介改在这里随当前播放集展示。
-    val currentEpisode = episodes.firstOrNull { it.id == currentEpisodeId }
-    val episodeOverview = currentEpisode?.overview?.takeIf { it.isNotBlank() }
-    if (currentEpisode != null && episodeOverview != null) {
-        val code = "S%02dE%02d".format(currentEpisode.seasonIndex, currentEpisode.index % 100)
-        Text(
-            text = stringResource(R.string.player_drawer_episode_overview, code, currentEpisode.title),
-            style = NovumType.Label,
-            color = NovumPalette.Paper,
-            modifier = Modifier.padding(horizontal = 4.dp),
-        )
-        Text(
-            text = episodeOverview,
-            style = NovumType.Caption,
-            color = NovumPalette.PaperMuted,
-            modifier = Modifier.padding(horizontal = 4.dp, vertical = 6.dp),
-        )
     }
     SectionLabel(stringResource(R.string.detail_episodes))
     episodes.forEach { episode ->
@@ -417,6 +491,60 @@ private fun EpisodesTab(
             onClick = { onSelectEpisode(episode.id) },
         )
     }
+}
+
+/**
+ * 简介 tab：当前集（电影为整部影片）的完整简介。
+ *
+ * 简介是"读"的内容而不是"选"的内容，独立成页后可以尽情滚动，
+ * 不再挤压选集列表；分集没有简介时回落到剧集/影片简介。
+ *
+ * @param title 影片/剧集标题（无分集时作页首标题）。
+ * @param episode 当前播放分集；电影为 null。
+ * @param overview 影片/剧集简介（兜底）。
+ */
+@Composable
+private fun OverviewTab(
+    title: String,
+    episode: Episode?,
+    overview: String?,
+) {
+    val heading = if (episode != null) {
+        "S%02dE%02d".format(episode.seasonIndex, episode.index % 100) + " · " + episode.title
+    } else {
+        title
+    }
+    val runtime = episode?.runtimeMinutes
+    val meta = listOfNotNull(
+        runtime?.let { stringResource(R.string.detail_minutes, it) },
+        episode?.premiereDate?.takeIf { it.isNotBlank() },
+    ).joinToString(" · ")
+
+    // tab 名已经是「简介」，页内不再重复小标题，直接从集名/片名开始
+    if (heading.isNotBlank()) {
+        Text(
+            text = heading,
+            style = NovumType.BodyStrong,
+            color = NovumPalette.Paper,
+            modifier = Modifier.padding(horizontal = 4.dp),
+        )
+    }
+    if (meta.isNotBlank()) {
+        Text(
+            text = meta,
+            style = NovumType.Caption,
+            color = NovumPalette.PaperMuted,
+            modifier = Modifier.padding(horizontal = 4.dp),
+        )
+    }
+    val body = episode?.overview?.takeIf { it.isNotBlank() }
+        ?: overview?.takeIf { it.isNotBlank() }
+    Text(
+        text = body ?: stringResource(R.string.player_drawer_no_overview),
+        style = NovumType.Body,
+        color = NovumPalette.PaperMuted,
+        modifier = Modifier.padding(horizontal = 4.dp, vertical = 6.dp),
+    )
 }
 
 /** 字幕 tab：字幕延迟微调 + 字幕字号调节 + 字幕高度调节 + 轨道列表（首位「关闭字幕」）。 */
@@ -619,6 +747,46 @@ private fun ChapterTab(
     }
 }
 
+/**
+ * 右侧滚动指示条：只读页（画质/简介）没有焦点行，用户需要一个"还有多长"的参照。
+ *
+ * 轨道高 = 内容区高，滑块高按「视口 / 内容」比例，位置按滚动进度。
+ * 内容装得下（maxValue == 0）时整条不渲染。
+ */
+@Composable
+private fun DrawerScrollIndicator(
+    state: ScrollState,
+    modifier: Modifier = Modifier,
+) {
+    val viewport = state.viewportSize
+    val max = state.maxValue
+    if (viewport <= 0 || max <= 0) return
+    val thumbFraction = (viewport.toFloat() / (viewport + max)).coerceIn(0.08f, 1f)
+    val travel = viewport * (1f - thumbFraction)
+    Box(
+        modifier = modifier
+            .padding(end = 6.dp)
+            .width(3.dp)
+            .fillMaxHeight()
+            .clip(NovumShapes.Pill)
+            .background(NovumPalette.ScrollbarTrack),
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .fillMaxHeight(thumbFraction)
+                // 滚动值在布局阶段读取：不参与重组（@FrequentlyChangingValue）
+                .offset {
+                    val latestMax = state.maxValue
+                    val fraction = if (latestMax > 0) state.value.toFloat() / latestMax else 0f
+                    IntOffset(0, (fraction * travel).roundToInt())
+                }
+                .clip(NovumShapes.Pill)
+                .background(NovumPalette.ScrollbarThumb),
+        )
+    }
+}
+
 /** 只读规格行：左标签右值，值缺失显示「未知」。 */
 @Composable
 private fun InfoLine(labelRes: Int, value: String?) {
@@ -684,6 +852,8 @@ private fun DrawerRow(
         selected = selected,
         onClick = onClick,
         focusRequester = focusRequester,
+        // 调节项不是"选项"：不显示选中态，只留左右箭头与"已改动"小圆点
+        adjustable = onStep != null,
         onFocused = { focused ->
             if (focused) scope.launch { bringIntoView.bringIntoView() }
             onAdjustFocus?.invoke(focused)
@@ -728,17 +898,20 @@ private fun formatDelay(ms: Long): String = if (ms == 0L) {
     "${signed}ms"
 }
 
-/** 抽屉宽度（加宽：容纳「S01E03 · 分集标题」+ 行尾剩余时长不截断）。 */
+/** 抽屉宽度：960dp 设计画布的 50%——选集行「S01E03 · 分集标题」+ 行尾时长不截断。 */
 private val DRAWER_WIDTH = 480.dp
 
 /** 抽屉上下内收：不贴屏幕边缘（由 48 收到 32，列表更长）。 */
 private val DRAWER_VERTICAL_INSET = 32.dp
 
-/** 滚动视口上下内缩：行贴视口边时仍与抽屉边框留呼吸位（修「列表最上最下显示不全」）。 */
-private val LIST_EDGE_INSET = 20.dp
+/** 内容区上下边缘渐隐高度。 */
+private val DRAWER_EDGE_FADE = 18.dp
+
+/** 只读页整页翻的比例：一屏 85%，留 15% 上下文。 */
+private const val DRAWER_SCROLL_PAGE_RATIO = 0.85f
+
+/** 翻页动画时长。 */
+private const val DRAWER_SCROLL_ANIM_MS = 180
 
 /** 滑入滑出时长。 */
 private const val DRAWER_ANIM_MS = 220
-
-/** 信息面板上下键单次滚动步长（px，约半屏信息行）。 */
-private const val DRAWER_SCROLL_STEP = 320

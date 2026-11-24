@@ -37,6 +37,18 @@ class ServerAddressTest {
     }
 
     @Test
+    fun keepsReverseProxySubPath() {
+        assertEquals(
+            listOf("https://demo.example.com:443/emby"),
+            ServerAddress.candidates("https://demo.example.com/emby"),
+        )
+        assertEquals(
+            listOf("http://tv.local:8096/emby", "https://tv.local:443/emby"),
+            ServerAddress.candidates("tv.local/emby"),
+        )
+    }
+
+    @Test
     fun keepsCustomPortForBothSchemes() {
         assertEquals(
             listOf("http://192.168.5.26:9000", "https://192.168.5.26:9000"),

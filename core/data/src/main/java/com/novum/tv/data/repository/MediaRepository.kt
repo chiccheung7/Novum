@@ -1,6 +1,7 @@
 package com.novum.tv.data.repository
 
 import com.novum.tv.core.result.NovumResult
+import com.novum.tv.model.CastMember
 import com.novum.tv.model.Episode
 import com.novum.tv.model.HomeFeed
 import com.novum.tv.model.MediaDetail
@@ -99,6 +100,20 @@ interface MediaRepository {
      * @param seriesId 剧集 id。
      */
     suspend fun seriesNextUp(seriesId: String): NovumResult<Episode?>
+
+    /**
+     * 读取某季的演职员（按该季各集 People 合并，主创优先）。
+     *
+     * 剧集条目级的 `People` 是全剧口径，分季客串/换角无法体现；详情页切季时
+     * 用它替换演职员行。
+     *
+     * 默认返回空列表：测试 Fake 不覆盖该路径时，页面回落到剧集级演职员。
+     *
+     * @param seriesId 剧集 id。
+     * @param seasonId 季 id。
+     */
+    suspend fun seasonCast(seriesId: String, seasonId: String): NovumResult<List<CastMember>> =
+        NovumResult.Success(emptyList())
 
     /**
      * 收藏 / 取消收藏。

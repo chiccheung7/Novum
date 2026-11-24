@@ -36,8 +36,14 @@ interface PlaybackRepository {
      * @param itemId 条目 id。
      * @param positionMs 起始位置。
      * @param method 播放方式。
+     * @param playSessionId PlaybackInfo 会话 id；null = 会话未建立（静态流兜底）。
      */
-    suspend fun reportStarted(itemId: String, positionMs: Long, method: PlayMethod)
+    suspend fun reportStarted(
+        itemId: String,
+        positionMs: Long,
+        method: PlayMethod,
+        playSessionId: String? = null,
+    )
 
     /**
      * 上报播放进度。
@@ -45,8 +51,14 @@ interface PlaybackRepository {
      * @param itemId 条目 id。
      * @param positionMs 当前位置。
      * @param method 播放方式。
+     * @param playSessionId PlaybackInfo 会话 id。
      */
-    suspend fun reportProgress(itemId: String, positionMs: Long, method: PlayMethod)
+    suspend fun reportProgress(
+        itemId: String,
+        positionMs: Long,
+        method: PlayMethod,
+        playSessionId: String? = null,
+    )
 
     /**
      * 上报「停止播放」，服务端据此落库最终进度。
@@ -54,6 +66,12 @@ interface PlaybackRepository {
      * @param itemId 条目 id。
      * @param positionMs 退出时的位置。
      * @param method 播放方式。
+     * @param playSessionId PlaybackInfo 会话 id。
      */
-    suspend fun reportStopped(itemId: String, positionMs: Long, method: PlayMethod)
+    suspend fun reportStopped(
+        itemId: String,
+        positionMs: Long,
+        method: PlayMethod,
+        playSessionId: String? = null,
+    )
 }

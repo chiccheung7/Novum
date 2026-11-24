@@ -61,8 +61,7 @@ internal fun HomeSectionRow(
         EntryCard(
             entry = entry,
             showProgress = showProgress,
-            // 评分角标：继续观看/分库行统一展示
-            showRating = true,
+            showRating = showRating,
             onClick = { onEntryClick(entry) },
             modifier = firstFocus?.takeIf { index == 0 }?.let { Modifier.focusRequester(it) }
                 ?: Modifier,

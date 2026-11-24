@@ -126,6 +126,7 @@ fun DetailScreen(
                         onMarkSeasonPlayed = viewModel::markSeasonPlayed,
                         onSelectSeason = viewModel::selectSeason,
                         onRetryEpisodes = viewModel::retryEpisodes,
+                        onRememberVersion = viewModel::rememberVersion,
                     )
                 }
             }
@@ -171,6 +172,7 @@ private fun DetailBody(
     onMarkSeasonPlayed: (Boolean) -> Unit,
     onSelectSeason: (String) -> Unit,
     onRetryEpisodes: () -> Unit,
+    onRememberVersion: (String) -> Unit,
 ) {
     // 首焦落播放按钮；抓焦交给骨架内的 [NovumInitialFocus]，等待焦点目标挂载。
     val playFocus = remember { FocusRequester() }
@@ -463,11 +465,11 @@ private fun DetailBody(
                         episodesEmpty = state.episodes.isEmpty() && !state.episodesFailed,
                         episodesFailed = state.episodesFailed,
                         firstUnplayedId = firstUnplayedId,
-                        // 锚点：有观看进度的集优先——普通入口
-                        // 进来也把「正在看的那集」放到行首（原仅继续观看入口有锚点）
-                        anchorEpisodeId = state.episodes
-                            .firstOrNull { it.progressRatio != null }?.id
-                            ?: state.currentEpisodeId,
+                        // 锚点：NextUp 当前集优先（服务端确定的「正在看」）；
+                        // 无 NextUp 提示时才回落到首个有进度的集。
+                        // 反过来的话，早期留下的一点进度会把行首抢到旧集。
+                        anchorEpisodeId = state.currentEpisodeId
+                            ?: state.episodes.firstOrNull { it.progressRatio != null }?.id,
                         // 选中卡显「已选中」角标
                         selectedEpisodeId = state.episodeContextId,
                         // 剧集 clearlogo 挂每张卡图左上角（同剧共用一张）
@@ -490,10 +492,11 @@ private fun DetailBody(
                 }
             }
 
-            // 演职员。
-            if (data.cast.isNotEmpty()) {
+            // 演职员：当前季优先（分季换角/客串），季级无数据回落剧集级；电影恒条目级。
+            val cast = state.seasonCast?.takeIf { it.isNotEmpty() } ?: data.cast
+            if (cast.isNotEmpty()) {
                 row(key = "cast") {
-                    CastRow(cast = data.cast, onOpenPerson = onOpenPerson)
+                    CastRow(cast = cast, onOpenPerson = onOpenPerson)
                 }
             }
         }
@@ -529,7 +532,7 @@ private fun DetailBody(
         }
 
         // 版本选择浮层由「每次询问」策略或长按播放/从头播放呼出。
-        // 选中后按该版本起播；sourceId 经路由携带，不写入持久化。
+        // 选中后按该版本起播，并写入条目级记忆：下次直接播放会沿用该版本。
         if (versionPickOpen && versions.size > 1) {
             VersionDialog(
                 versions = versions,
@@ -537,10 +540,11 @@ private fun DetailBody(
                 titlePrefix = currentEpisode?.let { ep ->
                     "${data.title} · S%02dE%02d".format(ep.seasonIndex, ep.index % 100)
                 } ?: data.title,
-                // 无持久化选中态：默认高亮服务端第一版（弹层内首个）
-                selectedId = null,
+                // 高亮上一次记忆的版本；没有记忆时 VersionDialog 回落首项
+                selectedId = state.rememberedMediaSourceId,
                 onSelect = { sourceId ->
                     versionPickOpen = false
+                    onRememberVersion(sourceId)
                     onPlay(playTargetId, versionPickAtMs, sourceId)
                 },
                 onDismiss = { versionPickOpen = false },

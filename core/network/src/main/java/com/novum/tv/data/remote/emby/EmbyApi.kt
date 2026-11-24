@@ -99,11 +99,13 @@ interface EmbyApi {
      *
      * @param uid 用户 id。
      * @param limit 条数上限。
+     * @param parentId 限定在某个条目下（单剧集定位用；服务端不支持时由调用方再过滤）。
      */
     @GET("Users/{uid}/Items/Resume")
     suspend fun resume(
         @Path("uid") uid: String,
         @Query("Limit") limit: Int = 12,
+        @Query("ParentId") parentId: String? = null,
         @Query("MediaTypes") mediaTypes: String = "Video",
         @Query("Fields") fields: String = DEFAULT_FIELDS,
     ): QueryResultDto<ItemDto>
@@ -193,12 +195,15 @@ interface EmbyApi {
      * @param seriesId 剧集 id。
      * @param userId 用户 id。
      * @param seasonId 季 id；为空表示全部季。
+     * @param limit 条数上限；为空表示服务端默认（返回整季）。
+     * @param fields 请求字段集；按季取演员时追加 `People`。
      */
     @GET("Shows/{seriesId}/Episodes")
     suspend fun episodes(
         @Path("seriesId") seriesId: String,
         @Query("userId") userId: String,
         @Query("SeasonId") seasonId: String? = null,
+        @Query("Limit") limit: Int? = null,
         @Query("Fields") fields: String = EPISODE_FIELDS,
     ): QueryResultDto<ItemDto>
 
@@ -294,10 +299,18 @@ interface EmbyApi {
 
     /** 与 Emby 交互时统一请求的字段集合，避免不同调用点字段不一致。 */
     companion object {
+        /**
+         * 通用列表字段。
+         *
+         * `SeasonId` 显式列出：详情页默认季定位优先按分集所属季 id 匹配
+         * （NextUp/Resume 提示集都走这里），严格按 `Fields` 裁剪的服务端不列
+         * 就不下发，会让定位退化成按季序号猜、错误落到第一季。
+         */
         const val DEFAULT_FIELDS =
             "PrimaryImageAspectRatio,ProductionYear,CommunityRating,RunTimeTicks,UserData,Genres," +
                 "Overview,ImageTags,BackdropImageTags,ChildCount,PremiereDate,SeriesId,SeriesName," +
-                "SeriesPrimaryImageTag,SeriesThumbImageTag,IndexNumber,ParentIndexNumber,DateCreated,DateLastMediaAdded,MediaStreams,OfficialRating"
+                "SeriesPrimaryImageTag,SeriesThumbImageTag,IndexNumber,ParentIndexNumber,SeasonId," +
+                "DateCreated,DateLastMediaAdded,MediaStreams,OfficialRating"
 
         /** 详情页字段在通用字段上追加演职员、出品公司、分级与宣传语。 */
         const val DETAIL_FIELDS =
@@ -306,9 +319,9 @@ interface EmbyApi {
         /** 季列表字段。 */
         const val SEASON_FIELDS = "ChildCount,RecursiveItemCount,UserData,ImageTags,PremiereDate"
 
-        /** 分集列表字段。 */
+        /** 分集列表字段（`SeasonId` 同 [DEFAULT_FIELDS] 的理由必须显式请求）。 */
         const val EPISODE_FIELDS =
-            "Overview,RunTimeTicks,UserData,ImageTags,PremiereDate,IndexNumber,ParentIndexNumber,MediaSources," +
-                "SeriesId,SeriesPrimaryImageTag,SeriesThumbImageTag"
+            "Overview,RunTimeTicks,UserData,ImageTags,PremiereDate,IndexNumber,ParentIndexNumber,SeasonId," +
+                "MediaSources,SeriesId,SeriesPrimaryImageTag,SeriesThumbImageTag"
     }
 }

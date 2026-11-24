@@ -18,10 +18,22 @@ import dagger.Provides
 import dagger.hilt.InstallIn
 import dagger.hilt.android.qualifiers.ApplicationContext
 import dagger.hilt.components.SingletonComponent
+import javax.inject.Qualifier
 import javax.inject.Singleton
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+
+/**
+ * 应用级协程作用域限定符。
+ *
+ * 用于「页面已经离场也必须跑完」的收尾请求——典型是播放停止上报：换集/退出会立刻
+ * 销毁播放页，`viewModelScope` 随之取消，挂在它上面的网络请求会被中断，服务端就
+ * 收不到本集的结束位置（表现为该集永远停在「看到一半」，继续观看/NextUp 不前进）。
+ */
+@Qualifier
+@Retention(AnnotationRetention.BINARY)
+annotation class ApplicationScope
 
 /**
  * 数据层装配：设置存储与仓储绑定。
@@ -61,6 +73,16 @@ object DataStoreModule {
     fun provideItemPlaybackPrefsStore(
         @ApplicationContext context: Context,
     ): ItemPlaybackPrefsStore = ItemPlaybackPrefsStore(File(context.filesDir, "item_playback_prefs.json"))
+
+    /**
+     * 进程级协程作用域（见 [ApplicationScope]）。
+     *
+     * 只放「必须送达」的收尾请求；普通业务协程仍用 viewModelScope，随页面回收。
+     */
+    @Provides
+    @Singleton
+    @ApplicationScope
+    fun provideApplicationScope(): CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 }
 
 /** 仓储接口与实现的绑定。 */

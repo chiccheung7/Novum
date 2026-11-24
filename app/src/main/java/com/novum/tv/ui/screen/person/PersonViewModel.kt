@@ -14,6 +14,7 @@ import javax.inject.Inject
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 
 /**
@@ -47,9 +48,13 @@ class PersonViewModel @Inject constructor(
         load()
     }
 
+    /** 在途请求：连续点「重试」只保留最后一次，避免旧结果覆盖新状态。 */
+    private var loadJob: Job? = null
+
     /** 首次加载或错误态重试。 */
     fun load() {
-        viewModelScope.launch {
+        loadJob?.cancel()
+        loadJob = viewModelScope.launch {
             _state.value = PersonUiState(UiState.Loading)
             _state.value = when (val result = repository.personWorks(personId)) {
                 is NovumResult.Success -> PersonUiState(UiState.Success(result.value))

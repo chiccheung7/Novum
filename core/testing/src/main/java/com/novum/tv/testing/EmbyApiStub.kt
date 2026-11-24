@@ -51,7 +51,7 @@ open class EmbyApiStub : EmbyApi {
         fields: String,
     ): QueryResultDto<ItemDto> = QueryResultDto()
 
-    override suspend fun resume(uid: String, limit: Int, mediaTypes: String, fields: String) =
+    override suspend fun resume(uid: String, limit: Int, parentId: String?, mediaTypes: String, fields: String) =
         QueryResultDto<ItemDto>()
 
     override suspend fun nextUp(uid: String, limit: Int, fields: String, seriesId: String?) = QueryResultDto<ItemDto>()
@@ -78,6 +78,7 @@ open class EmbyApiStub : EmbyApi {
         seriesId: String,
         userId: String,
         seasonId: String?,
+        limit: Int?,
         fields: String,
     ): QueryResultDto<ItemDto> = QueryResultDto()
 

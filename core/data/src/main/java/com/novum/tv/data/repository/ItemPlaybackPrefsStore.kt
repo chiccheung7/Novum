@@ -46,9 +46,9 @@ class ItemPlaybackPrefsStore(
     private val json = Json { ignoreUnknownKeys = true }
     private var cache: MutableMap<String, ItemPrefs>? = null
 
-    /** 读取某条目的记忆偏好；无记录返回 null。 */
+    /** 读取某条目的记忆偏好；无记录（或读盘失败）返回 null。 */
     suspend fun get(itemId: String): ItemPrefs? = mutex.withLock {
-        loadLocked()[itemId]
+        loadLocked()?.get(itemId)
     }
 
     /**
@@ -68,7 +68,9 @@ class ItemPlaybackPrefsStore(
         clearSubtitleTrack: Boolean = false,
         clearAudioTrack: Boolean = false,
     ) = mutex.withLock {
-        val map = loadLocked()
+        // 读盘失败就放弃本次写入：拿空表落盘会把文件里**其它条目**的记忆整片抹掉，
+        // 用户下次播放会发现所有手动轨/版本记忆都没了。宁可这次不记。
+        val map = loadLocked() ?: return@withLock
         val old = map[itemId] ?: ItemPrefs(itemId = itemId)
         map[itemId] = old.copy(
             mediaSourceId = if (clearMediaSourceId) null else mediaSourceId ?: old.mediaSourceId,
@@ -79,15 +81,32 @@ class ItemPlaybackPrefsStore(
         persistLocked(map)
     }
 
-    private fun loadLocked(): MutableMap<String, ItemPrefs> {
+    /**
+     * 读取记忆表；**null = 本次读盘失败**（IO 异常）。
+     *
+     * 三种「读不出内容」要分开处理：
+     * - 文件不存在 / 内容为空 → 正常空表（还没写过，或上次写被截断成空）；
+     * - 内容损坏（JSON 解不开）→ 先把原文件另存为 `.corrupt`，再当空表继续：
+     *   既留下现场，也不会让记忆永久失效写不进去；
+     * - 真正读失败 → 返回 null，调用方放弃写入：拿空表落盘会把磁盘上**其它
+     *   条目**的记忆整片抹掉，宁可这次不记（下次访问会重试读盘）。
+     */
+    private suspend fun loadLocked(): MutableMap<String, ItemPrefs>? {
         cache?.let { return it }
-        val loaded = runCatching {
-            if (storeFile.exists()) {
-                json.decodeFromString<Map<String, ItemPrefs>>(storeFile.readText())
-            } else {
-                emptyMap()
-            }
-        }.getOrDefault(emptyMap())
+        val loaded: Map<String, ItemPrefs> = withContext(ioDispatcher) {
+            runCatching {
+                if (!storeFile.exists()) return@runCatching emptyMap<String, ItemPrefs>()
+                val text = storeFile.readText()
+                if (text.isBlank()) return@runCatching emptyMap<String, ItemPrefs>()
+                runCatching { json.decodeFromString<Map<String, ItemPrefs>>(text) }
+                    .getOrElse {
+                        runCatching {
+                            storeFile.copyTo(File(storeFile.path + CORRUPT_SUFFIX), overwrite = true)
+                        }
+                        emptyMap<String, ItemPrefs>()
+                    }
+            }.getOrNull()
+        } ?: return null
         return loaded.toMutableMap().also { cache = it }
     }
 
@@ -100,3 +119,6 @@ class ItemPlaybackPrefsStore(
         }
     }
 }
+
+/** 损坏文件的另存后缀（只留证据，不参与读取）。 */
+private const val CORRUPT_SUFFIX = ".corrupt"

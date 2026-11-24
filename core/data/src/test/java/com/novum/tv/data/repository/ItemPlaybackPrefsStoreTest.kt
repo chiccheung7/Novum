@@ -5,6 +5,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Rule
 import org.junit.Test
@@ -58,5 +59,39 @@ class ItemPlaybackPrefsStoreTest {
         val prefs = store.get("item")
         assertNull("关闭字幕后不应残留旧字幕轨", prefs?.subtitleTrack)
         assertEquals(true, prefs?.subtitleDisabled)
+    }
+
+    @Test
+    fun blankFileIsTreatedAsEmpty() = runTest {
+        // 新建的临时文件是空内容（0 字节），这不是"读失败"：必须当空表处理，
+        // 否则第一次写入就被放弃，用户的手动记忆永远存不下来
+        val file = File(folder.root, "item_prefs.json")
+        file.writeText("")
+        val store = newStore()
+
+        store.update("item", mediaSourceId = "src-1")
+
+        assertEquals("src-1", store.get("item")?.mediaSourceId)
+        assertFalse("空文件不应被当成损坏另存", File(folder.root, "item_prefs.json.corrupt").exists())
+    }
+
+    @Test
+    fun corruptFileIsQuarantinedBeforeRewrite() = runTest {
+        // 上次写到一半被截断、内容解不开：先另存一份 .corrupt 留现场，再按空表重建。
+        // 既不丢原数据可追查，也不会让记忆永久失效（永远写不进去）。
+        val corruption = """{"a": not-json}"""
+        val file = File(folder.root, "item_prefs.json")
+        file.writeText(corruption)
+        val store = newStore()
+
+        assertNull("损坏内容不应读出记忆", store.get("item"))
+        store.update("item", mediaSourceId = "src-1")
+
+        assertEquals("写入应恢复", "src-1", store.get("item")?.mediaSourceId)
+        assertEquals(
+            "损坏内容应另存留证",
+            corruption,
+            File(folder.root, "item_prefs.json.corrupt").readText(),
+        )
     }
 }

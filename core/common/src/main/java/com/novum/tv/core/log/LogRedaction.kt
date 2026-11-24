@@ -18,13 +18,19 @@ object LogRedaction {
     /**
      * 需要脱敏的「键 = 值」模式。
      *
-     * 覆盖：URL 查询参数（api_key/token/password）、Emby 鉴权头、通用 Authorization。
-     * 大小写不敏感，值匹配到 `&`、空白、引号为止。
+     * 覆盖：URL 查询参数（api_key/token/password）、Emby 鉴权头、通用 Authorization，
+     * 以及 JSON 体（`"AccessToken":"..."`——登录响应的 token 就是这种形式，调试时
+     * 常被整段打出来）。大小写不敏感，值匹配到 `&`、空白或逗号为止；
+     * 同时支持带引号的值（`api_key="..."`）。
      */
     private val patterns: List<Regex> = listOf(
-        Regex("""(?i)((?:api[_-]?key|token|password|passwd|pwd)\s*=\s*)([^&\s"']+)"""),
+        // JSON：键被引号包住、分隔符是冒号，与查询串的 `key=value` 完全不同形态
+        Regex(
+            """(?i)("(?:api[_-]?key|access[_-]?token|token|password|passwd|pwd)"\s*:\s*)("[^"]*"|[^,}\s]+)""",
+        ),
+        Regex("""(?i)((?:api[_-]?key|access[_-]?token|token|password|passwd|pwd)\s*=\s*)("[^"]*"|'[^']*'|[^&\s"']+)"""),
         // 鉴权头：`Bearer <token>` 要连 scheme 一起算前缀，否则只遮住 "Bearer"
-        Regex("""(?i)((?:x-emby-token|authorization|proxy-authorization)\s*[:=]\s*(?:bearer\s+)?)([^\s,"']+)"""),
+        Regex("""(?i)((?:x-emby-token|authorization|proxy-authorization)\s*[:=]\s*(?:bearer\s+)?)("[^"]*"|'[^']*'|[^\s,"']+)"""),
         // URL 里的 user:pass@host 形式
         Regex("""(?i)(://[^/\s:@]+:)([^/\s@]+)(@)"""),
     )

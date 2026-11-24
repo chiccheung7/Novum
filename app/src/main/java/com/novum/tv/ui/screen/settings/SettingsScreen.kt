@@ -96,7 +96,9 @@ fun SettingsScreen(
     val pinnedLine by linePickerViewModel.pinned.collectAsStateWithLifecycle()
 
     var selected by rememberSaveable { mutableStateOf(SettingsSection.Account.name) }
-    val selectedSection = SettingsSection.valueOf(selected)
+    // 升级后 savedState 可能残留已删除/重命名的分区名，不能直接 valueOf 崩页面
+    val selectedSection = runCatching { SettingsSection.valueOf(selected) }
+        .getOrDefault(SettingsSection.Account)
     val leftSelectedRowFocus = remember { FocusRequester() }
 
     // 初始抓焦：左目录选中行——顶栏切页进入时焦点落内容区，不滞留顶栏
