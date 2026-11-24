@@ -34,6 +34,7 @@ import com.novum.tv.model.DanmuSpeed
  * @param danmuAreaFull 弹幕显示区域：false=上半屏（不挡字幕），true=全屏。
  * @param danmuSize 弹幕字号档位：1=小 2=中 3=大。
  * @param danmuSpeed 弹幕滚动速度档位：1=慢 2=标准 3=快。
+ * @param uiScale 界面大小档位（1 = 按 1280×720dp 设计画布原样）；>1 元素更大。
  */
 data class AppSettings(
     val preferDirect: Boolean = true,
@@ -65,10 +66,22 @@ data class AppSettings(
     val danmuDensity: Float = 0.7f,
     /** 弹幕显示区域：false=上半屏（默认，不挡字幕），true=全屏。 */
     val danmuAreaFull: Boolean = false,
-    /** 弹幕字号档位：1=小 2=中 3=大。 */
+    /**
+     * 弹幕字号档位：1=小 2=中 3=大。
+     *
+     * 档位倍率已在 [com.novum.tv.model.DanmuSize] 里整体上移一档——默认的「中」
+     * 就是过去的最大字号（25dp），实机 3 米距离下才够看。
+     */
     val danmuSize: Int = 2,
     /** 弹幕滚动速度档位：1=慢 2=标准 3=快。 */
     val danmuSpeed: Int = 2,
+    /**
+     * 界面大小：整体缩放置换到 Viewport（1 = 标准，0.85 = 更紧凑，1.3 = 更大）。
+     *
+     * 电视上报的画布差异极大，归一化只能保证「不比设计画布更局促」；
+     * 同一套比例在不同尺寸/观看距离的电视上仍需微调，这一档由用户决定。
+     */
+    val uiScale: Float = 1f,
 )
 
 /** 把设置快照里的弹幕原始字段组装成渲染配置（档位 → 领域枚举）。 */

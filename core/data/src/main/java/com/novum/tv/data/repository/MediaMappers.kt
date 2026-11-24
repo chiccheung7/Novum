@@ -171,8 +171,19 @@ private fun formatBitrate(bps: Long): String = when {
         People.toCastMembers(server, strings)
 
     /** People[] → 演职员模型（详情/季级聚合共用）。 */
-    internal fun List<PersonDto>.toCastMembers(server: String, strings: MediaStrings): List<CastMember> =
-        mapNotNull { person -> person.toCastMember(server, strings) }
+    internal fun List<PersonDto>.toCastMembers(server: String, strings: MediaStrings): List<CastMember> {
+        // 同一个人可能以多个职位出现（导演 + 旁白 + 演员），Emby 的 People 会下发多条
+        // **同 id** 记录；直接 map 会让列表里出现重复 key，LazyRow 抛
+        // "Key ... was already used" 直接闪退。按人物 id（缺 id 时按姓名）去重，保留首次出现。
+        val seen = LinkedHashSet<String>()
+        return mapNotNull { person ->
+            val key = person.Id?.takeIf { it.isNotBlank() }
+                ?: person.Name?.trim()?.takeIf { it.isNotBlank() }?.lowercase()
+                ?: return@mapNotNull null
+            if (!seen.add(key)) return@mapNotNull null
+            person.toCastMember(server, strings)
+        }
+    }
 
     /**
      * 多集 `People[]` 合并为季级演职员。

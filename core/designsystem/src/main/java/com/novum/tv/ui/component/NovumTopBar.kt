@@ -101,8 +101,8 @@ private fun NovumTopIcon(
     )
 }
 
-/** 顶栏入口图标尺寸：小于全站默认图标钮（75），顶栏行内的轻量入口。 */
-private val TOP_ICON_SIZE = 42.dp
+/** 顶栏入口图标尺寸：小于全站默认图标钮（64），但要保证 10ft 下可辨认与可聚焦。 */
+private val TOP_ICON_SIZE = 56.dp
 
 /** 顶栏入口图标间距。 */
 private val ICON_GAP = 12.dp

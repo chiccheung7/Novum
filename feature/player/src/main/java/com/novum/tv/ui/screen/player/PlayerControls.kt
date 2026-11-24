@@ -127,7 +127,8 @@ internal fun PlayerControlOverlay(
             } else {
                 Text(
                     text = title.ifBlank { stringResource(R.string.player_unknown_title) },
-                    style = NovumType.Title,
+                    // 播放页标题压在画面上，用内容级 Section（28）而不是页级 Title（44）
+                    style = NovumType.Section,
                     color = NovumPalette.Paper,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
@@ -359,7 +360,7 @@ internal val ControlScrimBrush: Brush = Brush.verticalGradient(
 )
 
 /** 播放页左上角 ClearLogo 高度：标题图在黑场遮罩上直出，比文本标题矮但更醒目。 */
-private val PLAYER_LOGO_HEIGHT = 40.dp
+private val PLAYER_LOGO_HEIGHT = 52.dp
 
 /** ClearLogo 宽度上限（占屏比）：Fit 缩放下横版 logo 居左不满宽，超宽 logo 不吞屏。 */
 private const val PLAYER_LOGO_MAX_WIDTH_RATIO = 0.42f

@@ -158,19 +158,28 @@ class FocusContractTest {
             card.contains("Glow.None"),
         )
         assertTrue(
-            "卡焦点态描边必须走官方 CardDefaults.border 参数（焦点框四态透明，" +
-                "见下条；选中态描边另行走 Modifier.border——2026-11-11 选中框入约）",
+            "卡焦点态描边必须走官方 CardDefaults.border 参数",
             card.contains("CardDefaults.border"),
         )
         assertTrue(
-            "卡焦点框已退役（2026-11-07）：border 四态必须全透明（0dp Transparent 占位）",
+            "常态描边保持 0dp 透明占位（只在焦点/按压时出白框）",
             card.contains("BorderStroke(0.dp, Color.Transparent)"),
         )
         assertTrue(
-            "选中框必须存在（2026-11-11 第四轮拍板：发光退役换卡聚焦框）：" +
-                "selectedFrame 走 Modifier.border + Accent + 卡形状",
-            card.contains("selectedFrame") &&
-                card.contains("Modifier.border(SELECTED_FRAME_WIDTH, NovumPalette.Accent, NovumShapes.Card)"),
+            "卡焦点必须是 2dp 白描边（2026-11-24 拍板：焦点=白描边 + 放大，" +
+                "只靠 1.10 缩放在暗色海报上不够明确）",
+            card.contains(
+                "focusedBorder = Border(BorderStroke(FOCUS_FRAME_WIDTH, NovumPalette.Paper))",
+            ),
+        )
+        assertTrue(
+            "选中态必须改成左侧竖条（白描边只留给焦点，否则没聚焦的已选卡比聚焦卡更显眼）：" +
+                "选中标记经 selected = glowing 传入图区",
+            card.contains("selected = glowing") && card.contains("if (selected)"),
+        )
+        assertTrue(
+            "选中态不得回潮整卡描边（会与焦点白框抢语义）",
+            !card.contains("selectedFrame") && !card.contains("SELECTED_FRAME_WIDTH"),
         )
         assertTrue(
             "选中发光已退役（2026-11-11 第四轮拍板）：不得回潮 selectedGlow/SELECTED_TEXT_GLOW",

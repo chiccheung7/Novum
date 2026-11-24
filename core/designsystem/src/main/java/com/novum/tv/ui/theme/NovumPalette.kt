@@ -39,14 +39,14 @@ object NovumPalette {
      */
     val PaperPressed: Color = Color(0xFFD9D9D9)
 
-    /** 次要文字 White@.72（规范 T band：卡内辅助/竖卡片名档，黑底等效 #B8B8B8）。 */
-    val PaperMuted: Color = Color(0xB8FFFFFF)
+    /** 次要文字 White@.81（10ft 观看下 72% 在白字边缘会发灰，提亮一档保证可读）。 */
+    val PaperMuted: Color = Color(0xCFFFFFFF)
 
     /**
      * 交互控件常态底：磨砂烟玻璃 #141418@.62，确保亮背景上的白字保持对比。
      * 聚焦态使用白底与 [Ink]，不使用此色。
      */
-    val PaperFaint: Color = Color(0x8FFFFFFF)
+    val PaperFaint: Color = Color(0xA8FFFFFF)
 
     /** 滚动条轨道：Border@.45（玻璃面板里只作"还有内容"的参照，不抢内容层级）。 */
     val ScrollbarTrack: Color = Color(0x733A3A3C)

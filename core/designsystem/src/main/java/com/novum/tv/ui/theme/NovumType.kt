@@ -16,9 +16,17 @@ import com.novum.tv.core.designsystem.R
  *
  * 大字号字距归零，小字号适当松排。
  *
- * 行高比例：Display 1.21 / Section 1.25 / Body 1.28 / Caption 1.29 / Label 1.25。
+ * 行高比例：Display 1.19 / Title 1.19 / Section 1.25 / Body 1.29 / Caption 1.33 / Label 1.25。
  *
- * 字号：Display 48 / Title 40 / Section 24 / BodyStrong 20 / Body 18 / ButtonLg 20 / Button 16 / Caption 14 / Label 12sp。
+ * 字号按 **1280×720dp 画布**标定（官方 960×540 基准 × 1.333 后再收一档 ≈ ×1.13，
+ * 实机确认这一档最舒服）：Display 54 / Title 44 / Section 28 / BodyStrong 22 /
+ * Body 20 / CardTitle 20 / ButtonLg 22 / Button 18 / Caption 16 / Label 14sp。
+ *
+ * 注意：字阶收档时**几何不动**——卡片宽度、按钮 60dp、行高 58dp 仍按 1280 画布
+ * 的焦点目标取值，否则整屏会一起缩水（实机：85% 整体缩放时卡片偏小）。
+ *
+ * 改这一张表即可改变全站字阶——禁止在调用点写 `.sp` 字面量
+ * （`DesignTokenContractTest` 会扫描源码拦截）。
  */
 private val NovumFontFamily = FontFamily(
     Font(R.font.inter_regular, weight = FontWeight.Normal),
@@ -28,97 +36,97 @@ private val NovumFontFamily = FontFamily(
 
 object NovumType {
 
-    /** Hero 主标题 48/58 SemiBold（tvOS LargeTitle 行距比 1.21）。 */
+    /** Hero 主标题 54/64 SemiBold（官方 48sp@960 换算到 1280 画布后再收一档）。 */
     val Display: TextStyle = TextStyle(
         fontFamily = NovumFontFamily,
-        fontSize = 48.sp,
-        lineHeight = 58.sp,
+        fontSize = 54.sp,
+        lineHeight = 64.sp,
         fontWeight = FontWeight.SemiBold,
         letterSpacing = 0.sp,
     )
 
-    /** 详情页/页级标题 40/48 SemiBold（行距比 1.2）。 */
+    /** 详情页/页级标题 44/53 SemiBold（行距比 1.2）。 */
     val Title: TextStyle = TextStyle(
         fontFamily = NovumFontFamily,
-        fontSize = 40.sp,
-        lineHeight = 48.sp,
+        fontSize = 44.sp,
+        lineHeight = 53.sp,
         fontWeight = FontWeight.SemiBold,
         letterSpacing = 0.sp,
     )
 
-    /** 内容行/区块标题 24/30 SemiBold（tvOS Title3 行距比 1.25）。 */
+    /** 内容行/区块标题 28/35 SemiBold（行距比 1.25）。 */
     val Section: TextStyle = TextStyle(
         fontFamily = NovumFontFamily,
-        fontSize = 24.sp,
-        lineHeight = 30.sp,
+        fontSize = 28.sp,
+        lineHeight = 35.sp,
         fontWeight = FontWeight.SemiBold,
         letterSpacing = 0.sp,
     )
 
-    /** 正文/剧情 18/23 Regular +0.2（Apple Body 17/22 行距比 1.29 + 小号微松）。 */
+    /** 正文/剧情 20/26 Regular +0.2。 */
     val Body: TextStyle = TextStyle(
         fontFamily = NovumFontFamily,
-        fontSize = 18.sp,
-        lineHeight = 23.sp,
+        fontSize = 20.sp,
+        lineHeight = 26.sp,
         fontWeight = FontWeight.Normal,
         letterSpacing = 0.2.sp,
     )
 
-    /** 卡片标题/设置项强调 20/26 Medium（Apple Headline 位；10ft 糊块顾虑保留 500）。 */
+    /** 卡片标题/设置项强调 22/29 Medium（10ft 糊块顾虑保留 500）。 */
     val BodyStrong: TextStyle = TextStyle(
         fontFamily = NovumFontFamily,
-        fontSize = 20.sp,
-        lineHeight = 26.sp,
+        fontSize = 22.sp,
+        lineHeight = 29.sp,
         fontWeight = FontWeight.Medium,
         letterSpacing = 0.sp,
     )
 
-    /** 卡片标题：18sp Medium，用于首页继续观看卡和选集卡；次行使用 [Label]。设置项强调使用 [BodyStrong]。 */
+    /** 卡片标题：20/27 Medium（与正文同字号、行距更松）；次行使用 [Label]。 */
     val CardTitle: TextStyle = TextStyle(
         fontFamily = NovumFontFamily,
-        fontSize = 18.sp,
-        lineHeight = 24.sp,
+        fontSize = 20.sp,
+        lineHeight = 27.sp,
         fontWeight = FontWeight.Medium,
         letterSpacing = 0.sp,
     )
 
     /**
-     * 按钮文案（全站唯一，16/20 Medium +0.5）。
+     * 紧凑按钮文案（弹窗/行内次级动作，20/26 Medium +0.5）。
      *
      * 中文按钮普遍只有 2–3 个字（播放/返回/设置），默认字距下两个字会挤在一起，
      * 加 0.5sp 字距后字面之间有呼吸——与 Apple 小号光学松排同口径。
      */
     val Button: TextStyle = TextStyle(
         fontFamily = NovumFontFamily,
-        fontSize = 16.sp,
-        lineHeight = 20.sp,
+        fontSize = 18.sp,
+        lineHeight = 23.sp,
         fontWeight = FontWeight.Medium,
         letterSpacing = 0.5.sp,
     )
 
-    /** 大号 CTA 文案：Hero 双 CTA 等主入口使用 20sp/26 行高，字距与 [Button] 一致。 */
+    /** 大号 CTA 文案：Hero 双 CTA 等主入口使用 22/29，字距与 [Button] 一致。 */
     val ButtonLg: TextStyle = TextStyle(
         fontFamily = NovumFontFamily,
-        fontSize = 20.sp,
-        lineHeight = 26.sp,
+        fontSize = 22.sp,
+        lineHeight = 29.sp,
         fontWeight = FontWeight.Medium,
         letterSpacing = 0.5.sp,
     )
 
-    /** 元数据/标签 14/18 Regular +0.3（Apple Footnote 行距比 1.29 + 小号松排）。 */
+    /** 元数据/标签 16/21 Regular +0.3（小号松排）。 */
     val Caption: TextStyle = TextStyle(
         fontFamily = NovumFontFamily,
-        fontSize = 14.sp,
-        lineHeight = 18.sp,
+        fontSize = 16.sp,
+        lineHeight = 21.sp,
         fontWeight = FontWeight.Normal,
         letterSpacing = 0.3.sp,
     )
 
-    /** 角标/徽章 12/15 Medium +0.4（Apple Caption2 松排；不承担必要信息）。 */
+    /** 角标/徽章 14/18 Medium +0.4（不承担必要信息，但三米外仍可辨）。 */
     val Label: TextStyle = TextStyle(
         fontFamily = NovumFontFamily,
-        fontSize = 12.sp,
-        lineHeight = 15.sp,
+        fontSize = 14.sp,
+        lineHeight = 18.sp,
         fontWeight = FontWeight.Medium,
         letterSpacing = 0.4.sp,
     )

@@ -2,12 +2,12 @@ package com.novum.tv.ui.component
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -41,6 +41,7 @@ import androidx.tv.material3.Text
 import com.novum.tv.ui.theme.NovumDimens
 import com.novum.tv.ui.theme.NovumFocusTokens
 import com.novum.tv.ui.theme.NovumPalette
+import androidx.compose.foundation.shape.RoundedCornerShape
 import com.novum.tv.ui.theme.NovumShapes
 import com.novum.tv.ui.theme.NovumType
 
@@ -82,7 +83,7 @@ fun cardRequestSize(width: Dp, aspectRatio: Float, density: Density): IntSize {
  *
  * 结构与职责：
  * - **图区（官方 `Card` 承载）**：形状/描边/光晕全部经官方参数承载；
- *   描边透明、光晕三态 None；
+ *   常态描边透明、焦点态 2dp 白描边、光晕三态 None；
  * - **整卡浮起**：`tvFocusScale` 挂在包住图+文字的 Column 上，
  *   聚焦时海报与片名一起放大 [NovumFocusTokens.CardScale]（1.10）——官方 Card 的
  *   focusedScale 设为 1f，避免两套动画叠加；
@@ -115,7 +116,8 @@ fun cardRequestSize(width: Dp, aspectRatio: Float, density: Density): IntSize {
  * @param showText 是否渲染下方标题/副标题文字区；false = 纯图卡。
  * @param showSubtitle 是否渲染副标题（16:9 卡只显示作品名，传 false）。
  * @param subtitleMaxLines 副标题行数；详情页选集卡的简介为 2 行。
- * @param glowing 是否绘制图区 Accent 选中描边，与焦点框独立。
+ * @param glowing 是否为"当前选中"（如当前季/当前集）：图区左侧画 4dp 竖条，
+ *   白描边专供焦点使用，两者不会互相抢占。
  * @param onClick 点击回调；null 时卡不可点击（仍可聚焦）。
  */
 @Composable
@@ -154,11 +156,12 @@ fun NovumCard(
         focusedScale = 1f,
         pressedScale = 1f,
     )
-    // 焦点框保持透明，聚焦反馈由缩放提供。
+    // 焦点 = 白描边 + 整卡缩放：只靠 1.10 缩放在暗色海报上不够明确，
+    // 官方也要求焦点态"一眼可见"。
     val cardBorder = CardDefaults.border(
         border = Border(BorderStroke(0.dp, Color.Transparent)),
-        focusedBorder = Border(BorderStroke(0.dp, Color.Transparent)),
-        pressedBorder = Border(BorderStroke(0.dp, Color.Transparent)),
+        focusedBorder = Border(BorderStroke(FOCUS_FRAME_WIDTH, NovumPalette.Paper)),
+        pressedBorder = Border(BorderStroke(FOCUS_FRAME_WIDTH, NovumPalette.Paper)),
     )
     // 显式关闭三态光晕，不依赖 tv-material 默认值。
     val cardGlow = CardDefaults.glow(
@@ -173,12 +176,6 @@ fun NovumCard(
         focusedContentColor = NovumPalette.Paper,
     )
     val sizeModifier = if (width != null) Modifier.width(width) else Modifier.fillMaxWidth()
-    // 选中态使用图区 Accent 描边，与聚焦缩放一起变换。
-    val selectedFrame = if (glowing) {
-        Modifier.border(SELECTED_FRAME_WIDTH, NovumPalette.Accent, NovumShapes.Card)
-    } else {
-        Modifier
-    }
     // 显式解码尺寸（尺寸配对）：限宽卡可预计算，与行/网格预取同公式
     // （cardRequestSize），Coil 内存缓存键恒一致；width=null（铺满型）回布局约束
     val density = LocalDensity.current
@@ -195,7 +192,6 @@ fun NovumCard(
                 onClick = onClick ?: {},
                 modifier = Modifier
                     .fillMaxWidth()
-                    .then(selectedFrame)
                     .semantics(mergeDescendants = true) { contentDescription = title },
                 shape = cardShape,
                 colors = cardColors,
@@ -214,15 +210,16 @@ fun NovumCard(
                     progress = progress,
                     progressText = progressText,
                     requestSize = imageRequestSize,
+                    selected = glowing,
                     modifier = Modifier.fillMaxWidth(),
                 )
             }
             Spacer(modifier = Modifier.height(NovumDimens.CardImageToTextGap))
             Text(
                 text = title,
-                // 标题使用较低对比度，副标题再降低一档以拉开层级。
+                // 标题用 100% 白，副题降一档：10ft 距离下卡名是主要辨认信息
                 style = NovumType.CardTitle,
-                color = NovumPalette.PaperMuted,
+                color = NovumPalette.Paper,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
                 textAlign = TextAlign.Center,
@@ -231,7 +228,7 @@ fun NovumCard(
                 Text(
                     text = subtitle,
                     style = NovumType.Label,
-                    color = NovumPalette.PaperFaint,
+                    color = NovumPalette.PaperMuted,
                     maxLines = subtitleMaxLines,
                     overflow = TextOverflow.Ellipsis,
                     textAlign = TextAlign.Center,
@@ -243,7 +240,6 @@ fun NovumCard(
         Card(
             onClick = onClick ?: {},
             modifier = sizeModifier
-                .then(selectedFrame)
                 .semantics(mergeDescendants = true) {
                     contentDescription = title
                 },
@@ -269,6 +265,7 @@ fun NovumCard(
                     progress = progress,
                     progressText = progressText,
                     requestSize = imageRequestSize,
+                    selected = glowing,
                     modifier = Modifier.fillMaxSize(),
                 )
             }
@@ -309,6 +306,7 @@ private fun CardImageLayer(
     progressText: String?,
     modifier: Modifier = Modifier,
     requestSize: IntSize? = null,
+    selected: Boolean = false,
 ) {
     Box(modifier = modifier.aspectRatio(aspectRatio)) {
         PosterArtwork(seed = title, modifier = Modifier.fillMaxSize())
@@ -320,6 +318,18 @@ private fun CardImageLayer(
                 alignment = Alignment.TopCenter,
                 requestSize = requestSize,
                 modifier = Modifier.fillMaxSize(),
+            )
+        }
+        // 选中标记：左侧 4dp 竖条（与列表行同一种"形状语言"）。
+        // 白色 2dp 描边留给焦点——否则"没聚焦的已选卡"比"聚焦卡"还显眼。
+        if (selected) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.CenterStart)
+                    .padding(start = 12.dp, top = 14.dp, bottom = 14.dp)
+                    .width(4.dp)
+                    .fillMaxHeight()
+                    .background(NovumPalette.Paper, RoundedCornerShape(2.dp)),
             )
         }
         // 有叠加内容时在上下缘增加黑色渐变，保证 logo、角标和进度文案可读。
@@ -422,11 +432,8 @@ private fun CardImageLayer(
 /** 图标角标尺寸（与文案角标胶囊等高）。 */
 private val BADGE_ICON_SIZE = 16.dp
 
-/**
- * 选中框描边宽度。
- * Accent 描边（品牌无彩色：高亮白），随聚焦缩放同变换。
- */
-private val SELECTED_FRAME_WIDTH = 2.dp
+/** 聚焦描边宽度（选中态改用左侧竖条，不再占用描边）。 */
+private val FOCUS_FRAME_WIDTH = 2.dp
 
 /** 卡图左上角 clearlogo 高度（小图位，与角标同量级、不喧宾夺主）。 */
 private val CARD_LOGO_HEIGHT = 28.dp

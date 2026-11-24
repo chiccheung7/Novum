@@ -79,11 +79,14 @@ class DanmuClient @Inject constructor(
         }.getOrNull()?.toString()?.trimEnd('/')
     }
 
-    /** 指定前缀的 API（缓存按前缀复用连接池）。 */
-    fun api(prefix: String): DanmuApi = cache.getOrPut(prefix) { create() }
-
-    private fun create(): DanmuApi {
-        val client = OkHttpClient.Builder()
+    /**
+     * 共用的 HTTP 客户端：连接池与线程池按进程复用。
+     *
+     * 弹幕服务的 token 在 URL 里，重新登录会换前缀；若按前缀各建一个
+     * OkHttpClient，旧客户端连同连接池/调度器会一直留在内存里。
+     */
+    private val httpClient: OkHttpClient by lazy {
+        OkHttpClient.Builder()
             .connectTimeout(6, TimeUnit.SECONDS)
             .readTimeout(20, TimeUnit.SECONDS)
             .addInterceptor { chain ->
@@ -96,12 +99,17 @@ class DanmuClient @Inject constructor(
                 )
             }
             .build()
-        return Retrofit.Builder()
+    }
+
+    /** 指定前缀的 API（缓存按前缀复用 Retrofit，HTTP 客户端进程内共享）。 */
+    fun api(prefix: String): DanmuApi = cache.getOrPut(prefix) { create() }
+
+    private fun create(): DanmuApi =
+        Retrofit.Builder()
             // 实际请求全部通过 @Url 传入绝对地址；这里只满足 Retrofit 必填
             .baseUrl("https://localhost/")
-            .client(client)
+            .client(httpClient)
             .addConverterFactory(json.asConverterFactory("application/json".toMediaType()))
             .build()
             .create(DanmuApi::class.java)
-    }
 }

@@ -29,8 +29,8 @@ import com.novum.tv.ui.theme.NovumType
  * 首页 Hero 区：信息块与大号双 CTA。
  */
 
-/** Hero 信息块宽度。 */
-private val HERO_INFO_WIDTH = 640.dp
+/** Hero 信息块宽度（字阶放大后容纳 64sp 标题与三行简介）。 */
+private val HERO_INFO_WIDTH = 720.dp
 
 /** Hero 双 CTA 按钮宽（= 全站统一文本按钮宽度 [NovumDimens.ButtonWidth]）。 */
 private val HERO_CTA_WIDTH = NovumDimens.ButtonWidth

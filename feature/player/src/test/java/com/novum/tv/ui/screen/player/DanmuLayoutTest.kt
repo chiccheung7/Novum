@@ -100,6 +100,33 @@ class DanmuLayoutTest {
         assertEquals(2, lanes.size)
     }
 
+    /**
+     * 回归：滚动弹幕要**铺开**到多条车道。
+     *
+     * 固定从 0 号车道起扫时，0 号车道一让出间隙，下一条就又被分到 0 号，
+     * 实机上半屏只剩两三行在用（全屏也只占顶部一条带）。起扫位置按弹幕
+     * 时间轮转后，10 条弹幕应落在 4 条以上的车道。
+     */
+    @Test
+    fun scrollCommentsSpreadAcrossLanes() {
+        val comments = (0 until 10).map { index ->
+            comment(index * 1_000L, text = "第${'$'}{index}条")
+        }
+        val items = danmuLayout(
+            comments,
+            positionMs = 9_000,
+            spec = spec(laneCount = 8),
+            widthPx = 1_000f,
+            measure = ::measure,
+        )
+        assertTrue(items.isNotEmpty())
+        assertTrue(
+            "滚动弹幕应分散到多条车道，实际只用了 " +
+                items.map { it.y }.distinct().size + " 条",
+            items.map { it.y }.distinct().size >= 4,
+        )
+    }
+
     @Test
     fun scrollLaneRespectsEnterGap() {
         // 第一条刚进入不久（尾部还没让出间隙），第二条同车道必须延后分配
@@ -160,6 +187,39 @@ class DanmuLayoutTest {
     fun unknownModeIgnored() {
         val items = danmuLayout(listOf(comment(0, mode = 9)), positionMs = 100, spec = spec(), widthPx = 1_000f, measure = ::measure)
         assertTrue(items.isEmpty())
+    }
+
+    /**
+     * 回归：车道分配不能随播放位置漂移。
+     *
+     * 旧实现用「当前播放位置」判断车道是否空闲，并且重放窗口只从可见起点开始：
+     * 播放位置一推进，窗口里最早的那条被裁掉，后面所有弹幕会被重新分到别的
+     * 车道——画面上就是弹幕一行一行地上下跳动。
+     */
+    @Test
+    fun laneAssignmentDoesNotDriftWithPlaybackPosition() {
+        val comments = listOf(
+            comment(11_500, text = "老弹幕"),
+            comment(19_000, text = "新弹幕"),
+        )
+        val early = danmuLayout(
+            comments,
+            positionMs = 19_000,
+            spec = spec(laneCount = 2),
+            widthPx = 1_000f,
+            measure = ::measure,
+        )
+        // 0.6 秒后「老弹幕」已过期（不再绘制），但它的车道占用必须仍被复现
+        val later = danmuLayout(
+            comments,
+            positionMs = 19_600,
+            spec = spec(laneCount = 2),
+            widthPx = 1_000f,
+            measure = ::measure,
+        )
+        assertEquals(2, early.size)
+        assertEquals(1, later.size)
+        assertEquals(early.last().y, later.single().y, 0.001f)
     }
 
     @Test

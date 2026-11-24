@@ -72,18 +72,19 @@ fun NovumConfirmDialog(
                     .width(DIALOG_WIDTH)
                     .clip(RoundedCornerShape(20.dp))
                     .background(NovumPalette.InkElevated)
-                    .padding(horizontal = 36.dp, vertical = 30.dp),
+                    .padding(horizontal = 32.dp, vertical = 24.dp),
                 verticalArrangement = Arrangement.spacedBy(NovumDimens.TextBlockGap),
             ) {
                 Text(
                     text = title,
-                    style = NovumType.Section,
+                    // 弹窗尺寸受限：标题用 BodyStrong（22）而不是页级 Section（28），
+                    // 否则 560dp 面板里一行字就占满，整块显得"糊脸"
+                    style = NovumType.BodyStrong,
                     color = NovumPalette.Paper,
                 )
                 Text(
                     text = message,
-                    // 正文使用 [NovumType.Body] 和 [NovumPalette.PaperMuted]。
-                    style = NovumType.Body,
+                    style = NovumType.Caption,
                     color = NovumPalette.PaperMuted,
                 )
                 Row(
@@ -96,7 +97,7 @@ fun NovumConfirmDialog(
                     NovumButton(
                         onClick = onCancel,
                         modifier = Modifier
-                            .width(148.dp)
+                            .width(176.dp)
                             .focusRequester(cancelRequester),
                         centerContent = true,
                     ) {
@@ -104,7 +105,7 @@ fun NovumConfirmDialog(
                     }
                     NovumButton(
                         onClick = onConfirm,
-                        modifier = Modifier.width(148.dp),
+                        modifier = Modifier.width(176.dp),
                         centerContent = true,
                     ) {
                         Text(text = confirmText, style = NovumType.ButtonLg)
@@ -119,4 +120,4 @@ fun NovumConfirmDialog(
 private const val SCRIM_ALPHA = 0.78f
 
 /** 对话框宽度（dp）。 */
-private val DIALOG_WIDTH = 480.dp
+private val DIALOG_WIDTH = 520.dp

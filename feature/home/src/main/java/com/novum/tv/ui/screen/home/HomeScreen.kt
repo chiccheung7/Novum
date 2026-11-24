@@ -288,7 +288,6 @@ fun HomeContent(
     // 背景视差、变暗和溶解由 Hero 行位移驱动。
     val backdropDensity = LocalDensity.current
     val backdropDriftPx = remember(backdropDensity) { with(backdropDensity) { BACKDROP_DRIFT_DP.toPx() } }
-    val backdropDissolveSpanPx = remember(backdropDensity) { with(backdropDensity) { BACKDROP_DISSOLVE_SPAN_DP.toPx() } }
     // Hero 行静止几何作为位移和溶解进度的基准。列表回到顶部且布局完成后捕获行的位置和尺寸。
     // 未捕获（冷启动首帧/深链恢复）按完全离场处理（背景隐藏；回顶自动捕获）
     val heroRestTopPx = remember { mutableFloatStateOf(Float.NaN) }
@@ -316,13 +315,12 @@ fun HomeContent(
     val backdropDeadZonePx = remember(backdropDensity) {
         with(backdropDensity) { BACKDROP_DEAD_ZONE_DP.toPx() }
     }
-    val backdropProgressState = remember(listState, backdropDissolveSpanPx, backdropDeadZonePx) {
+    val backdropProgressState = remember(listState, backdropDeadZonePx) {
         derivedStateOf {
             backdropProgress(
                 listState = listState,
                 heroRestTopPx = heroRestTopPx.floatValue,
                 heroRestBottomPx = heroRestBottomPx.floatValue,
-                dissolveSpanPx = backdropDissolveSpanPx,
                 backdropDeadZonePx = backdropDeadZonePx,
             )
         }

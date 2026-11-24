@@ -422,6 +422,13 @@ internal fun PlayerStage(
             }
 
             override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
+                // 留痕：错误码是排查"缓冲慢→报错"的唯一线索（2001 系=网络/HTTP，
+                // 3001 系=解码）。没有这行，实机只能看到"播放失败"四个字。
+                android.util.Log.e(
+                    "NovumPlayer",
+                    "player error ${error.errorCodeName}(${error.errorCode}): ${error.message}",
+                    error,
+                )
                 // 只记录错误次数，真正切换放到 LaunchedEffect：listener 里读不到最新的兜底状态。
                 // 播放器回调不保证在主线程，Compose State 统一投递到主线程再写。
                 cueHandler.post { playerErrorTick++ }
@@ -495,8 +502,9 @@ internal fun PlayerStage(
                 streamBitrate != null && bufferedNow > lastBufferedMs.longValue ->
                     (bufferedNow - lastBufferedMs.longValue) * streamBitrate / POSITION_TICK_MS
 
-                streamBitrate == null -> bandwidthEstimate()
-                else -> 0L
+                // 缓冲前沿没推进（卡住/片尾）时用带宽计估计兜底：
+                // 旧实现这里直接给 0，界面看起来就是"速度一直不动"
+                else -> bandwidthEstimate()
             }
             lastBufferedMs.longValue = bufferedNow
             // 实时状态（画质 tab）：显示模式切换异步生效，500ms 轮询正好捕捉落地

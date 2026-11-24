@@ -214,6 +214,9 @@ class DefaultMediaRepository @Inject constructor(
                     .episodes(seriesId = seriesId, userId = userId, seasonId = seasonId)
                     .Items
                     .mapIndexedNotNull { index, dto -> dto.toEpisode(server, index, strings) }
+                    // 服务端偶尔把同一集下发两次（多版本/虚拟集）：不去重会让
+                    // 选集列表出现重复 key（LazyRow 直接崩溃），也会让集号跳号
+                    .distinctBy { it.id }
                     .sortedBy { it.index }
             }
         }

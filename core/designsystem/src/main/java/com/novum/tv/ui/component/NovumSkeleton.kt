@@ -127,7 +127,7 @@ fun NovumSkeletonPosterGrid(
                         NovumSkeletonBlock(
                             modifier = Modifier
                                 .fillMaxWidth(SKELETON_TITLE_WIDTH)
-                                .height(14.dp),
+                                .height(18.dp),
                         )
                     }
                 }
@@ -158,16 +158,16 @@ fun NovumSkeletonDetail(modifier: Modifier = Modifier) {
         ) {
             NovumSkeletonBlock(width = 420.dp, height = 44.dp)
             NovumSkeletonBlock(width = 260.dp, height = 16.dp)
-            NovumSkeletonBlock(modifier = Modifier.fillMaxWidth(0.9f).height(14.dp))
-            NovumSkeletonBlock(modifier = Modifier.fillMaxWidth(0.8f).height(14.dp))
-            NovumSkeletonBlock(modifier = Modifier.fillMaxWidth(0.6f).height(14.dp))
+            NovumSkeletonBlock(modifier = Modifier.fillMaxWidth(0.9f).height(18.dp))
+            NovumSkeletonBlock(modifier = Modifier.fillMaxWidth(0.8f).height(18.dp))
+            NovumSkeletonBlock(modifier = Modifier.fillMaxWidth(0.6f).height(18.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
                 NovumSkeletonBlock(width = 160.dp, height = 52.dp, shape = NovumShapes.Pill)
                 NovumSkeletonBlock(width = 160.dp, height = 52.dp, shape = NovumShapes.Pill)
             }
         }
         Column(
-            modifier = Modifier.width(240.dp),
+            modifier = Modifier.width(280.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             repeat(2) {

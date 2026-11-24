@@ -47,7 +47,7 @@ import com.novum.tv.ui.theme.NovumType
  * 剧级态与集级态共用同一操作行：
  *   播放目标/已看目标 = 当前集（选中集或默认目标集）。
  *
- * 文本按钮使用 [NovumType.ButtonLg]（24sp）、
+ * 文本按钮使用 [NovumType.ButtonLg]（26sp）、
  * [NovumDimens.ButtonHeight]（48dp）+ [NovumDimens.ButtonWidth]（160dp）——
  * 与首页双 CTA 同规；图标钮不变。
  *
@@ -216,7 +216,7 @@ internal fun ActionRow(
  *
  * 不展示「N 集」：服务端 ChildCount 对剧集不可靠，集数由选集面板呈现。
  *
- * 文本按钮使用 [NovumType.ButtonLg]（24sp）、
+ * 文本按钮使用 [NovumType.ButtonLg]（26sp）、
  * [NovumDimens.ButtonHeight]（48dp）+ [NovumDimens.ButtonWidth]（160dp）——
  * 与首页双 CTA 同规；图标钮不变。
  *

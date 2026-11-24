@@ -118,7 +118,7 @@ fun NovumTagChip(text: String, outlined: Boolean = false) {
     Row(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier
-            .heightIn(min = 26.dp)
+            .heightIn(min = 30.dp)
             .clip(NovumShapes.Pill)
             .background(
                 if (outlined) {
@@ -132,7 +132,7 @@ fun NovumTagChip(text: String, outlined: Boolean = false) {
                 color = NovumPalette.Paper.copy(alpha = 0.35f),
                 shape = NovumShapes.Pill,
             )
-            .padding(horizontal = 10.dp, vertical = 3.dp),
+            .padding(horizontal = 12.dp, vertical = 4.dp),
     ) {
         Text(
             text = text,

@@ -182,6 +182,21 @@ class DefaultMediaRepositoryDetailTest {
         assertEquals("season-1", hint?.seasonId)
     }
 
+    /**
+     * 回归：服务端把同一集下发两次（多版本/虚拟集）时，选集列表必须按 id 去重。
+     *
+     * 不去重会让详情页/抽屉的分集 LazyRow 出现重复 key，实测直接闪退。
+     */
+    @Test
+    fun episodesDedupeRepeatedIds() = runTest(dispatcher) {
+        val repository = repository(DuplicateEpisodesApi())
+
+        val episodes = (repository.episodes(seriesId = "series-1", seasonId = "season-1") as NovumResult.Success).value
+
+        assertEquals(1, episodes.size)
+        assertEquals("ep-1", episodes.single().id)
+    }
+
     private fun repository(api: EmbyApi): DefaultMediaRepository {
         val holder = SessionHolder().apply {
             update(
@@ -403,5 +418,42 @@ private class NoPeopleApi : EmbyApiStub() {
         Items = listOf(
             ItemDto(Id = "ep-1", SeriesId = "series-1", SeasonId = "season-1", ParentIndexNumber = 1, IndexNumber = 1),
         ),
+    )
+}
+
+/** 同一分集重复下发：用于验证选集列表按 id 去重。 */
+private class DuplicateEpisodesApi : EmbyApiStub() {
+    override suspend fun detail(
+        itemId: String,
+        userId: String,
+        fields: String,
+    ): ItemDto = ItemDto(Id = itemId, Name = "人生一串", Type = "Series")
+
+    override suspend fun episodes(
+        seriesId: String,
+        userId: String,
+        seasonId: String?,
+        limit: Int?,
+        fields: String,
+    ): QueryResultDto<ItemDto> = QueryResultDto(
+        Items = listOf(
+            ItemDto(
+                Id = "ep-1",
+                Name = "无肉不欢",
+                IndexNumber = 1,
+                ParentIndexNumber = 1,
+                SeriesId = seriesId,
+                SeasonId = seasonId,
+            ),
+            ItemDto(
+                Id = "ep-1",
+                Name = "无肉不欢",
+                IndexNumber = 1,
+                ParentIndexNumber = 1,
+                SeriesId = seriesId,
+                SeasonId = seasonId,
+            ),
+        ),
+        TotalRecordCount = 2,
     )
 }

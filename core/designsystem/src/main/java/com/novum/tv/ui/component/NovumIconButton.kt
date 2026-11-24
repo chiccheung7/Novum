@@ -49,7 +49,7 @@ fun NovumIconButton(
     onLongClick: (() -> Unit)? = null,
     enabled: Boolean = true,
     selected: Boolean = false,
-    size: Dp = 56.dp,
+    size: Dp = 64.dp,
     /** 图标颜色覆盖（收藏红心等语义色用）；null = 按状态明暗反转。 */
     tintOverride: Color? = null,
 ) {

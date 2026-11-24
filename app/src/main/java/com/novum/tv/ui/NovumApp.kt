@@ -36,13 +36,18 @@ import com.novum.tv.ui.theme.NovumTheme
  * 对业务无感，但能消掉横移卡片时按下瞬间的上下抖动。
  *
  * 视口归一化（[TvViewport]）挂得最外：不同电视上报的 density 差异极大，
- * 只有把画布统一到官方 960×540dp 基准，尺寸令牌的相对比例才处处一致。
+ * 只有把画布收敛到设计基准（1280×720dp，见 [TV_BASE_WIDTH_DP]），
+ * 尺寸令牌的相对比例才处处一致；「界面大小」档位也在这一层整体缩放。
  */
 @Composable
-fun NovumApp(entryViewModel: AppEntryViewModel = hiltViewModel()) {
+fun NovumApp(
+    entryViewModel: AppEntryViewModel = hiltViewModel(),
+    appearanceViewModel: AppearanceViewModel = hiltViewModel(),
+) {
     val entry by entryViewModel.entry.collectAsStateWithLifecycle()
+    val uiScale by appearanceViewModel.uiScale.collectAsStateWithLifecycle()
 
-    TvViewport {
+    TvViewport(uiScale = uiScale) {
         NovumTheme {
             NovumFocusScrollTuning {
                 val toastViewModel: NovumToastViewModel = hiltViewModel()

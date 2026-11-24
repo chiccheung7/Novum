@@ -98,6 +98,53 @@ class SettingsViewModelTest {
         }
     }
 
+    /**
+     * 回归：`0.7f + 0.1f = 0.7999999`，旧实现 `(x * 10).toInt()` 截断回 0.7，
+     * 设置页看起来「点了没反应」——档位必须落在十分位整数上。
+     */
+    @Test
+    fun cyclesDanmuOpacityByExactSteps() = runTest {
+        val repository = FakeSettingsRepository(AppSettings(danmuOpacity = 0.7f))
+        val (viewModel, toast) = viewModel(repository)
+
+        viewModel.uiState.test {
+            awaitSuccess()
+            viewModel.cycleDanmuOpacity()
+            assertEquals(listOf("透明度：80%"), toast.texts)
+            assertEquals(0.8f, awaitSuccess().data.danmuOpacity, 0.0001f)
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
+
+    /** 透明度到顶回绕到 10%（10 档循环不会卡在某一档）。 */
+    @Test
+    fun danmuOpacityWrapsToLowestStep() = runTest {
+        val repository = FakeSettingsRepository(AppSettings(danmuOpacity = 1f))
+        val (viewModel, _) = viewModel(repository)
+
+        viewModel.uiState.test {
+            awaitSuccess()
+            viewModel.cycleDanmuOpacity()
+            assertEquals(0.1f, awaitSuccess().data.danmuOpacity, 0.0001f)
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
+
+    /** 「界面大小」按档位表推进并回绕（85 → 100 → 115 → 130 → 150 → 85）。 */
+    @Test
+    fun cyclesUiScaleThroughSteps() = runTest {
+        val repository = FakeSettingsRepository(AppSettings(uiScale = 1.5f))
+        val (viewModel, toast) = viewModel(repository)
+
+        viewModel.uiState.test {
+            awaitSuccess()
+            viewModel.cycleUiScale()
+            assertEquals(listOf("界面大小：85%"), toast.texts)
+            assertEquals(0.85f, awaitSuccess().data.uiScale, 0.0001f)
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
+
 }
 
 /** 用最小依赖构造 ViewModel：账号与会话在设置页只用于退出登录与展示。 */

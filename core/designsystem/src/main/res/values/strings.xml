@@ -127,7 +127,6 @@
     <string name="player_info_chapter_default">章节 %1$d</string>
 
     <!-- 播放信息面板 -->
-    <string name="player_info_title">播放信息</string>
     <string name="player_info_video">视频</string>
     <string name="player_info_bitrate">码率</string>
     <string name="player_info_container">封装</string>
@@ -181,6 +180,8 @@
     <string name="player_drawer_subtitle">字幕</string>
     <string name="player_drawer_empty">暂无可切换轨道</string>
     <string name="player_drawer_subtitle_off">关闭字幕</string>
+    <string name="player_drawer_subtitle_switch">字幕开关</string>
+    <string name="player_drawer_no_subtitle">此片源没有字幕</string>
     <string name="player_drawer_reloading">正在按新音频设置重新加载…</string>
 
     <!-- 弹幕（UHDNOW 原生能力；播放抽屉 + 设置页共用） -->
@@ -190,6 +191,7 @@
     <string name="danmu_area">显示区域</string>
     <string name="danmu_area_half">上半屏</string>
     <string name="danmu_area_full">全屏</string>
+    <string name="danmu_size">弹幕大小</string>
     <string name="danmu_opacity">透明度</string>
     <string name="danmu_density">密度</string>
     <string name="danmu_speed">滚动速度</string>
@@ -211,7 +213,7 @@
     <string name="danmu_search_action">搜索</string>
     <string name="danmu_search_running">正在搜索…</string>
     <string name="danmu_search_empty">没有搜索结果</string>
-    <string name="danmu_search_back">返回搜索结果</string>
+    <string name="danmu_search_close">关闭搜索</string>
     <string name="danmu_episodes_empty">该动画没有分集</string>
     <string name="danmu_unavailable">该服务器没有弹幕服务或暂无权限</string>
 
@@ -229,6 +231,9 @@
     <string name="sort_rating">评分</string>
 
     <!-- 设置 -->
+    <string name="settings_group_appearance">外观与界面</string>
+    <string name="settings_ui_scale">界面大小</string>
+    <string name="settings_ui_scale_hint">画面显示不全就调小，字太小就调大</string>
     <string name="settings_group_playback">播放与续播</string>
     <string name="settings_prefer_direct">优先直连播放</string>
     <string name="settings_audio_passthrough">音频直通（杜比 / DTS）</string>

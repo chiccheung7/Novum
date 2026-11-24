@@ -64,10 +64,10 @@ fun NovumImage(
 ) {
     if (url.isNullOrBlank()) return
     var loaded by remember(url) { mutableStateOf(false) }
-    // 内存缓存命中标记，避免行内左右移动时重复播放淡入：
+    // 非网络命中标记（内存/磁盘），避免行内左右移动/页面往返时重复播放淡入：
     // 卡片滚出行视口被 LazyRow 销毁、移回时重组，remember(url) 重置导致 500ms 淡入
-    // **重放**——占位灰渐变先顶上来再淡回真图，肉眼就是一暗一亮。内存缓存命中
-    // （重组场景的唯一路径）瞬跳可见，只有真正的取数加载（磁盘/网络）才走淡入。
+    // **重放**——占位灰渐变先顶上来再淡回真图，肉眼就是一暗一亮。磁盘/内存命中
+    // 都瞬跳可见，只有真正走网络才戴淡入。
     var fromMemoryCache by remember(url) { mutableStateOf(false) }
     val alpha = remember(url) { Animatable(0f) }
     LaunchedEffect(loaded) {
@@ -99,7 +99,9 @@ fun NovumImage(
                 .matchParentSize()
                 .graphicsLayer { this.alpha = alpha.value },
             onSuccess = { value ->
-                fromMemoryCache = value.result.dataSource == DataSource.MEMORY_CACHE
+                // 只有网络取数才值得淡入：内存/磁盘命中都是"立刻就有"，
+                // 再放 500ms 淡入，滚动来回时会被当成"又加载了一次"
+                fromMemoryCache = value.result.dataSource != DataSource.NETWORK
                 loaded = true
                 onLoadState?.invoke(true)
             },

@@ -2,6 +2,7 @@ package com.novum.tv.ui.screen.settings
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -48,12 +49,16 @@ import com.novum.tv.ui.component.NovumStateView
 import com.novum.tv.ui.LinePickerViewModel
 import com.novum.tv.ui.component.LocalNovumToast
 import com.novum.tv.ui.component.NovumLinePickerDialog
+import com.novum.tv.ui.component.NovumOptionListDialog
 import com.novum.tv.ui.component.NovumOptionRow
+import com.novum.tv.ui.component.NovumStepperRow
+import com.novum.tv.ui.component.NovumSwitchRow
 import com.novum.tv.ui.theme.NovumDimens
 import com.novum.tv.ui.theme.NovumPalette
 import com.novum.tv.ui.theme.NovumShapes
 import com.novum.tv.ui.theme.NovumType
 import java.util.Locale
+import kotlin.math.roundToInt
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -61,6 +66,7 @@ import kotlinx.coroutines.withContext
 /** 设置分区。 */
 enum class SettingsSection(val labelRes: Int) {
     Account(R.string.settings_group_account),
+    Appearance(R.string.settings_group_appearance),
     Playback(R.string.settings_group_playback),
     Subtitle(R.string.settings_group_subtitle),
     Data(R.string.settings_group_data),
@@ -151,7 +157,7 @@ fun SettingsScreen(
                     NovumNoScrollDeadZone {
                     Column(
                         modifier = Modifier
-                            .width(180.dp)
+                            .width(200.dp)
                             .fillMaxHeight()
                             .verticalScroll(rememberScrollState()),
                         verticalArrangement = Arrangement.spacedBy(4.dp),
@@ -287,52 +293,16 @@ private fun OptionPrefDialog(
     onSelect: (String) -> Unit,
     onDismiss: () -> Unit,
 ) {
-    val currentRowFocus = remember { FocusRequester() }
-    androidx.compose.ui.window.Dialog(
-        onDismissRequest = onDismiss,
-        properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false),
-    ) {
-        androidx.compose.runtime.LaunchedEffect(Unit) {
-            kotlinx.coroutines.delay(16)
-            runCatching { currentRowFocus.requestFocus() }
-        }
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(NovumPalette.Scrim.copy(alpha = 0.55f)),
-            contentAlignment = Alignment.Center,
-        ) {
-            Column(
-                modifier = Modifier
-                    .width(360.dp)
-                    .clip(NovumShapes.Large)
-                    .background(NovumPalette.Surface)
-                    .padding(vertical = 12.dp),
-            ) {
-                Text(
-                    text = title,
-                    style = NovumType.BodyStrong,
-                    color = NovumPalette.Paper,
-                    modifier = Modifier.padding(
-                        horizontal = NovumDimens.OverlayPaddingHorizontal,
-                        vertical = NovumDimens.OverlayPaddingVertical,
-                    ),
-                )
-                options.forEach { option ->
-                    val selected = option.value == current
-                    NovumOptionRow(
-                        text = stringResource(option.labelRes),
-                        selected = selected,
-                        onClick = { onSelect(option.value) },
-                        focusRequester = currentRowFocus.takeIf { selected },
-                        modifier = Modifier.padding(horizontal = 8.dp),
-                        // 设置页浮层同口径（文字恒 100%）
-                        alwaysOpaque = true,
-                    )
-                }
-            }
-        }
-    }
+    // 复用通用单选浮层：标题/行距/选中标记/初始焦点只有一处实现，
+    // 各页浮层不会再各自长成不同样子
+    val labels = options.map { stringResource(it.labelRes) }
+    NovumOptionListDialog(
+        title = title,
+        options = labels,
+        selectedIndex = options.indexOfFirst { it.value == current }.takeIf { it >= 0 },
+        onSelect = { index -> onSelect(options[index].value) },
+        onDismiss = onDismiss,
+    )
 }
 
 /**
@@ -434,6 +404,21 @@ private fun SectionContent(
                     )
                 }
 
+                SettingsSection.Appearance -> {
+                    // 整体缩放置换（视口层订阅同一设置流，改完整屏立即重算）：
+                    // 不同电视上报的画布差异极大，归一化只保证"不比设计画布更局促"，
+                    // 最终疏密仍由观看距离决定，所以留一档给用户。
+                    NovumStepperRow(
+                        label = stringResource(R.string.settings_ui_scale),
+                        value = "${(settings.uiScale * 100).roundToInt()}%",
+                        level = UI_SCALE_STEPS.indexOfFirst { it >= settings.uiScale - 0.001f }
+                            .coerceAtLeast(0),
+                        levelCount = UI_SCALE_STEPS.size,
+                        onLevelChange = viewModel::setUiScaleLevel,
+                    )
+                    HintText(stringResource(R.string.settings_ui_scale_hint))
+                }
+
                 SettingsSection.Playback -> {
                     // 播放线路置顶；锁定时展示线路名，未锁定时自动选取延迟最低的线路。
                     SettingRow(
@@ -448,72 +433,56 @@ private fun SectionContent(
                         value = strategyLabel(settings.versionStrategy),
                         onAction = { langPrefDialog = LangPrefKind.Quality },
                     )
-                    SettingRow(
-                        label = stringResource(R.string.settings_prefer_direct),
-                        value = if (settings.preferDirect) {
-                            stringResource(R.string.settings_state_on)
-                        } else {
-                            stringResource(R.string.settings_state_off)
-                        },
-                        onAction = { viewModel.setPreferDirect(!settings.preferDirect) },
+                    NovumSwitchRow(
+                        text = stringResource(R.string.settings_prefer_direct),
+                        checked = settings.preferDirect,
+                        onCheckedChange = viewModel::setPreferDirect,
                     )
-                    SettingRow(
-                        label = stringResource(R.string.settings_audio_passthrough),
-                        value = if (settings.audioPassthrough) {
-                            stringResource(R.string.settings_state_on)
-                        } else {
-                            stringResource(R.string.settings_state_off)
-                        },
-                        onAction = { viewModel.setAudioPassthrough(!settings.audioPassthrough) },
+                    NovumSwitchRow(
+                        text = stringResource(R.string.settings_audio_passthrough),
+                        checked = settings.audioPassthrough,
+                        onCheckedChange = viewModel::setAudioPassthrough,
                     )
-                    SettingRow(
-                        label = stringResource(R.string.settings_skip_intro),
-                        value = if (settings.skipIntro) {
-                            stringResource(R.string.settings_state_on)
-                        } else {
-                            stringResource(R.string.settings_state_off)
-                        },
-                        onAction = { viewModel.setSkipIntro(!settings.skipIntro) },
+                    NovumSwitchRow(
+                        text = stringResource(R.string.settings_skip_intro),
+                        checked = settings.skipIntro,
+                        onCheckedChange = viewModel::setSkipIntro,
                     )
                     if (settings.skipIntro) {
-                        SettingRow(
+                        NovumStepperRow(
                             label = stringResource(R.string.settings_skip_intro_seconds),
                             value = stringResource(R.string.settings_seconds, settings.skipIntroSeconds),
-                            onAction = viewModel::cycleSkipIntroSeconds,
+                            level = SKIP_INTRO_STEPS.indexOf(settings.skipIntroSeconds).coerceAtLeast(0),
+                            levelCount = SKIP_INTRO_STEPS.size,
+                            onLevelChange = viewModel::setSkipIntroSecondsLevel,
                         )
                     }
                     // 自动连播默认开启，片尾倒计时 10 秒，任意键取消。
                     // 季末 nextEpisodeId 为 null，播放结束返回详情页。
-                    SettingRow(
-                        label = stringResource(R.string.settings_autoplay_next),
-                        value = if (settings.autoPlayNext) {
-                            stringResource(R.string.settings_state_on)
-                        } else {
-                            stringResource(R.string.settings_state_off)
-                        },
-                        onAction = { viewModel.setAutoPlayNext(!settings.autoPlayNext) },
+                    NovumSwitchRow(
+                        text = stringResource(R.string.settings_autoplay_next),
+                        checked = settings.autoPlayNext,
+                        onCheckedChange = viewModel::setAutoPlayNext,
                     )
                     // 弹幕（UHDNOW 原生能力）：设置页只给全局默认值，
                     // 播放抽屉可对当前会话即时微调（写回同一存储，下次播放沿用）。
-                    SettingRow(
-                        label = stringResource(R.string.danmu_enabled),
-                        value = if (settings.danmuEnabled) {
-                            stringResource(R.string.settings_state_on)
-                        } else {
-                            stringResource(R.string.settings_state_off)
-                        },
-                        onAction = { viewModel.setDanmuEnabled(!settings.danmuEnabled) },
+                    NovumSwitchRow(
+                        text = stringResource(R.string.danmu_enabled),
+                        checked = settings.danmuEnabled,
+                        onCheckedChange = viewModel::setDanmuEnabled,
                     )
                     if (settings.danmuEnabled) {
-                        SettingRow(
+                        NovumStepperRow(
                             label = stringResource(R.string.danmu_area),
                             value = stringResource(
                                 if (settings.danmuAreaFull) R.string.danmu_area_full else R.string.danmu_area_half,
                             ),
-                            onAction = viewModel::cycleDanmuArea,
+                            level = if (settings.danmuAreaFull) 1 else 0,
+                            levelCount = 2,
+                            onLevelChange = viewModel::setDanmuAreaLevel,
                         )
-                        SettingRow(
-                            label = stringResource(R.string.settings_subtitle_size),
+                        NovumStepperRow(
+                            label = stringResource(R.string.danmu_size),
                             value = stringResource(
                                 when (settings.danmuSize) {
                                     1 -> R.string.subtitle_size_small
@@ -521,9 +490,11 @@ private fun SectionContent(
                                     else -> R.string.subtitle_size_medium
                                 },
                             ),
-                            onAction = viewModel::cycleDanmuSize,
+                            level = settings.danmuSize - 1,
+                            levelCount = 3,
+                            onLevelChange = viewModel::setDanmuSizeLevel,
                         )
-                        SettingRow(
+                        NovumStepperRow(
                             label = stringResource(R.string.danmu_speed),
                             value = stringResource(
                                 when (settings.danmuSpeed) {
@@ -532,17 +503,23 @@ private fun SectionContent(
                                     else -> R.string.danmu_speed_normal
                                 },
                             ),
-                            onAction = viewModel::cycleDanmuSpeed,
+                            level = settings.danmuSpeed - 1,
+                            levelCount = 3,
+                            onLevelChange = viewModel::setDanmuSpeedLevel,
                         )
-                        SettingRow(
+                        NovumStepperRow(
                             label = stringResource(R.string.danmu_opacity),
-                            value = "${(settings.danmuOpacity * 100).toInt()}%",
-                            onAction = viewModel::cycleDanmuOpacity,
+                            value = "${(settings.danmuOpacity * 100).roundToInt()}%",
+                            level = (settings.danmuOpacity * 10).roundToInt() - 1,
+                            levelCount = 10,
+                            onLevelChange = viewModel::setDanmuOpacityLevel,
                         )
-                        SettingRow(
+                        NovumStepperRow(
                             label = stringResource(R.string.danmu_density),
-                            value = "${(settings.danmuDensity * 100).toInt()}%",
-                            onAction = viewModel::cycleDanmuDensity,
+                            value = "${(settings.danmuDensity * 100).roundToInt()}%",
+                            level = (settings.danmuDensity * 10).roundToInt() - 1,
+                            levelCount = 10,
+                            onLevelChange = viewModel::setDanmuDensityLevel,
                         )
                     }
                 }
@@ -559,28 +536,22 @@ private fun SectionContent(
                         value = langLabel(settings.audioLanguage),
                         onAction = { langPrefDialog = LangPrefKind.Audio },
                     )
-                    SettingRow(
-                        label = stringResource(R.string.settings_subtitle_default),
-                        value = if (settings.subtitleEnabledByDefault) {
-                            stringResource(R.string.settings_state_on)
-                        } else {
-                            stringResource(R.string.settings_state_off)
-                        },
-                        onAction = { viewModel.setSubtitleEnabled(!settings.subtitleEnabledByDefault) },
+                    NovumSwitchRow(
+                        text = stringResource(R.string.settings_subtitle_default),
+                        checked = settings.subtitleEnabledByDefault,
+                        onCheckedChange = viewModel::setSubtitleEnabled,
                     )
-                    SettingRow(
+                    NovumStepperRow(
                         label = stringResource(R.string.settings_subtitle_size),
                         value = stringResource(settings.subtitleSize.labelRes()),
-                        onAction = viewModel::cycleSubtitleSize,
+                        level = settings.subtitleSize - 1,
+                        levelCount = 4,
+                        onLevelChange = viewModel::setSubtitleSizeLevel,
                     )
-                    SettingRow(
-                        label = stringResource(R.string.settings_subtitle_ass_burn_in),
-                        value = if (settings.assBurnIn) {
-                            stringResource(R.string.settings_state_on)
-                        } else {
-                            stringResource(R.string.settings_state_off)
-                        },
-                        onAction = { viewModel.setAssBurnIn(!settings.assBurnIn) },
+                    NovumSwitchRow(
+                        text = stringResource(R.string.settings_subtitle_ass_burn_in),
+                        checked = settings.assBurnIn,
+                        onCheckedChange = viewModel::setAssBurnIn,
                     )
                 }
 
@@ -610,9 +581,9 @@ private fun SectionContent(
 }
 
 /**
- * 单行设置：左侧文案，右侧可聚焦按钮显示当前值，点击即切换。
+ * 单行设置（动作/枚举类）：左侧文案，右侧显示当前值，点击进入下一态或打开选择层。
  *
- * 用「值按钮」而不是开关控件：D-pad 上确认键切换、左右键可扩展为调值的模型更符合遥控器。
+ * 布尔项一律用 [NovumSwitchRow]（形状可扫视），这里只承载"点一下换一档/开一层"的行。
  */
 @Composable
 private fun SettingRow(
@@ -630,21 +601,27 @@ private fun SettingRow(
             // onFocusChanged 必须位于 clickable 外侧，才能接收从焦点目标向外冒泡的事件。
             .onFocusChanged { focused = it.isFocused }
             .clip(NovumShapes.Card)
-            .background(if (focused) NovumPalette.Paper else Color.Transparent)
+            // 动作行不是"选项"：焦点只描白边，不整行反白
+            .border(
+                width = 2.dp,
+                color = if (focused) NovumPalette.Paper else Color.Transparent,
+                shape = NovumShapes.Card,
+            )
             .clickable(onClick = onAction)
-            .padding(horizontal = 16.dp, vertical = 12.dp),
+            .padding(horizontal = 20.dp, vertical = 16.dp),
     ) {
-        // 设置页文字恒定 100% 不透明；未聚焦使用 Paper，聚焦时反转为 Ink。
+        // 设置页文字恒定 100% 不透明，焦点靠描边表达
         Text(
             text = label,
             modifier = Modifier.weight(1f),
             style = NovumType.Body,
-            color = if (focused) NovumPalette.Ink else NovumPalette.Paper,
+            color = NovumPalette.Paper,
         )
         Text(
             text = value,
-            style = NovumType.Body,
-            color = if (focused) NovumPalette.Ink else NovumPalette.Paper,
+            // 行尾值比标签小一档：设置页此前和标签同字号同色，读起来像两段并列正文
+            style = NovumType.Caption,
+            color = NovumPalette.Paper,
         )
     }
 }
@@ -671,6 +648,17 @@ private fun InfoRow(label: String, value: String) {
             color = NovumPalette.Paper,
         )
     }
+}
+
+/** 只读说明文字（不可聚焦，比可操作行低一档、不参与焦点导航）。 */
+@Composable
+private fun HintText(text: String) {
+    Text(
+        text = text,
+        style = NovumType.Caption,
+        color = NovumPalette.PaperMuted,
+        modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+    )
 }
 
 /** 字节数转可读文案（GB / MB / KB）。 */

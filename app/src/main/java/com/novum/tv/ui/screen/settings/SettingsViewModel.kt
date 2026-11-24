@@ -15,6 +15,7 @@ import com.novum.tv.data.settings.SettingsRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
+import kotlin.math.roundToInt
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -26,6 +27,32 @@ import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+
+/** 片头时长可选档位（秒）：设置页档位条与播放侧起播偏移共用。 */
+internal val SKIP_INTRO_STEPS = listOf(30, 60, 90, 120)
+
+/** 「界面大小」可选档位（0.85 = 更紧凑，1.5 = 大画布电视恢复设计尺寸）。 */
+internal val UI_SCALE_STEPS = listOf(0.85f, 1f, 1.15f, 1.3f, 1.5f)
+
+/**
+ * 下一档「界面大小」：按档位表向上循环，越界回到最小档。
+ *
+ * 用「严格大于当前值」而不是 indexOf：持久化里可能存着历史/手改的中间值
+ * （如 1.05），按区间落档才不会卡住不动。
+ */
+/**
+ * 0.1 步进的百分比档位：0.1 → 0.2 → … → 1.0 → 0.1。
+ *
+ * @param current 当前值（可能带浮点误差或历史脏值）。
+ * @return 下一档（十分位取整，保证 10 档循环不漂移）。
+ */
+internal fun nextPercentStep(current: Float): Float {
+    val level = (current * 10f).roundToInt().coerceIn(1, 10)
+    return (if (level >= 10) 1 else level + 1) / 10f
+}
+
+internal fun nextUiScale(current: Float): Float =
+    UI_SCALE_STEPS.firstOrNull { it > current + 0.001f } ?: UI_SCALE_STEPS.first()
 
 /**
  * 字幕字号档位 → 文案资源。Toast 与行内值共用，保证两处说法一致。
@@ -183,6 +210,77 @@ class SettingsViewModel @Inject constructor(
         )
     }
 
+    /**
+     * 界面大小循环：85% → 100% → 115% → 130% → 85%。
+     *
+     * 视口层订阅同一个设置流，改完立即整屏重算，用户在设置页就能看到效果。
+     */
+    fun cycleUiScale() {
+        val next = nextUiScale(currentSettings().uiScale)
+        update { it.copy(uiScale = next) }
+        toastCycled(
+            appContext.getString(R.string.settings_ui_scale),
+            "${(next * 100).roundToInt()}%",
+        )
+    }
+
+    /**
+     * 档位行（[com.novum.tv.ui.component.NovumStepperRow]）的绝对档位写回。
+     *
+     * 与 cycle* 的区别：档位由界面算好再传进来，左右键连按时每次都基于**屏幕上
+     * 显示的档位**推进，不会因为 DataStore 回写延迟而丢步；也不弹 Toast——
+     * 行内值/档位条本身就是反馈。
+     */
+    fun setUiScaleLevel(level: Int) {
+        val next = UI_SCALE_STEPS[level.coerceIn(0, UI_SCALE_STEPS.lastIndex)]
+        update { it.copy(uiScale = next) }
+    }
+
+    /** 字幕字号档位（0 起，对应 subtitleSize 1–4）。 */
+    fun setSubtitleSizeLevel(level: Int) {
+        val next = (level + 1).coerceIn(MIN_SUBTITLE_SIZE, MAX_SUBTITLE_SIZE)
+        subtitleSizePending = next
+        update(
+            onSuccess = { if (subtitleSizePending == next) subtitleSizePending = null },
+            transform = { it.copy(subtitleSize = next) },
+        )
+    }
+
+    /** 片头时长档位（0 起，对应 SKIP_INTRO_STEPS）。 */
+    fun setSkipIntroSecondsLevel(level: Int) {
+        val next = SKIP_INTRO_STEPS[level.coerceIn(0, SKIP_INTRO_STEPS.lastIndex)]
+        skipIntroSecondsPending = next
+        update(
+            onSuccess = { if (skipIntroSecondsPending == next) skipIntroSecondsPending = null },
+            transform = { it.copy(skipIntroSeconds = next) },
+        )
+    }
+
+    /** 弹幕显示区域档位：0=上半屏 1=全屏。 */
+    fun setDanmuAreaLevel(level: Int) {
+        update { it.copy(danmuAreaFull = level >= 1) }
+    }
+
+    /** 弹幕字号档位（0 起，对应 danmuSize 1–3）。 */
+    fun setDanmuSizeLevel(level: Int) {
+        update { it.copy(danmuSize = (level + 1).coerceIn(1, 3)) }
+    }
+
+    /** 弹幕速度档位（0 起，对应 danmuSpeed 1–3）。 */
+    fun setDanmuSpeedLevel(level: Int) {
+        update { it.copy(danmuSpeed = (level + 1).coerceIn(1, 3)) }
+    }
+
+    /** 弹幕透明度档位（0 起，对应 10%–100%）。 */
+    fun setDanmuOpacityLevel(level: Int) {
+        update { it.copy(danmuOpacity = ((level + 1).coerceIn(1, 10)) / 10f) }
+    }
+
+    /** 弹幕密度档位（0 起，对应 10%–100%）。 */
+    fun setDanmuDensityLevel(level: Int) {
+        update { it.copy(danmuDensity = ((level + 1).coerceIn(1, 10)) / 10f) }
+    }
+
     /** 弹幕开关（UHDNOW 原生能力；播放抽屉的即时调节也写回同一存储）。 */
     fun setDanmuEnabled(enabled: Boolean) {
         update { it.copy(danmuEnabled = enabled) }
@@ -204,7 +302,7 @@ class SettingsViewModel @Inject constructor(
         val next = currentSettings().danmuSize % 3 + 1
         update { it.copy(danmuSize = next) }
         toastCycled(
-            appContext.getString(R.string.settings_subtitle_size),
+            appContext.getString(R.string.danmu_size),
             appContext.getString(
                 when (next) {
                     1 -> R.string.subtitle_size_small
@@ -231,20 +329,23 @@ class SettingsViewModel @Inject constructor(
         )
     }
 
-    /** 弹幕透明度循环：10% → … → 100% → 10%（步进 10%）。 */
+    /**
+     * 弹幕透明度循环：10% → … → 100% → 10%（步进 10%）。
+     *
+     * 档位在"十分位整数"上推进：浮点 0.7f + 0.1f = 0.7999999，直接截断成整数
+     * 会永远停在 70%（设置项看起来点了没反应）。
+     */
     fun cycleDanmuOpacity() {
-        val next = if (currentSettings().danmuOpacity >= 1f) 0.1f else currentSettings().danmuOpacity + 0.1f
-        val quantized = (next * 10).toInt() / 10f
-        update { it.copy(danmuOpacity = quantized) }
-        toastCycled(appContext.getString(R.string.danmu_opacity), "${(quantized * 100).toInt()}%")
+        val next = nextPercentStep(currentSettings().danmuOpacity)
+        update { it.copy(danmuOpacity = next) }
+        toastCycled(appContext.getString(R.string.danmu_opacity), "${(next * 100).roundToInt()}%")
     }
 
-    /** 弹幕密度循环：10% → … → 100% → 10%（步进 10%）。 */
+    /** 弹幕密度循环：10% → … → 100% → 10%（步进 10%），口径同 [cycleDanmuOpacity]。 */
     fun cycleDanmuDensity() {
-        val next = if (currentSettings().danmuDensity >= 1f) 0.1f else currentSettings().danmuDensity + 0.1f
-        val quantized = (next * 10).toInt() / 10f
-        update { it.copy(danmuDensity = quantized) }
-        toastCycled(appContext.getString(R.string.danmu_density), "${(quantized * 100).toInt()}%")
+        val next = nextPercentStep(currentSettings().danmuDensity)
+        update { it.copy(danmuDensity = next) }
+        toastCycled(appContext.getString(R.string.danmu_density), "${(next * 100).roundToInt()}%")
     }
 
     /**
@@ -315,7 +416,6 @@ class SettingsViewModel @Inject constructor(
         /** 退出登录日志标签。 */
         const val TAG = "SettingsVM"
 
-        /** 片头时长可选档位（秒）。 */
-        val SKIP_INTRO_STEPS = listOf(30, 60, 90, 120)
+        // 片头时长档位见文件顶部的 SKIP_INTRO_STEPS（界面档位条也要用）
     }
 }

@@ -2,7 +2,11 @@ package com.novum.tv.ui.screen.login
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -28,7 +32,7 @@ import androidx.tv.material3.Text
 import com.novum.tv.core.designsystem.R
 import com.novum.tv.ui.common.userMessage
 import com.novum.tv.ui.component.NovumButton
-import com.novum.tv.ui.component.NovumCheckboxRow
+import com.novum.tv.ui.component.NovumSwitchInline
 import com.novum.tv.ui.component.NovumSafeArea
 import com.novum.tv.ui.component.NovumTextField
 import kotlinx.coroutines.launch
@@ -80,12 +84,14 @@ fun LoginScreen(
                 .align(Alignment.TopStart)
                 .widthIn(max = 560.dp)
                 .verticalScroll(rememberScrollState())
-                .padding(vertical = 24.dp),
-            verticalArrangement = Arrangement.spacedBy(NovumDimens.TextBlockGap),
+                .padding(vertical = 16.dp),
+            // 登录页只有 3 个输入框 + 1 行操作：间距收一档，整页一屏放得下
+            verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             Text(
                 text = stringResource(R.string.login_title),
-                style = NovumType.Display,
+                // 页标题用 Title（与设置/搜索一致），Display 只留给 Hero
+                style = NovumType.Title,
                 color = NovumPalette.Paper,
             )
             Text(
@@ -122,13 +128,6 @@ fun LoginScreen(
                 isPassword = true,
                 imeAction = ImeAction.Done,
             )
-            // 记住登录：对号框勾选保存 token 自动登录；关闭则只预填地址+用户名
-            NovumCheckboxRow(
-                text = stringResource(R.string.login_remember),
-                checked = state.remember,
-                onClick = { viewModel.onRememberChange(!state.remember) },
-            )
-
             val errorText = when {
                 state.missingField == LoginUiState.LoginField.Server ->
                     stringResource(R.string.login_error_server)
@@ -147,38 +146,51 @@ fun LoginScreen(
                 )
             }
 
-            NovumButton(
-                onClick = {
-                    // 明文地址首次提交前显式确认
-                    if (cleartext && !cleartextAcknowledged) {
-                        showCleartextConfirm = true
-                    } else {
-                        viewModel.submit()
-                    }
-                },
-                // 按内容自适应宽度：固定宽度 + centerContent 在「正在登录…」
-                // 这类较长文案下会把文字挤到两侧被硬裁。改为不定宽，文字完整可见。
-                // 首焦容器已改顶部对齐并留首尾白，按钮不再贴视口边缘；
-                // bring-into-view 仅作小屏/大字体下的兜底。
+            // 「记住登录」与「登录」同一行左右放置：布尔项不再单独占一整行，
+            // 页面在 720 高内一屏可读完，不用翻页找按钮
+            Row(
                 modifier = Modifier
-                    .padding(top = 8.dp, bottom = 8.dp)
-                    .bringIntoViewRequester(buttonBringIntoView)
-                    .onFocusChanged { focusState ->
-                        if (focusState.isFocused) {
-                            scope.launch { buttonBringIntoView.bringIntoView() }
+                    .fillMaxWidth()
+                    .padding(top = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(24.dp),
+            ) {
+                NovumSwitchInline(
+                    text = stringResource(R.string.login_remember),
+                    checked = state.remember,
+                    onCheckedChange = viewModel::onRememberChange,
+                )
+                Spacer(modifier = Modifier.weight(1f))
+                NovumButton(
+                    onClick = {
+                        // 明文地址首次提交前显式确认
+                        if (cleartext && !cleartextAcknowledged) {
+                            showCleartextConfirm = true
+                        } else {
+                            viewModel.submit()
                         }
                     },
-                centerContent = false,
-                enabled = !state.loading,
-            ) {
-                Text(
-                    text = if (state.loading) {
-                        stringResource(R.string.login_action_loading)
-                    } else {
-                        stringResource(R.string.login_action)
-                    },
-                    style = NovumType.ButtonLg,
-                )
+                    modifier = Modifier
+                        .width(NovumDimens.ButtonWidth)
+                        .bringIntoViewRequester(buttonBringIntoView)
+                        .onFocusChanged { focusState ->
+                            if (focusState.isFocused) {
+                                scope.launch { buttonBringIntoView.bringIntoView() }
+                            }
+                        },
+                    centerContent = true,
+                    enabled = !state.loading,
+                ) {
+                    Text(
+                        text = if (state.loading) {
+                            stringResource(R.string.login_action_loading)
+                        } else {
+                            stringResource(R.string.login_action)
+                        },
+                        style = NovumType.ButtonLg,
+                        maxLines = 1,
+                    )
+                }
             }
         }
     }

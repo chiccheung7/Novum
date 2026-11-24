@@ -57,8 +57,10 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
+import kotlin.math.roundToInt
 import androidx.tv.material3.Text
 import com.novum.tv.core.designsystem.R
+import com.novum.tv.core.error.NovumError
 import com.novum.tv.model.Chapter
 import com.novum.tv.model.DanmuArea
 import com.novum.tv.model.DanmuConfig
@@ -69,6 +71,7 @@ import com.novum.tv.model.PlaybackPlan
 import com.novum.tv.ui.common.userMessage
 import com.novum.tv.ui.component.NovumChip
 import com.novum.tv.ui.component.NovumOptionRow
+import com.novum.tv.ui.component.NovumSwitchRow
 import com.novum.tv.ui.component.NovumTextField
 import com.novum.tv.ui.theme.NovumPalette
 import com.novum.tv.ui.theme.NovumShapes
@@ -337,7 +340,7 @@ internal fun PlayerSettingsDrawer(
                 )
 
                 // tab 行：选中 = 淡白底 + 底部短线；焦点 = 白底黑字（NovumChip 统一语义）。
-                // 六个 tab 在 480dp 面板内刚好放得下；横向可滚只作窄面板/长文案的兜底。
+                // 七个 tab 在 480dp 面板内已放不下，横向可滚是常态（焦点移动会自动滚入）。
                 Row(
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                     // 焦点上报给父层：焦点在 tab 行时根节点放行左右键（芯片间移焦），
@@ -374,8 +377,8 @@ internal fun PlayerSettingsDrawer(
                         .fillMaxSize()
                         .verticalScroll(contentScroll)
                         .padding(horizontal = 24.dp)
-                        // 首行留一点空隙、末行不贴面板底边
-                        .padding(top = 4.dp, bottom = 28.dp),
+                        // 首行留一点空隙（各页不再重复页签名小标题）、末行不贴面板底边
+                        .padding(top = 8.dp, bottom = 28.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     when (currentTab) {
@@ -496,7 +499,7 @@ private fun EpisodesTab(
         HintRow(stringResource(R.string.player_drawer_empty))
         return
     }
-    SectionLabel(stringResource(R.string.detail_episodes))
+    // 页签本身就叫「选集」，页内不再重复一遍小标题
     episodes.forEach { episode ->
         val runtime = episode.runtimeMinutes
         val progress = episode.progressRatio
@@ -534,18 +537,17 @@ private fun OverviewTab(
     episode: Episode?,
     overview: String?,
 ) {
-    val heading = if (episode != null) {
-        "S%02dE%02d".format(episode.seasonIndex, episode.index % 100) + " · " + episode.title
-    } else {
-        title
-    }
-    val runtime = episode?.runtimeMinutes
+    // 集号单独进元信息行：原来标题里再拼一次 "SxxExx · 第N集 标题"，
+    // Emby 的 Name 本身常带「第N集」，看起来就是同一串编号写了两遍
+    val episodeLabel = episode?.let { "S%02dE%02d".format(it.seasonIndex, it.index % 100) }
+    val heading = episode?.let { stripEpisodePrefix(it.title) }?.takeIf { it.isNotBlank() }
+        ?: title
     val meta = listOfNotNull(
-        runtime?.let { stringResource(R.string.detail_minutes, it) },
+        episodeLabel,
+        episode?.runtimeMinutes?.let { stringResource(R.string.detail_minutes, it) },
         episode?.premiereDate?.takeIf { it.isNotBlank() },
     ).joinToString(" · ")
 
-    // tab 名已经是「简介」，页内不再重复小标题，直接从集名/片名开始
     if (heading.isNotBlank()) {
         Text(
             text = heading,
@@ -555,6 +557,7 @@ private fun OverviewTab(
         )
     }
     if (meta.isNotBlank()) {
+        Spacer(modifier = Modifier.height(6.dp))
         Text(
             text = meta,
             style = NovumType.Caption,
@@ -562,15 +565,36 @@ private fun OverviewTab(
             modifier = Modifier.padding(horizontal = 4.dp),
         )
     }
-    val body = episode?.overview?.takeIf { it.isNotBlank() }
+    val rawBody = episode?.overview?.takeIf { it.isNotBlank() }
         ?: overview?.takeIf { it.isNotBlank() }
+    // 正文若以标题开头（Emby 有些库的简介就是这么写的），去掉重复的那一段
+    val body = rawBody?.let { text ->
+        val prefix = heading.takeIf { it.isNotBlank() }
+        if (prefix != null && text.startsWith(prefix)) {
+            text.removePrefix(prefix).trimStart(' ', '：', ':', '·', '-', '—', '\n')
+        } else {
+            text
+        }
+    }
+    Spacer(modifier = Modifier.height(14.dp))
     Text(
         text = body ?: stringResource(R.string.player_drawer_no_overview),
         style = NovumType.Body,
         color = NovumPalette.PaperMuted,
-        modifier = Modifier.padding(horizontal = 4.dp, vertical = 6.dp),
+        modifier = Modifier.padding(horizontal = 4.dp),
     )
 }
+
+/** 集名前缀：`第1集` / `S01E01` / `EP01` 及其后的分隔符；简介页标题只留纯集名。 */
+private val EPISODE_PREFIX = Regex(
+    // 中文用 \uXXXX 写：UI 源码禁止出现中文字面量（UiCopyContractTest 会拦），
+    // 这是正则而不是用户文案。
+    """^\s*(?:\u7B2C\s*[0-9\u4E00\u4E8C\u4E09\u56DB\u4E94\u516D\u4E03\u516B\u4E5D\u5341\u767E]+\s*[\u96C6\u8BDD\u8A71\u56DE]|[Ss]\d{1,2}\s*[Ee]\d{1,3}|[Ee][Pp]?\d{1,4})\s*[\u00B7:\uFF1A\-\u2014]?\s*""",
+)
+
+/** 去掉集名里的编号前缀（编号已经在元信息行单独展示）。 */
+internal fun stripEpisodePrefix(title: String): String =
+    title.replace(EPISODE_PREFIX, "").trim().ifBlank { title }
 
 /** 字幕 tab：字幕延迟微调 + 字幕字号调节 + 字幕高度调节 + 轨道列表（首位「关闭字幕」）。 */
 @Composable
@@ -585,7 +609,23 @@ private fun SubtitleTab(
     onSelectText: (TrackOption) -> Unit,
     onAdjustFocus: (Boolean) -> Unit,
 ) {
-    SectionLabel(stringResource(R.string.player_drawer_subtitle))
+    // 页签就叫「字幕」，页内不再重复小标题。
+    // 「关闭字幕」原来是轨道列表首行、常亮一块选中底框，看着像个去不掉的框。
+    // 布尔语义统一交给开关：开 = 选第一条字幕轨，关 = 选中「关闭字幕」。
+    val offOption = textTracks.firstOrNull { it.id == TEXT_OFF_ID }
+    val tracks = textTracks.filter { it.id != TEXT_OFF_ID }
+    // 片源没有字幕轨时，开关与三个调节项都没有意义：整页禁用 + 一句说明，
+    // 不再让用户以为「按了没反应是坏了」
+    val hasTracks = tracks.isNotEmpty()
+    NovumSwitchRow(
+        text = stringResource(R.string.player_drawer_subtitle_switch),
+        checked = hasTracks && tracks.any { it.selected },
+        onCheckedChange = { enabled ->
+            (if (enabled) tracks.firstOrNull() else offOption)?.let(onSelectText)
+        },
+        consumeAtBoundary = true,
+        enabled = hasTracks,
+    )
     // 延迟/字号/高度：左右键无级调节（OK 保留原循环作为兼容）
     DrawerRow(
         label = stringResource(R.string.player_drawer_subtitle_delay),
@@ -594,6 +634,7 @@ private fun SubtitleTab(
         onClick = { onSubtitleDelayChanged(if (subtitleDelayMs >= 2_000L) -2_000L else subtitleDelayMs + 100L) },
         onStep = { dir -> onSubtitleDelayChanged((subtitleDelayMs + dir * 100L).coerceIn(-2_000L, 2_000L)) },
         onAdjustFocus = onAdjustFocus,
+        enabled = hasTracks,
     )
     DrawerRow(
         label = stringResource(R.string.settings_subtitle_size),
@@ -609,6 +650,9 @@ private fun SubtitleTab(
         onClick = { onSubtitleSizeChanged(if (subtitleSize >= 4) 1 else subtitleSize + 1) },
         onStep = { dir -> onSubtitleSizeChanged((subtitleSize + dir).coerceIn(1, 4)) },
         onAdjustFocus = onAdjustFocus,
+        segmentCount = 4,
+        segmentLevel = subtitleSize - 1,
+        enabled = hasTracks,
     )
     // 字幕高度：0=自适应黑边（默认）1/2 上移，3/4 下移；左右键逐档调节
     DrawerRow(
@@ -626,13 +670,23 @@ private fun SubtitleTab(
         onClick = { onSubtitleOffsetLevelChanged(if (subtitleOffsetLevel >= 4) 0 else subtitleOffsetLevel + 1) },
         onStep = { dir -> onSubtitleOffsetLevelChanged((subtitleOffsetLevel + dir).coerceIn(0, 4)) },
         onAdjustFocus = onAdjustFocus,
+        segmentCount = 5,
+        segmentLevel = subtitleOffsetLevel,
+        enabled = hasTracks,
     )
-    textTracks.forEach { option ->
+    if (!hasTracks) {
+        HintRow(stringResource(R.string.player_drawer_no_subtitle))
+        return
+    }
+    tracks.forEach { option ->
         DrawerRow(
             label = option.label,
             value = null,
             selected = option.selected,
             onClick = { onSelectText(option) },
+            // 只有一条字幕轨时没有可切换的对象：行保留（让用户知道当前用哪条），
+            // 但不进焦点链、不显得可操作
+            enabled = tracks.size > 1 || !option.selected,
         )
     }
 }
@@ -651,14 +705,12 @@ private fun DanmakuTab(
     onAdjustFocus: (Boolean) -> Unit,
 ) {
     val config = danmu.config
-    SectionLabel(stringResource(R.string.player_drawer_danmaku))
-    DrawerRow(
-        label = stringResource(R.string.danmu_enabled),
-        value = stringResource(
-            if (config.enabled) R.string.settings_state_on else R.string.settings_state_off,
-        ),
-        selected = config.enabled,
-        onClick = { actions?.setEnabled(!config.enabled) },
+    // 页签就叫「弹幕」，页内不再重复小标题
+    NovumSwitchRow(
+        text = stringResource(R.string.danmu_enabled),
+        checked = config.enabled,
+        onCheckedChange = { enabled -> actions?.setEnabled(enabled) },
+        consumeAtBoundary = true,
     )
     if (!config.enabled) return
 
@@ -670,21 +722,37 @@ private fun DanmakuTab(
         ),
         selected = config.area == DanmuArea.Full,
         onClick = { actions?.updateConfig { it.toggleArea() } },
-        onStep = { actions?.updateConfig { it.toggleArea() } },
+        // 左 = 上半屏，右 = 全屏：方向键给出确定方向，不做单纯翻转
+        onStep = { dir ->
+            actions?.updateConfig { it.copy(area = if (dir > 0) DanmuArea.Full else DanmuArea.Half) }
+        },
         onAdjustFocus = onAdjustFocus,
+        segmentCount = 2,
+        segmentLevel = if (config.area == DanmuArea.Full) 1 else 0,
     )
     // 透明度：10%–100%，步进 10%
     DrawerRow(
         label = stringResource(R.string.danmu_opacity),
-        value = "${(config.opacity * 100).toInt()}%",
+        value = "${(config.opacity * 100).roundToInt()}%",
         selected = config.opacity != DanmuConfig().opacity,
-        onClick = { actions?.updateConfig { it.copy(opacity = nextStep(it.opacity, 0.1f, 0.1f..1f)) } },
-        onStep = { dir -> actions?.updateConfig { it.copy(opacity = (it.opacity + dir * 0.1f).coerceIn(0.1f, 1f)) } },
+        // 十分位整数推进：浮点 +0.1 会漂成 0.7999999，显示与写回都要先取整
+        onClick = {
+            actions?.updateConfig {
+                it.copy(opacity = percentValue(cyclePercentLevel(it.opacity)))
+            }
+        },
+        onStep = { dir ->
+            actions?.updateConfig {
+                it.copy(opacity = percentValue(stepPercentLevel(it.opacity, dir)))
+            }
+        },
         onAdjustFocus = onAdjustFocus,
+        segmentCount = 10,
+        segmentLevel = (config.opacity * 10).roundToInt() - 1,
     )
     // 字号：小 / 中 / 大（复用字幕字号文案）
     DrawerRow(
-        label = stringResource(R.string.settings_subtitle_size),
+        label = stringResource(R.string.danmu_size),
         value = stringResource(
             when (config.size) {
                 DanmuSize.Small -> R.string.subtitle_size_small
@@ -693,26 +761,30 @@ private fun DanmakuTab(
             },
         ),
         selected = config.size != DanmuConfig().size,
-        onClick = {
-            actions?.updateConfig {
-                it.copy(size = when (it.size) { DanmuSize.Small -> DanmuSize.Medium; DanmuSize.Medium -> DanmuSize.Large; DanmuSize.Large -> DanmuSize.Small })
-            }
-        },
-        onStep = { dir ->
-            actions?.updateConfig {
-                it.copy(size = when { dir > 0 && it.size == DanmuSize.Small -> DanmuSize.Medium; dir > 0 && it.size == DanmuSize.Medium -> DanmuSize.Large; else -> DanmuSize.Small })
-            }
-        },
+        onClick = { actions?.updateConfig { it.copy(size = it.size.next()) } },
+        onStep = { dir -> actions?.updateConfig { it.copy(size = it.size.stepped(dir)) } },
         onAdjustFocus = onAdjustFocus,
+        segmentCount = 3,
+        segmentLevel = config.size.ordinal,
     )
     // 密度：10%–100%，步进 10%
     DrawerRow(
         label = stringResource(R.string.danmu_density),
-        value = "${(config.density * 100).toInt()}%",
+        value = "${(config.density * 100).roundToInt()}%",
         selected = config.density != DanmuConfig().density,
-        onClick = { actions?.updateConfig { it.copy(density = nextStep(it.density, 0.1f, 0.1f..1f)) } },
-        onStep = { dir -> actions?.updateConfig { it.copy(density = (it.density + dir * 0.1f).coerceIn(0.1f, 1f)) } },
+        onClick = {
+            actions?.updateConfig {
+                it.copy(density = percentValue(cyclePercentLevel(it.density)))
+            }
+        },
+        onStep = { dir ->
+            actions?.updateConfig {
+                it.copy(density = percentValue(stepPercentLevel(it.density, dir)))
+            }
+        },
         onAdjustFocus = onAdjustFocus,
+        segmentCount = 10,
+        segmentLevel = (config.density * 10).roundToInt() - 1,
     )
     // 滚动速度：慢 / 标准 / 快
     DrawerRow(
@@ -725,17 +797,11 @@ private fun DanmakuTab(
             },
         ),
         selected = config.speed != DanmuConfig().speed,
-        onClick = {
-            actions?.updateConfig {
-                it.copy(speed = when (it.speed) { DanmuSpeed.Slow -> DanmuSpeed.Normal; DanmuSpeed.Normal -> DanmuSpeed.Fast; DanmuSpeed.Fast -> DanmuSpeed.Slow })
-            }
-        },
-        onStep = { dir ->
-            actions?.updateConfig {
-                it.copy(speed = when { dir > 0 && it.speed == DanmuSpeed.Slow -> DanmuSpeed.Normal; dir > 0 && it.speed == DanmuSpeed.Normal -> DanmuSpeed.Fast; else -> DanmuSpeed.Slow })
-            }
-        },
+        onClick = { actions?.updateConfig { it.copy(speed = it.speed.next()) } },
+        onStep = { dir -> actions?.updateConfig { it.copy(speed = it.speed.stepped(dir)) } },
         onAdjustFocus = onAdjustFocus,
+        segmentCount = 3,
+        segmentLevel = config.speed.ordinal,
     )
     // 时间偏移：±0.1 秒步进（左右键），OK +0.1 秒，长按 Back 由行外部处理
     DrawerRow(
@@ -782,7 +848,15 @@ private fun DanmakuTab(
         DanmuLoad.Loading -> HintRow(stringResource(R.string.danmu_status_loading))
         DanmuLoad.Unmatched -> HintRow(stringResource(R.string.danmu_status_unmatched))
         is DanmuLoad.Failed -> {
-            HintRow(load.error.userMessage())
+            // 鉴权失败 = 这台服务器没有弹幕能力（非 UHDNOW），给一句可理解的说明，
+            // 而不是把 401 原文摆给用户看
+            HintRow(
+                if (load.error is NovumError.Unauthorized) {
+                    stringResource(R.string.danmu_unavailable)
+                } else {
+                    load.error.userMessage()
+                },
+            )
             DrawerRow(
                 label = stringResource(R.string.danmu_retry),
                 value = null,
@@ -794,8 +868,16 @@ private fun DanmakuTab(
         DanmuLoad.Idle -> Unit
     }
 
-    // ---- 手动搜索（未匹配/失败/手动换源时的兜底入口，任何时候可用）----
-    SectionLabel(stringResource(R.string.danmu_search_section))
+    // ---- 手动搜索：默认收起。开关打开后才显示搜索框 ----
+    // 抽屉本来就长，搜索区常驻会让每次看匹配状态都要滚过一整块表单
+    var manualSearch by remember { mutableStateOf(false) }
+    NovumSwitchRow(
+        text = stringResource(R.string.danmu_search_section),
+        checked = manualSearch,
+        onCheckedChange = { manualSearch = it },
+        consumeAtBoundary = true,
+    )
+    if (!manualSearch) return
     when (val search = danmu.search) {
         DanmuSearch.Searching -> HintRow(stringResource(R.string.danmu_search_running))
 
@@ -815,7 +897,7 @@ private fun DanmakuTab(
 
         is DanmuSearch.Episodes -> {
             DrawerRow(
-                label = stringResource(R.string.danmu_search_back),
+                label = stringResource(R.string.danmu_search_close),
                 value = null,
                 selected = false,
                 onClick = { actions?.closeSearch() },
@@ -836,8 +918,9 @@ private fun DanmakuTab(
 
         is DanmuSearch.Failed -> {
             HintRow(search.error.userMessage())
+            // 搜索失败时只能退回（重试需要重新输入关键词），文案不能写「重试」
             DrawerRow(
-                label = stringResource(R.string.danmu_retry),
+                label = stringResource(R.string.danmu_search_close),
                 value = null,
                 selected = false,
                 onClick = { actions?.closeSearch() },
@@ -867,9 +950,35 @@ private fun DanmakuTab(
 private fun DanmuConfig.toggleArea(): DanmuConfig =
     copy(area = if (area == DanmuArea.Full) DanmuArea.Half else DanmuArea.Full)
 
-/** OK 步进：到顶回绕（与左右步进的 coerce 行为互补）。 */
-private fun nextStep(value: Float, step: Float, range: ClosedFloatingPointRange<Float>): Float =
-    if (value + step > range.endInclusive) range.start else value + step
+/** 百分比档位（10 档）：把可能带浮点误差的当前值归一到 1..10。 */
+private fun percentLevel(value: Float): Int = (value * 10f).roundToInt().coerceIn(1, 10)
+
+/** 档位值还原成 0.1–1.0 的配置值。 */
+private fun percentValue(level: Int): Float = level / 10f
+
+/** OK：到顶回绕到最低档。 */
+private fun cyclePercentLevel(value: Float): Int =
+    percentLevel(value).let { if (it >= 10) 1 else it + 1 }
+
+/** 左右键：到顶/到底钳住（方向感明确，不绕回）。 */
+private fun stepPercentLevel(value: Float, dir: Int): Int =
+    (percentLevel(value) + dir).coerceIn(1, 10)
+
+/** 档位循环推进（OK）：小 → 中 → 大 → 小。 */
+private fun DanmuSize.next(): DanmuSize =
+    DanmuSize.entries[(ordinal + 1) % DanmuSize.entries.size]
+
+/** 档位按方向步进（方向键）：两端钳住，不绕回。 */
+private fun DanmuSize.stepped(dir: Int): DanmuSize =
+    DanmuSize.entries[(ordinal + dir).coerceIn(0, DanmuSize.entries.lastIndex)]
+
+/** 档位循环推进（OK）：慢 → 标准 → 快 → 慢。 */
+private fun DanmuSpeed.next(): DanmuSpeed =
+    DanmuSpeed.entries[(ordinal + 1) % DanmuSpeed.entries.size]
+
+/** 档位按方向步进（方向键）：两端钳住，不绕回。 */
+private fun DanmuSpeed.stepped(dir: Int): DanmuSpeed =
+    DanmuSpeed.entries[(ordinal + dir).coerceIn(0, DanmuSpeed.entries.lastIndex)]
 
 /** 弹幕偏移步进（±0.1 秒）。 */
 internal const val DANMU_OFFSET_STEP_MS = 100L
@@ -893,16 +1002,12 @@ private fun AudioTab(
     onTogglePassthrough: () -> Unit,
     onAdjustFocus: (Boolean) -> Unit,
 ) {
-    SectionLabel(stringResource(R.string.player_drawer_passthrough))
-    DrawerRow(
-        label = stringResource(R.string.player_drawer_passthrough),
-        value = if (passthrough) {
-            stringResource(R.string.settings_state_on)
-        } else {
-            stringResource(R.string.settings_state_off)
-        },
-        selected = passthrough,
-        onClick = onTogglePassthrough,
+    // 页签已是「音轨」；「音频直通」这块的小标题也与开关自己的文案重复
+    NovumSwitchRow(
+        text = stringResource(R.string.player_drawer_passthrough),
+        checked = passthrough,
+        onCheckedChange = { onTogglePassthrough() },
+        consumeAtBoundary = true,
     )
     // 音频延迟（音画同步微调）：PCM 路径生效（直通 bitstream 不经处理器）
     // 左右键无级 ±100ms（OK 保留循环兼容）；是否生效见「画质」tab 的「音频输出」行
@@ -914,16 +1019,19 @@ private fun AudioTab(
         onStep = { dir -> onAudioDelayChanged((audioDelayMs + dir * 100L).coerceIn(-2_000L, 2_000L)) },
         onAdjustFocus = onAdjustFocus,
     )
-    SectionLabel(stringResource(R.string.player_drawer_audio))
     if (audioTracks.isEmpty()) {
         HintRow(stringResource(R.string.player_drawer_empty))
     } else {
+        // 只有一条音轨时没有"选"的余地：整行禁用（灰字、不进焦点链），
+        // 只作为"当前用的是这条"的信息展示
+        val single = audioTracks.size == 1
         audioTracks.forEach { option ->
             DrawerRow(
                 label = option.label,
                 value = option.codec,
                 selected = option.selected,
                 onClick = { onSelectAudio(option) },
+                enabled = !single,
             )
         }
     }
@@ -945,7 +1053,7 @@ private fun QualityTab(
     subtitleLabel: String,
     liveStats: PlayerLiveStats?,
 ) {
-    SectionLabel(stringResource(R.string.player_info_title))
+    // 页签就叫「信息」，页内不再重复小标题
     val spec = plan.videoSpec
     val channelsTemplate = stringResource(R.string.player_track_channels)
     // 画面尺寸优先使用解码器上报值，缺失时回落到服务端声明分辨率。
@@ -1003,7 +1111,6 @@ private fun ChapterTab(
         HintRow(stringResource(R.string.player_drawer_empty))
         return
     }
-    SectionLabel(stringResource(R.string.player_info_chapters))
     val chapterTemplate = stringResource(R.string.player_info_chapter_default)
     // 当前章 = 起点不晚于播放位置的最后一章（拖动预览跟随 scrubTarget 由调用方传入）
     val current = chapters.lastOrNull { it.startMs <= currentPosition }
@@ -1099,6 +1206,12 @@ private fun DrawerRow(
     onStep: ((Int) -> Unit)? = null,
     /** 调节行获焦状态回调（父层据此决定是否吞掉左右键）。 */
     onAdjustFocus: ((Boolean) -> Unit)? = null,
+    /** 有限档位时传总档数：行尾画档位条（连续值不要传）。 */
+    segmentCount: Int? = null,
+    /** 档位条当前档（0 起）。 */
+    segmentLevel: Int = 0,
+    /** 是否可操作；false = 灰字、不聚焦（没有选择余地的行）。 */
+    enabled: Boolean = true,
 ) {
     val bringIntoView = remember { BringIntoViewRequester() }
     val scope = rememberCoroutineScope()
@@ -1122,24 +1235,32 @@ private fun DrawerRow(
         selected = selected,
         onClick = onClick,
         focusRequester = focusRequester,
-        // 调节项不是"选项"：不显示选中态，只留左右箭头与"已改动"小圆点
+        // 调节项不是"选项"：不显示选中态，只留左右箭头（或有档位条时只留条）
         adjustable = onStep != null,
         onFocused = { focused ->
             if (focused) scope.launch { bringIntoView.bringIntoView() }
             onAdjustFocus?.invoke(focused)
         },
         modifier = modifier,
+        segmentCount = segmentCount,
+        segmentLevel = segmentLevel,
+        enabled = enabled,
     )
 }
 
-/** 分区小标题。 */
+/**
+ * 分区小标题（26sp Medium）。
+ *
+ * 与首页 Section（32sp SemiBold）区分：面板内分区比页面级区块小一档，
+ * 但仍明显大于 24sp 正文，滚起来能一眼看出分组。
+ */
 @Composable
 private fun SectionLabel(text: String) {
     Text(
         text = text,
-        style = NovumType.Caption,
-        color = NovumPalette.PaperMuted,
-        modifier = Modifier.padding(top = 12.dp, bottom = 4.dp, start = 4.dp),
+        style = NovumType.BodyStrong,
+        color = NovumPalette.Paper,
+        modifier = Modifier.padding(top = 18.dp, bottom = 6.dp, start = 4.dp),
     )
 }
 
@@ -1168,8 +1289,8 @@ private fun formatDelay(ms: Long): String = if (ms == 0L) {
     "${signed}ms"
 }
 
-/** 抽屉宽度：960dp 设计画布的 50%——选集行「S01E03 · 分集标题」+ 行尾时长不截断。 */
-private val DRAWER_WIDTH = 480.dp
+/** 抽屉宽度：1280dp 设计画布的 43.75%——字阶放大后仍保证「S01E03 · 分集标题」+ 时长不截断。 */
+private val DRAWER_WIDTH = 560.dp
 
 /** 抽屉上下内收：不贴屏幕边缘（由 48 收到 32，列表更长）。 */
 private val DRAWER_VERTICAL_INSET = 32.dp

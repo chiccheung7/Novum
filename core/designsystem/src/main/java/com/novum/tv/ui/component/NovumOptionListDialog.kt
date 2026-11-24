@@ -102,7 +102,7 @@ fun NovumOptionListDialog(
             ) {
                 Text(
                     text = title,
-                    style = NovumType.BodyStrong,
+                    style = NovumType.Section,
                     color = NovumPalette.Paper,
                     modifier = Modifier.padding(
                         horizontal = NovumDimens.OverlayPaddingHorizontal,
@@ -131,4 +131,4 @@ private fun KeyEvent.isOkKey(): Boolean =
 private const val OPTION_DIALOG_SCRIM_ALPHA = 0.55f
 
 /** 浮层宽度：容纳「电影名 · SxxExx · 清晰度 · 动态范围 · 码率」整行。 */
-private val OPTION_DIALOG_WIDTH = 760.dp
+private val OPTION_DIALOG_WIDTH = 900.dp

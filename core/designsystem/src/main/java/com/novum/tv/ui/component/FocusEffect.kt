@@ -18,6 +18,11 @@ import com.novum.tv.ui.theme.NovumFocusTokens
 /**
  * 不带阴影的轻量焦点动效，用于图标按钮等只需缩放反馈的元素。
  *
+ * 用 `hasFocus` 而不是 `isFocused`：这个修饰符通常挂在**容器**上
+ * （如 [com.novum.tv.ui.component.NovumCard] 包住可聚焦的官方 `Card`），
+ * 容器自身不是焦点目标，`isFocused` 恒为 false——之前卡片/人物卡
+ * 其实从来没缩放过，只有焦点描边在起作用。
+ *
  * @param scale 聚焦缩放比例。
  */
 @Composable
@@ -29,7 +34,7 @@ fun Modifier.tvFocusScale(scale: Float = NovumDimens.FocusScale): Modifier {
         label = "tvFocusScaleOnly",
     )
     return this
-        .onFocusChanged { focused = it.isFocused }
+        .onFocusChanged { focused = it.hasFocus }
         .zIndex(if (focused) NovumFocusTokens.FocusZIndex else 0f)
         .graphicsLayer {
             scaleX = scaleAnim.value

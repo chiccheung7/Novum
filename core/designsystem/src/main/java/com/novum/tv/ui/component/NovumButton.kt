@@ -2,6 +2,7 @@ package com.novum.tv.ui.component
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.ui.unit.dp
@@ -73,6 +74,8 @@ fun NovumButton(
         scale = scale,
         // 首页双 CTA 与详情页播放/选季统一使用胶囊形。
         shape = ButtonDefaults.shape(NovumShapes.Pill),
+        // 内容内边距显式收窄：字阶放大到 26sp 后，默认内边距会把 60dp 的按钮撑爆
+        contentPadding = PaddingValues(horizontal = 24.dp, vertical = 10.dp),
         colors = ButtonDefaults.colors(
             // 按钮常态底使用浅灰玻璃；聚焦时反转为白底黑字。
             containerColor = NovumPalette.Glass,

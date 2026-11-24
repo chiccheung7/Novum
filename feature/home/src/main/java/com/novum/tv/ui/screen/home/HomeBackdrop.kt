@@ -136,26 +136,41 @@ internal fun FullScreenBackdrop(
 }
 
 /**
- * 背景三联动滚动进度：`(f, g)`。
+ * 背景两联动滚动进度：`(f, g)`。
  *
- * - **f（过渡段）**：Hero 行位移 / 静止底位——视差、变暗、缓放的驱动值；
- * - **g（溶解段）**：Hero 行顶离场距离 / [BACKDROP_DISSOLVE_SPAN_DP]——整组
- *   alpha 的驱动值。
+ * - **f（过渡段）**：Hero 行位移 / 静止底位——视差、变暗的驱动值；
+ * - **g（溶解段）**：背景整组的不透明度倒数。Hero 滚出视口的瞬间到
+ *   [HERO_EXIT_DISSOLVE]（半黑），继续往下滚到下一个内容行时到 1（全黑）。
  *
- * Hero 行不在视口（滚深）或静止几何未捕获（NaN，冷启动首帧/深链恢复）时
- * 按「完全离场」处理（f=g=1，背景隐藏）。绘制期调用，读 [LazyListState]
- * 快照状态只触发重绘不重组。
+ * g 用「已滚过的距离」而不是「Hero 是否还在视口里」来算：后者在 Hero 恰好
+ * 离开视口时会跳变（旧实现直接返回常量），上翻与下翻停在同一行却是两种亮度。
+ * Hero 不在 [LazyListState.layoutInfo] 里时，用首可见行的下标 + 行内偏移
+ * 续上这段距离——列表结构固定为「0 顶栏 / 1 Hero / 2 起内容行」。
+ *
+ * 静止几何未捕获（NaN，冷启动首帧/深链恢复）时按完全离场处理（f=g=1）。
+ * 绘制期调用，读 [LazyListState] 快照状态只触发重绘不重组。
  */
 internal fun backdropProgress(
     listState: LazyListState,
     heroRestTopPx: Float,
     heroRestBottomPx: Float,
-    dissolveSpanPx: Float,
     backdropDeadZonePx: Float,
 ): Pair<Float, Float> {
     if (heroRestTopPx.isNaN() || heroRestBottomPx.isNaN()) return 1f to 1f
     val hero = listState.layoutInfo.visibleItemsInfo.firstOrNull { it.key == HERO_ROW_KEY }
-        ?: return 1f to 1f
+    if (hero == null) {
+        val first = listState.layoutInfo.visibleItemsInfo.firstOrNull() ?: return 1f to 1f
+        // 行内已滚过的比例：0 = 该行贴顶，1 = 该行刚好整行滚出
+        val withinRow = if (first.size > 0) {
+            (-first.offset.toFloat() / first.size).coerceIn(0f, 1f)
+        } else {
+            0f
+        }
+        val rowsPastFirstContent = (first.index - FIRST_CONTENT_ROW_INDEX) + withinRow
+        val g = HERO_EXIT_DISSOLVE +
+            (1f - HERO_EXIT_DISSOLVE) * rowsPastFirstContent.coerceIn(0f, 1f)
+        return 1f to g
+    }
     val heroTop = hero.offset.toFloat()
     // 软斜坡（替代硬钳制死区）：
     //   横向移焦点时 bring-into-view 会产生几像素纵向偏移，需要屏蔽；但硬钳制
@@ -167,7 +182,10 @@ internal fun backdropProgress(
     val scrolled = (heroRestTopPx - heroTop).coerceAtLeast(0f)
     val span = (heroRestBottomPx - backdropDeadZonePx).coerceAtLeast(1f)
     val f = ((scrolled - backdropDeadZonePx) / span).coerceIn(0f, 1f)
-    val g = (-heroTop / dissolveSpanPx).coerceIn(0f, 1f)
+    // 溶解：Hero 滚过自身高度（正好完全离场）时到 HERO_EXIT_DISSOLVE，
+    // 与下方「Hero 已离场」分支在边界处衔接，不跳变
+    val heroHeight = (heroRestBottomPx - heroRestTopPx).coerceAtLeast(1f)
+    val g = (scrolled / heroHeight).coerceIn(0f, 1f) * HERO_EXIT_DISSOLVE
     return f to g
 }
 
@@ -225,8 +243,20 @@ internal val BACKDROP_DRIFT_DP = 48.dp
 /** 背景联动完全展开时的最大遮罩 alpha。 */
 private const val BACKDROP_DIM_MAX = 0.45f
 
-/** 溶解区间：Hero 行顶离场后再滚该距离，整组 alpha 1→0 融入页面底色。 */
-internal val BACKDROP_DISSOLVE_SPAN_DP = 520.dp
+/**
+ * Hero 完全离场（滚过自身高度）时的溶解程度：0.5 = 半黑。
+ *
+ * 用户口径：「翻到继续观看行时应该半黑，到下面时应该全黑」。整组 alpha
+ * 到 0 才算全黑，所以这里取一半，再往下滚一个内容行补到 1。
+ */
+internal const val HERO_EXIT_DISSOLVE = 0.5f
+
+/**
+ * 首个内容行在列表里的下标：0 = 顶栏、1 = Hero，之后才是内容行。
+ *
+ * Hero 滚出视口后用它把「首可见行」换算成「离场后又滚了几行」。
+ */
+private const val FIRST_CONTENT_ROW_INDEX = 2
 
 /** 背景视差死区（dp）：软斜坡起点，屏蔽横向移焦点引起的纵向微抖。 */
 internal val BACKDROP_DEAD_ZONE_DP = 16.dp

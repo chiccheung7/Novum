@@ -218,7 +218,7 @@ private fun PersonHitChip(
 ) {
     Column(
         modifier = Modifier
-            .width(96.dp)
+            .width(112.dp)
             .tvFocusScale()
             .clickable(onClick = onClick),
         horizontalAlignment = Alignment.CenterHorizontally,

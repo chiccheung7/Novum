@@ -60,6 +60,7 @@ class DataStoreSettingsRepository @Inject constructor(
             preferences[SettingsKeys.DanmuAreaFull] = next.danmuAreaFull
             preferences[SettingsKeys.DanmuSize] = next.danmuSize
             preferences[SettingsKeys.DanmuSpeed] = next.danmuSpeed
+            preferences[SettingsKeys.UiScale] = next.uiScale
         }
     }
 }
@@ -88,6 +89,7 @@ private object SettingsKeys {
     val DanmuAreaFull = booleanPreferencesKey("danmu_area_full")
     val DanmuSize = intPreferencesKey("danmu_size")
     val DanmuSpeed = intPreferencesKey("danmu_speed")
+    val UiScale = floatPreferencesKey("ui_scale")
 }
 
 /** 把持久化层数据映射为不可变设置快照，缺失键回落到默认值。 */
@@ -117,6 +119,7 @@ private fun Preferences.toAppSettings(): AppSettings {
         danmuAreaFull = this[SettingsKeys.DanmuAreaFull] ?: defaults.danmuAreaFull,
         danmuSize = this[SettingsKeys.DanmuSize] ?: defaults.danmuSize,
         danmuSpeed = this[SettingsKeys.DanmuSpeed] ?: defaults.danmuSpeed,
+        uiScale = this[SettingsKeys.UiScale] ?: defaults.uiScale,
     )
 }
 
@@ -129,4 +132,5 @@ private fun AppSettings.sanitized(): AppSettings = copy(
     danmuDensity = danmuDensity.coerceIn(0.1f, 1f),
     danmuSize = danmuSize.coerceIn(1, 3),
     danmuSpeed = danmuSpeed.coerceIn(1, 3),
+    uiScale = if (uiScale.isFinite()) uiScale.coerceIn(0.7f, 1.6f) else 1f,
 )

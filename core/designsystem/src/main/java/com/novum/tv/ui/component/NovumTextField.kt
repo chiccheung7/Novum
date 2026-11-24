@@ -84,7 +84,7 @@ fun NovumTextField(
                 .clip(NovumShapes.Card)
                 .background(NovumPalette.Surface)
                 .border(width = if (focused) 2.dp else 1.dp, color = borderColor, shape = NovumShapes.Card)
-                .padding(horizontal = 16.dp, vertical = 14.dp)
+                .padding(horizontal = 20.dp, vertical = 16.dp)
                 .onFocusChanged { state -> focused = state.isFocused }
                 // TV 上不在获得焦点时自动弹键盘；按确定键后才显示软键盘，避免遮挡页面内容。
                 .onPreviewKeyEvent { event ->

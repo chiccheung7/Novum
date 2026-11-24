@@ -218,4 +218,4 @@ data class LineOption(
 private const val LINE_PICKER_SCRIM_ALPHA = 0.65f
 
 /** 线路选择弹窗宽度。 */
-private val LINE_PICKER_PANEL_WIDTH = 460.dp
+private val LINE_PICKER_PANEL_WIDTH = 560.dp

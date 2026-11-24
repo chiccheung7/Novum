@@ -13,11 +13,17 @@ enum class DanmuArea(val fraction: Float) {
     Full(1f),
 }
 
-/** 弹幕字号档位。 */
+/**
+ * 弹幕字号档位（倍率作用于 20dp 基准字高）。
+ *
+ * 档位整体上移过一档：实机 3 米距离下 20dp 的弹幕偏小，25dp（原「大」）
+ * 才是舒服的默认值——默认档 [DanmuConfig.size] 仍是 Medium，
+ * 但 Medium 现在等于原来的 Large；想更小可以往 [Small] 调，想更大有 [Large]。
+ */
 enum class DanmuSize(val scale: Float) {
-    Small(0.85f),
-    Medium(1f),
-    Large(1.25f),
+    Small(1f),
+    Medium(1.25f),
+    Large(1.5f),
 }
 
 /** 弹幕滚动速度档位（滚动弹幕横穿画面的时长倍率，越小越快）。 */
