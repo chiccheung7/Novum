@@ -9,7 +9,6 @@ import com.novum.tv.core.result.failureOf
 import com.novum.tv.core.result.successOf
 import com.novum.tv.data.remote.emby.EmbyApi
 import com.novum.tv.data.remote.emby.EmbyApiProvider
-import com.novum.tv.data.remote.emby.EmbyImages
 import com.novum.tv.data.remote.emby.ItemDto
 import com.novum.tv.data.remote.emby.MediaSourceDto
 import com.novum.tv.data.remote.emby.MediaStreamDto
@@ -154,37 +153,118 @@ class DefaultMediaRepository @Inject constructor(
         }
 
     /**
-     * 人物搜索：服务端 `Persons` 端点为主，与本地索引结果合并去重。
+     * 人物搜索：三路来源合并，按相关度排序。
      *
-     * 本地索引只含已浏览过的演职员，因此与服务端搜索结果合并后去重。
+     * 1. 服务端 `/Persons` 端点（权威口径，但部分自建/托管网关不转发该路由，
+     *    直接 404/403，此时静默降级）；
+     * 2. **条目搜索结果的 `People[]`**：走全站都在用的 `/Users/{uid}/Items`，
+     *    把命中条目的演职员按姓名过滤、按出现次数排序——这条路一定能通，
+     *    是"搜演员名搜不到人"的兜底；
+     * 3. 本地人物索引（已浏览过的演职员，离线/断网时仍可命中）。
+     *
+     * @param query 关键词（按姓名匹配）。
+     * @param limit 返回条数上限。
      */
     override suspend fun searchPersons(query: String, limit: Int): List<PersonRef> =
         withContext(dispatchers.io) {
             val server = sessionHolder.server
             val userId = sessionHolder.userId
-            if (server.isBlank() || userId.isBlank()) return@withContext emptyList()
+            val keyword = query.trim()
+            if (server.isBlank() || userId.isBlank() || keyword.isEmpty()) {
+                return@withContext emptyList()
+            }
             val remote = runCatching {
                 clients.api(server)
-                    .persons(userId = userId, searchTerm = query, limit = limit)
+                    .persons(userId = userId, searchTerm = keyword, limit = limit)
                     .Items
-                    .mapNotNull { dto ->
-                        val id = dto.Id ?: return@mapNotNull null
-                        val name = dto.Name?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
-                        PersonRef(
-                            name = name,
-                            personId = id,
-                            imageUrl = dto.PrimaryImageTag?.let { tag ->
-                                EmbyImages.primary(server = server, itemId = id, tag = tag, maxWidth = 240)
-                            },
-                        )
-                    }
-            }.onFailure { logger.w(TAG, "人物远端搜索失败，仅用本地索引：$query", it) }
+                    .mapNotNull { dto -> dto.toPersonRef(server) }
+            }.onFailure {
+                logger.w(TAG, "守卫：/Persons 不可用，改用条目 People 兜底：$keyword", it)
+            }.getOrDefault(emptyList())
+
+            val derived = runCatching { personsFromItemSearch(server, userId, keyword) }
+                .onFailure { logger.w(TAG, "条目 People 兜底搜索失败：$keyword", it) }
                 .getOrDefault(emptyList())
-            val local = runCatching { personIndex.search(query, limit) }.getOrDefault(emptyList())
-            (remote + local)
-                .distinctBy { it.personId }
-                .take(limit)
+
+            val local = runCatching { personIndex.search(keyword, limit) }.getOrDefault(emptyList())
+
+            mergePersonHits(keyword = keyword, limit = limit, remote, derived, local)
         }
+
+    /**
+     * 从条目搜索结果里挖人物：对命中条目的 `People[]` 按姓名过滤，
+     * 同一人按出现条目数计权重（主角在前、客串在后）。
+     */
+    private suspend fun personsFromItemSearch(
+        server: String,
+        userId: String,
+        keyword: String,
+    ): List<PersonRef> {
+        val items = clients.api(server)
+            .items(
+                uid = userId,
+                searchTerm = keyword,
+                recursive = true,
+                includeItemTypes = PERSON_DERIVE_ITEM_TYPES,
+                limit = PERSON_DERIVE_ITEMS,
+                fields = "People",
+            )
+            .Items
+        // personId → (引用, 出现次数)；LinkedHashMap 保证同权重时按首次出现顺序
+        val counts = LinkedHashMap<String, Pair<PersonRef, Int>>()
+        items.forEach { item ->
+            item.People.forEach personLoop@{ person ->
+                val ref = person.toPersonRef(server) ?: return@personLoop
+                if (!ref.name.contains(keyword, ignoreCase = true)) return@personLoop
+                val previous = counts[ref.personId]
+                counts[ref.personId] = if (previous == null) {
+                    ref to 1
+                } else {
+                    previous.first to previous.second + 1
+                }
+            }
+        }
+        return counts.values
+            .sortedByDescending { (_, count) -> count }
+            .map { (ref, _) -> ref }
+    }
+
+    /**
+     * 合并三路人物命中：按 id 去重（优先保留有头像的来源），
+     * 再按"完全相同 > 前缀 > 包含"排序，最后按姓名收敛到 [limit]。
+     */
+    private fun mergePersonHits(
+        keyword: String,
+        limit: Int,
+        vararg sources: List<PersonRef>,
+    ): List<PersonRef> {
+        val merged = LinkedHashMap<String, PersonRef>()
+        sources.forEach { source ->
+            source.forEach { ref ->
+                val existing = merged[ref.personId]
+                merged[ref.personId] = when {
+                    existing == null -> ref
+                    existing.imageUrl == null && ref.imageUrl != null -> ref
+                    else -> existing
+                }
+            }
+        }
+        return merged.values
+            .sortedWith(
+                compareByDescending<PersonRef> { personRelevance(it.name, keyword) }
+                    .thenBy { it.name.length }
+                    .thenBy { it.name },
+            )
+            .take(limit)
+    }
+
+    /** 姓名命中强度：完全相同 3 / 前缀 2 / 包含 1 / 其它 0（服务端按别名命中时保留原序）。 */
+    private fun personRelevance(name: String, keyword: String): Int = when {
+        name.equals(keyword, ignoreCase = true) -> 3
+        name.startsWith(keyword, ignoreCase = true) -> 2
+        name.contains(keyword, ignoreCase = true) -> 1
+        else -> 0
+    }
 
     override suspend fun seasons(seriesId: String): NovumResult<List<Season>> =
         withContext(dispatchers.io) {
@@ -510,6 +590,12 @@ private const val CAST_SAMPLE_EPISODES = 24
 
 /** NextUp 为空时回查续播列表的条数上限。 */
 private const val RESUME_HINT_LIMIT = 12
+
+/** 人物兜底搜索取样条目数：20 条主角阵容足够覆盖常见演员名。 */
+private const val PERSON_DERIVE_ITEMS = 20
+
+/** 人物兜底搜索的条目类型：剧集/电影/分集都挂 People。 */
+private const val PERSON_DERIVE_ITEM_TYPES = "Movie,Series,Episode"
 
 /**
  * 单剧集 NextUp 的取样条数：网关忽略 `SeriesId` 时用来在客户端捞出本剧那条，

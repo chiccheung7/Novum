@@ -26,8 +26,8 @@ android {
         // navigation-compose 2.10.x 的 AAR 声明 minSdk 24，故下限锁 24（Android TV 7.0）
         minSdk = 24
         targetSdk = 37
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = 2
+        versionName = "0.2.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }

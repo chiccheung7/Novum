@@ -48,6 +48,9 @@ import kotlinx.coroutines.delay
 /** 输入防抖时长：停顿即搜，无需按钮确认。 */
 private const val SEARCH_DEBOUNCE_MS = 500L
 
+/** 人物命中展示上限：一行排得下，再多会挤掉下方的条目网格。 */
+private const val PERSON_HIT_LIMIT = 8
+
 /**
  * 搜索页：输入停顿 [SEARCH_DEBOUNCE_MS] 后查询全库，展示条目网格与人物命中。
  * 进入时焦点落在输入框，按确定拉起软键盘；输入框保持显示，方便继续输入。
@@ -155,25 +158,35 @@ fun SearchScreen(
                     )
                 }
             } else {
-                // 人物命中头像行位于网格上方，点击进入人物作品页。
+                // 人物命中区位于网格上方：带「人物」小标题 + 头像卡，
+                // 与下面的海报网格区分开（纯头像行容易被当成关键词条）
                 if (personHits.isNotEmpty()) {
-                    Row(
+                    Column(
                         modifier = Modifier
                             .fillMaxWidth()
                             .padding(horizontal = NovumDimens.SafeHorizontal),
-                        horizontalArrangement = Arrangement.spacedBy(NovumDimens.Gutter),
+                        verticalArrangement = Arrangement.spacedBy(10.dp),
                     ) {
-                        personHits.take(6).forEach { person ->
-                            PersonHitChip(person = person, onClick = {
-                                onOpenPerson(person.personId, person.name)
-                            })
+                        Text(
+                            text = stringResource(R.string.search_person_section),
+                            style = NovumType.BodyStrong,
+                            color = NovumPalette.PaperMuted,
+                        )
+                        Row(horizontalArrangement = Arrangement.spacedBy(NovumDimens.Gutter)) {
+                            personHits.take(PERSON_HIT_LIMIT).forEach { person ->
+                                PersonHitChip(person = person, onClick = {
+                                    onOpenPerson(person.personId, person.name)
+                                })
+                            }
                         }
                     }
                 }
                 when (val current = state) {
                     UiState.Loading -> NovumStateView(state = UiState.Loading, onRetry = {})
 
-                    is UiState.Empty -> NovumStateView(
+                    // 只有人物命中、没有条目命中时不算"无结果"：
+                    // 搜演员名本来就该看到人物，摆一个空态会把结果盖掉
+                    is UiState.Empty -> if (personHits.isEmpty()) NovumStateView(
                         state = current,
                         onRetry = {
                             val keyword = query.trim()
@@ -218,7 +231,7 @@ private fun PersonHitChip(
 ) {
     Column(
         modifier = Modifier
-            .width(112.dp)
+            .width(124.dp)
             .tvFocusScale()
             .clickable(onClick = onClick),
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -227,7 +240,7 @@ private fun PersonHitChip(
         com.novum.tv.ui.component.NovumAvatar(
             url = person.imageUrl,
             name = person.name,
-            size = 72.dp,
+            size = 88.dp,
         )
         Text(
             text = person.name,

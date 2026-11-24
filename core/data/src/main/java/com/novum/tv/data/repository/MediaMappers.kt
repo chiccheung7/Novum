@@ -221,11 +221,41 @@ private fun formatBitrate(bps: Long): String = when {
                 EmbyImages.primary(
                     server = server,
                     itemId = personId,
-                    tag = PrimaryImageTag,
+                    tag = imageTag(),
                     maxWidth = 240,
                 )
             },
             id = Id,
+        )
+    }
+
+    /**
+     * 头像版本号：`/Items` 的 `People[]` 用平铺的 `PrimaryImageTag`，
+     * `/Persons` 端点则放在 `ImageTags.Primary`。两个口径都要认。
+     */
+    internal fun PersonDto.imageTag(): String? =
+        PrimaryImageTag?.takeIf { it.isNotBlank() }
+            ?: ImageTags[IMAGE_TAG_PRIMARY]?.takeIf { it.isNotBlank() }
+
+    /**
+     * 人物 → 搜索命中/本地索引引用。
+     *
+     * 缺 id（无法导航到人物页）或缺姓名（无法展示/匹配）时返回 null。
+     *
+     * @param server 服务器地址，用于拼接头像。
+     */
+    internal fun PersonDto.toPersonRef(server: String): PersonRef? {
+        val personId = Id?.takeIf { it.isNotBlank() } ?: return null
+        val name = Name?.takeIf { it.isNotBlank() } ?: return null
+        return PersonRef(
+            name = name,
+            personId = personId,
+            imageUrl = EmbyImages.primary(
+                server = server,
+                itemId = personId,
+                tag = imageTag(),
+                maxWidth = 240,
+            ),
         )
     }
 
@@ -362,8 +392,9 @@ internal fun ItemDto.toEpisode(server: String, index: Int, strings: MediaStrings
     val seriesWideUrl = SeriesId?.let { sid ->
         SeriesThumbImageTag?.let { tag ->
             EmbyImages.thumb(server = server, itemId = sid, tag = tag)
+        // backdrop 已是非空 URL（服务端没有 Thumbs 时由它兜底），
+        // 后面再挂 elvis 是死分支，Kotlin 也会提示「总是返回左操作数」
         } ?: EmbyImages.backdrop(server = server, itemId = sid, tag = null)
-            ?: EmbyImages.primary(server = server, itemId = sid, tag = SeriesPrimaryImageTag)
     }
     return Episode(
         id = id,
@@ -456,8 +487,9 @@ internal fun ItemDto.toHomeEntry(server: String, strings: MediaStrings): HomeEnt
     val seriesWideUrl = SeriesId?.let { sid ->
         SeriesThumbImageTag?.let { tag ->
             EmbyImages.thumb(server = server, itemId = sid, tag = tag)
+        // backdrop 已是非空 URL（服务端没有 Thumbs 时由它兜底），
+        // 后面再挂 elvis 是死分支，Kotlin 也会提示「总是返回左操作数」
         } ?: EmbyImages.backdrop(server = server, itemId = sid, tag = null)
-            ?: EmbyImages.primary(server = server, itemId = sid, tag = SeriesPrimaryImageTag)
     }
     val isEpisode = Type == "Episode"
     return HomeEntry(
@@ -529,3 +561,6 @@ internal fun ItemDto.toHomeEntry(server: String, strings: MediaStrings): HomeEnt
         },
     )
 }
+
+/** `ImageTags` 里的头像键名。 */
+private const val IMAGE_TAG_PRIMARY = "Primary"

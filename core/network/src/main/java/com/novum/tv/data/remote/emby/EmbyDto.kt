@@ -141,7 +141,14 @@ data class PersonDto(
     val Role: String? = null,
     val Type: String? = null,
     val Id: String? = null,
+    /** 条目 `People[]` 里的头像版本号（`/Items` 口径）。 */
     val PrimaryImageTag: String? = null,
+    /**
+     * `/Persons` 端点返回的头像版本号放在 `ImageTags.Primary`
+     * （`/Items` 用的是平铺的 [PrimaryImageTag]）。两个口径都要认，
+     * 否则人物搜索结果全是无图占位，看起来像一串关键词而不是人。
+     */
+    val ImageTags: Map<String, String> = emptyMap(),
 )
 
 /**

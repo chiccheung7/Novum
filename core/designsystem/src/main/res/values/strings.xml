@@ -56,6 +56,7 @@
     <string name="search_title">搜索</string>
     <string name="search_label">关键词</string>
     <string name="search_placeholder">片名 / 剧名 / 演员</string>
+    <string name="search_person_section">人物</string>
     <string name="search_hint">输入关键词后点「搜索」</string>
     <string name="search_empty">没有找到相关内容</string>
 
