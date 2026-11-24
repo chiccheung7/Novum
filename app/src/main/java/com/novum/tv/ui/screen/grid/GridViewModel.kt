@@ -114,6 +114,16 @@ class GridViewModel @Inject constructor(
     }
 
     /**
+     * 预热搜索目录（搜索页打开即调）。
+     *
+     * 搜索走本地目录做任意位置匹配，目录首次拉取要几秒；把它挪到
+     * 用户打字之前，第一次搜索结果基本不用等。
+     */
+    fun warmSearch() {
+        viewModelScope.launch { repository.warmSearchCatalog() }
+    }
+
+    /**
      * 切换收藏页的类型筛选（全部/电影/剧集），回到第一页重新取数。
      *
      * @param type 目标类型。

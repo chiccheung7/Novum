@@ -79,6 +79,9 @@ fun SearchScreen(
         NovumInitialFocus(inputFocus)
     }
 
+    // 进页即预热搜索目录（本地模糊匹配要先有全库片名），等打字时已就绪
+    LaunchedEffect(Unit) { viewModel.warmSearch() }
+
     // 输入停顿即搜（防抖重启天然去抖）；清空回到未提交态；人物索引同节奏匹配
     LaunchedEffect(query) {
         val keyword = query.trim()

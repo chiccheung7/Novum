@@ -77,6 +77,14 @@ interface MediaRepository {
     suspend fun searchPersons(query: String, limit: Int = 20): List<PersonRef> = emptyList()
 
     /**
+     * 预热搜索目录（搜索页打开时调用）。
+     *
+     * 服务端 `SearchTerm` 对中文只认从头匹配，本地目录负责任意位置匹配；
+     * 目录是懒建的，预热只是把等待挪到用户打字之前。
+     */
+    suspend fun warmSearchCatalog() = Unit
+
+    /**
      * 读取剧集的全部季。
      *
      * @param seriesId 剧集 id。

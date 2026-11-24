@@ -55,6 +55,7 @@ class DefaultMediaRepository @Inject constructor(
     private val sessionHolder: SessionHolder,
     private val dispatchers: DispatcherProvider,
     private val personIndex: PersonIndexStore,
+    private val searchCatalog: SearchCatalogStore,
     private val strings: MediaStrings,
     private val logger: NovumLogger,
 ) : MediaRepository {
@@ -88,6 +89,17 @@ class DefaultMediaRepository @Inject constructor(
         if (server.isBlank() || userId.isBlank()) {
             return@withContext failureOf(NovumError.Unauthorized())
         }
+        // 搜索走本地目录：Emby 的 SearchTerm 对中文只认从头匹配/整词，
+        // 「大明」搜不到「大明王朝1566」（数字片段反而能中）。目录已在
+        // SearchCatalogStore 里按页拉全，这里只做 contains + 相关度排序。
+        if (searchTerm != null) {
+            return@withContext searchInCatalog(
+                query = searchTerm,
+                startIndex = startIndex,
+                limit = limit,
+                includeItemTypes = includeItemTypes,
+            )
+        }
         safeCall {
             val response = clients.api(server).items(
                 uid = userId,
@@ -97,18 +109,57 @@ class DefaultMediaRepository @Inject constructor(
                 sortBy = sortBy,
                 sortOrder = if (ascending) "Ascending" else "Descending",
                 filters = filters,
-                searchTerm = searchTerm,
                 includeItemTypes = includeItemTypes,
-                // 搜索时附带 People 以更新本地人物索引；其他列表不请求该字段。
-                fields = if (searchTerm != null) "${EmbyApi.DEFAULT_FIELDS},People" else EmbyApi.DEFAULT_FIELDS,
+                fields = EmbyApi.DEFAULT_FIELDS,
             )
-            if (searchTerm != null) {
-                personIndex.addAll(response.Items.flatMap { dto -> dto.toCastMembers(server, strings) })
-            }
             MediaPage(
                 items = response.Items.mapNotNull { dto -> dto.toMediaItem(server, strings) },
                 total = response.TotalRecordCount,
             )
+        }
+    }
+
+    /**
+     * 在本地目录里做模糊搜索：任意位置命中 + 相关度排序 + 分页。
+     *
+     * @param query 关键词。
+     * @param startIndex 起始下标（网格分页）。
+     * @param limit 本页条数。
+     * @param includeItemTypes 类型过滤（逗号分隔，null/空 = 不过滤）。
+     */
+    private suspend fun searchInCatalog(
+        query: String,
+        startIndex: Int,
+        limit: Int,
+        includeItemTypes: String?,
+    ): NovumResult<MediaPage> = safeCall {
+        val types = includeItemTypes
+            ?.split(',')
+            ?.map { it.trim() }
+            ?.filter { it.isNotEmpty() }
+            ?.toSet()
+            .orEmpty()
+        val hits = searchCatalog.load()
+            .asSequence()
+            .filter { types.isEmpty() || it.type in types }
+            .filter { it.title.contains(query, ignoreCase = true) }
+            .sortedWith(
+                compareByDescending<MediaItem> { titleRelevance(it.title, query) }
+                    .thenBy { it.title },
+            )
+            .toList()
+        MediaPage(items = hits.drop(startIndex).take(limit), total = hits.size)
+    }
+
+    /**
+     * 预热搜索目录：搜索页一打开就拉，等用户打完字基本已就绪。
+     *
+     * 失败只留日志——真正的搜索会再试一次并把错误抛给界面。
+     */
+    override suspend fun warmSearchCatalog() {
+        withContext(dispatchers.io) {
+            runCatching { searchCatalog.load() }
+                .onFailure { logger.w(TAG, "搜索目录预热失败", it) }
         }
     }
 
@@ -256,6 +307,14 @@ class DefaultMediaRepository @Inject constructor(
                     .thenBy { it.name },
             )
             .take(limit)
+    }
+
+    /** 片名命中强度：完全相同 3 / 前缀 2 / 包含 1（搜「大明」时「大明王朝1566」优先）。 */
+    private fun titleRelevance(title: String, keyword: String): Int = when {
+        title.equals(keyword, ignoreCase = true) -> 3
+        title.startsWith(keyword, ignoreCase = true) -> 2
+        title.contains(keyword, ignoreCase = true) -> 1
+        else -> 0
     }
 
     /** 姓名命中强度：完全相同 3 / 前缀 2 / 包含 1 / 其它 0（服务端按别名命中时保留原序）。 */

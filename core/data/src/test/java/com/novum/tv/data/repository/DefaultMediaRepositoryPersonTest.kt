@@ -107,10 +107,12 @@ class DefaultMediaRepositoryPersonTest {
                 ),
             )
         }
+        val clients = FixedApiProvider(api)
         return DefaultMediaRepository(
-            clients = FixedApiProvider(api),
+            clients = clients,
             sessionHolder = holder,
             dispatchers = dispatchers,
+            searchCatalog = testSearchCatalog(clients, holder, dispatchers),
             personIndex = PersonIndexStore(
                 kotlin.io.path.createTempFile("person_index").toFile(),
                 ioDispatcher = dispatcher,
