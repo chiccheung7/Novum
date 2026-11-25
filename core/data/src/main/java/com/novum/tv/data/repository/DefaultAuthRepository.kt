@@ -6,6 +6,7 @@ import com.novum.tv.core.network.ServerAddress
 import com.novum.tv.core.network.toNovumError
 import com.novum.tv.core.result.NovumResult
 import com.novum.tv.core.result.failureOf
+import com.novum.tv.core.result.runCatchingSuspend
 import com.novum.tv.core.result.successOf
 import com.novum.tv.data.remote.emby.AuthRequestDto
 import com.novum.tv.data.remote.emby.UserDto
@@ -110,11 +111,11 @@ class DefaultAuthRepository @Inject constructor(
     }
 
     override suspend fun lastServer(): String = withContext(dispatchers.io) {
-        runCatching { sessionStore.lastServer() }.getOrDefault("")
+        runCatchingSuspend { sessionStore.lastServer() }.getOrDefault("")
     }
 
     override suspend fun lastUsername(): String = withContext(dispatchers.io) {
-        runCatching { sessionStore.lastUsername() }.getOrDefault("")
+        runCatchingSuspend { sessionStore.lastUsername() }.getOrDefault("")
     }
 
     override suspend fun logout() = withContext(dispatchers.io) {

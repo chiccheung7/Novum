@@ -1,6 +1,7 @@
 package com.novum.tv.data.line
 
 import com.novum.tv.core.log.NovumLogger
+import com.novum.tv.core.result.runCatchingSuspend
 import com.novum.tv.data.remote.emby.EmbyApiProvider
 import com.novum.tv.data.remote.emby.SessionHolder
 import java.net.HttpURLConnection
@@ -101,7 +102,7 @@ class LineProbe @Inject constructor(
 
     /** 探测 + 测速；任何异常都退化为单线路。 */
     private suspend fun probe(server: String): List<ServerLine> {
-        val discovered = runCatching {
+        val discovered = runCatchingSuspend {
             linesFromJson(clients.api(server).serverDomains(), server)
         }.getOrElse {
             logger.w("LineProbe", "ServerDomains 不可用，退化为单线路: ${it.message}")

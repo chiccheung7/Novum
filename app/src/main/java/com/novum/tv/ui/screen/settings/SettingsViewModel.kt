@@ -7,6 +7,7 @@ import com.novum.tv.core.common.feedback.ToastSink
 import com.novum.tv.core.designsystem.R
 import com.novum.tv.core.error.NovumError
 import com.novum.tv.core.log.NovumLogger
+import com.novum.tv.core.result.runCatchingSuspend
 import com.novum.tv.core.state.UiState
 import com.novum.tv.data.repository.AuthRepository
 import com.novum.tv.data.session.SessionStore
@@ -359,7 +360,7 @@ class SettingsViewModel @Inject constructor(
         if (_loggingOut.value) return
         _loggingOut.value = true
         viewModelScope.launch {
-            val result = runCatching { authRepository.logout() }
+            val result = runCatchingSuspend { authRepository.logout() }
             _loggingOut.value = false
             result.onFailure {
                 logger.w(TAG, "退出登录清理失败", it)
@@ -371,7 +372,7 @@ class SettingsViewModel @Inject constructor(
     /** 读取账号区展示的用户名。 */
     private fun loadSessionLabel() {
         viewModelScope.launch {
-            val session = runCatching { sessionStore.load() }.getOrNull() ?: return@launch
+            val session = runCatchingSuspend { sessionStore.load() }.getOrNull() ?: return@launch
             _sessionLabel.value = session.userName
         }
     }
@@ -386,7 +387,7 @@ class SettingsViewModel @Inject constructor(
         transform: (AppSettings) -> AppSettings,
     ) {
         viewModelScope.launch {
-            runCatching { settingsRepository.update(transform) }
+            runCatchingSuspend { settingsRepository.update(transform) }
                 .onSuccess { onSuccess?.invoke() }
                 .onFailure { logger.w(TAG, "设置写入失败", it) }
         }

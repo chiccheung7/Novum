@@ -9,6 +9,7 @@ import com.novum.tv.core.common.feedback.ToastSink
 import com.novum.tv.core.designsystem.R
 import com.novum.tv.core.log.NovumLogger
 import com.novum.tv.core.result.NovumResult
+import com.novum.tv.core.result.runCatchingSuspend
 import com.novum.tv.core.state.UiState
 import com.novum.tv.data.repository.ItemPlaybackPrefsStore
 import com.novum.tv.data.repository.MediaRepository
@@ -267,7 +268,7 @@ class DetailViewModel @Inject constructor(
         val epoch = versionEpoch
         versionJob?.cancel()
         versionJob = viewModelScope.launch {
-            val id = runCatching { playbackPrefs.get(targetId)?.mediaSourceId }.getOrNull()
+            val id = runCatchingSuspend { playbackPrefs.get(targetId)?.mediaSourceId }.getOrNull()
             // 读取期间用户可能已经选了新版本：代次变化就不回写旧值
             if (epoch == versionEpoch) {
                 _state.update { it.copy(rememberedMediaSourceId = id) }
@@ -287,7 +288,7 @@ class DetailViewModel @Inject constructor(
         versionJob?.cancel()
         _state.update { it.copy(rememberedMediaSourceId = sourceId) }
         viewModelScope.launch {
-            runCatching { playbackPrefs.update(itemId = targetId, mediaSourceId = sourceId) }
+            runCatchingSuspend { playbackPrefs.update(itemId = targetId, mediaSourceId = sourceId) }
                 .onFailure { logger.w(TAG, "版本记忆写入失败", it) }
         }
     }

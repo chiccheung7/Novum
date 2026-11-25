@@ -8,6 +8,7 @@ import com.novum.tv.core.log.NovumLogger
 import com.novum.tv.core.network.toNovumError
 import com.novum.tv.core.result.NovumResult
 import com.novum.tv.core.result.failureOf
+import com.novum.tv.core.result.runCatchingSuspend
 import com.novum.tv.core.result.successOf
 import androidx.media3.common.MimeTypes
 import com.novum.tv.data.remote.emby.EmbyApiProvider
@@ -73,12 +74,12 @@ class DefaultPlaybackRepository @Inject constructor(
             if (server.isBlank() || userId.isBlank()) {
                 return@withContext failureOf(NovumError.Unauthorized())
             }
-            val snapshot = runCatching { settings.settings.first() }.getOrNull()
+            val snapshot = runCatchingSuspend { settings.settings.first() }.getOrNull()
             val preferDirect = snapshot?.preferDirect ?: true
             // 媒体流域名选择（优先级）：手动锁定线路 > 测速最快线路 > 当前服务器；
             // API 调用仍用原服务器地址（鉴权域一致）——官方文档明确客户端内切线
             // 无需重登（docs.uhdnow.com/partner/emby-ext-domains）
-            val bestLine = runCatching {
+            val bestLine = runCatchingSuspend {
                 lineProbe.lines(
                     excludeBaseUrl = excludeLine,
                     pinnedLine = snapshot?.pinnedLineUrl,
@@ -260,7 +261,7 @@ class DefaultPlaybackRepository @Inject constructor(
     ) {
         withContext(dispatchers.io) {
             val api = apiOrNull() ?: return@withContext
-            runCatching {
+            runCatchingSuspend {
                 api.reportPlaybackStopped(
                     body = progressBody(itemId, positionMs, method, playSessionId),
                 )
@@ -278,7 +279,7 @@ class DefaultPlaybackRepository @Inject constructor(
     ) {
         withContext(dispatchers.io) {
             val api = apiOrNull() ?: return@withContext
-            runCatching {
+            runCatchingSuspend {
                 val body = progressBody(itemId, positionMs, method, playSessionId)
                 if (started) api.reportPlaybackStarted(body) else api.reportPlaybackProgress(body)
             }.onFailure { logger.w(TAG, "播放进度上报失败", it) }

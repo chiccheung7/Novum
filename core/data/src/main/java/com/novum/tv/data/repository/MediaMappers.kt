@@ -78,8 +78,9 @@ private fun ItemDto.buildSubtitle(strings: MediaStrings): String? {
  * Hero/详情信息块共用格式标志：分辨率档 +
  * 视频动态范围 + 视频编码 + 音频 Profile + 音频编码。
  *
- * VideoRangeType 精细枚举（Emby 10.9+）：DOVI*（杜比视界）/ HDR10+ / HDR10；
- * 老服务器回退 VideoRange（HDR / DOVI）；SDR/HLG 也产标签（实底胶囊同排）。
+ * VideoRangeType 精细枚举（Emby 10.9+）：DOVI*（杜比视界）/ HDR10+ / HDR10 / HLG；
+ * 老服务器回退 VideoRange（HDR / DOVI / HLG）；SDR 产标签，HLG 用自己的名字
+ * （实底胶囊同排）。
  * **无视频流（剧集条目，流挂在分集上）不产任何标签**——else 判 SDR 只对
  * 「有视频流但普通画质」成立，避免为没有视频流的剧集条目生成 SDR 徽章。
  */
@@ -114,17 +115,19 @@ private fun ItemDto.formatBadges(): FormatBadges {
 }
 
 /**
- * 视频流 → 动态范围展示名（[FormatBadges] 与版本选项两处共用；SDR 也产标签）。
+ * 视频流 → 动态范围展示名（[FormatBadges] 与版本选项两处共用；SDR/HLG 也产标签）。
  *
- * VideoRangeType 精细枚举（Emby 10.9+）：DOVI*（杜比视界）/ HDR10+ / HDR10；
- * 老服务器回退 VideoRange（HDR / DOVI）。**void 判 SDR 只对「有流但普通画质」
- * 成立**——调用方必须先确认有视频流再调用（无流返回 null）。
+ * VideoRangeType 精细枚举（Emby 10.9+）：DOVI*（杜比视界）/ HDR10+ / HDR10 / HLG；
+ * 老服务器回退 VideoRange（HDR / DOVI / HLG）。**else 判 SDR 只对「有流但普通
+ * 画质」成立**——调用方必须先确认有视频流再调用（无流返回 null）。
  */
 private fun MediaStreamDto.videoRangeLabel(): String? = when {
     VideoRangeType?.startsWith("DOVI") == true ||
         VideoRange?.contains("Dolby", ignoreCase = true) == true ||
         VideoRange == "DOVI" -> "Dolby Vision"
     VideoRangeType == "HDR10+" -> "HDR10+"
+    // HLG 是 HDR 的一种（BBC/NHK 广播口径）；老服务器只在 VideoRange 里给 "HLG"
+    VideoRangeType == "HLG" || VideoRange == "HLG" -> "HLG"
     VideoRangeType == "HDR10" ||
         VideoRange?.contains("HDR10", ignoreCase = true) == true ||
         VideoRange == "HDR" -> "HDR10"

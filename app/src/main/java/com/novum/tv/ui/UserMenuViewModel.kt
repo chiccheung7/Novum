@@ -6,6 +6,7 @@ import androidx.lifecycle.viewModelScope
 import com.novum.tv.core.common.feedback.ToastSink
 import com.novum.tv.core.designsystem.R
 import com.novum.tv.core.log.NovumLogger
+import com.novum.tv.core.result.runCatchingSuspend
 import com.novum.tv.data.repository.AuthRepository
 import com.novum.tv.data.session.SessionStore
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -36,7 +37,7 @@ class UserMenuViewModel @Inject constructor(
 
     init {
         viewModelScope.launch {
-            val session = runCatching { sessionStore.load() }.getOrNull() ?: return@launch
+            val session = runCatchingSuspend { sessionStore.load() }.getOrNull() ?: return@launch
             _userName.value = session.userName.takeIf { it.isNotBlank() }
         }
     }
@@ -48,7 +49,7 @@ class UserMenuViewModel @Inject constructor(
      */
     fun logout(onDone: () -> Unit) {
         viewModelScope.launch {
-            runCatching { authRepository.logout() }
+            runCatchingSuspend { authRepository.logout() }
                 .onFailure {
                     logger.w(TAG, "退出登录清理失败", it)
                     toast.show(appContext.getString(R.string.settings_logout_failed))

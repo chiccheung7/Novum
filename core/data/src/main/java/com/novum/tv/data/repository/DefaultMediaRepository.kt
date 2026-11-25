@@ -6,6 +6,7 @@ import com.novum.tv.core.log.NovumLogger
 import com.novum.tv.core.network.toNovumError
 import com.novum.tv.core.result.NovumResult
 import com.novum.tv.core.result.failureOf
+import com.novum.tv.core.result.runCatchingSuspend
 import com.novum.tv.core.result.successOf
 import com.novum.tv.data.remote.emby.EmbyApi
 import com.novum.tv.data.remote.emby.EmbyApiProvider
@@ -96,7 +97,7 @@ class DefaultMediaRepository @Inject constructor(
         // 本地未命中（目录被截断/条目类型不在目录里/目录拉取失败）时回落
         // 服务端：它的整词与数字命中仍能兜住「信号」这类完整标题。
         if (searchTerm != null) {
-            val local = runCatching {
+            val local = runCatchingSuspend {
                 searchInCatalog(
                     query = searchTerm,
                     startIndex = startIndex,
@@ -170,7 +171,7 @@ class DefaultMediaRepository @Inject constructor(
      */
     override suspend fun warmSearchCatalog() {
         withContext(dispatchers.io) {
-            runCatching { searchCatalog.load() }
+            runCatchingSuspend { searchCatalog.load() }
                 .onFailure { logger.w(TAG, "搜索目录预热失败", it) }
         }
     }
@@ -238,7 +239,7 @@ class DefaultMediaRepository @Inject constructor(
             if (server.isBlank() || userId.isBlank() || keyword.isEmpty()) {
                 return@withContext emptyList()
             }
-            val remote = runCatching {
+            val remote = runCatchingSuspend {
                 clients.api(server)
                     .persons(userId = userId, searchTerm = keyword, limit = limit)
                     .Items
@@ -256,11 +257,11 @@ class DefaultMediaRepository @Inject constructor(
                 logger.w(TAG, "守卫：/Persons 不可用，改用条目 People 兜底：$keyword", it)
             }.getOrDefault(emptyList())
 
-            val derived = runCatching { personsFromItemSearch(server, userId, keyword) }
+            val derived = runCatchingSuspend { personsFromItemSearch(server, userId, keyword) }
                 .onFailure { logger.w(TAG, "条目 People 兜底搜索失败：$keyword", it) }
                 .getOrDefault(emptyList())
 
-            val local = runCatching { personIndex.search(keyword, limit) }.getOrDefault(emptyList())
+            val local = runCatchingSuspend { personIndex.search(keyword, limit) }.getOrDefault(emptyList())
 
             logger.w(TAG, "人物搜索「$keyword」：远端 ${remote.size} / 条目兜底 ${derived.size} / 本地索引 ${local.size}")
             mergePersonHits(keyword = keyword, limit = limit, remote, derived, local)

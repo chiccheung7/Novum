@@ -11,12 +11,10 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyItemScope
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.LazyListState
-import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.focus.FocusRequester
@@ -27,11 +25,9 @@ import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import kotlinx.coroutines.launch
 import com.novum.tv.ui.theme.NovumDimens
 import com.novum.tv.ui.theme.NovumFocusTokens
 import com.novum.tv.ui.theme.NovumPalette
@@ -67,24 +63,9 @@ fun NovumBrowseScaffold(
         NovumInitialFocus(firstFocus, key = focusEpoch ?: firstFocus)
     }
 
-    // 机制⑤：按住即快滚自建重复——本机遥控器长按不产生原生
-    // repeat（TCL 系统层截走合成键流），KeyDown 后 300ms 未见 KeyUp 即由
-    val holdScope = rememberCoroutineScope()
-    val rowGapPx = with(LocalDensity.current) { NovumDimens.RowGap.toPx() }
-    // 纵向即时位移：连续 tween 滚动会落后于焦点跳格，与 bring-into-view 的弹簧动画互相冲突。使用 scrollBy 瞬移，使视口与焦点同步移动。
-    val instantRowScroll: (FocusDirection) -> Unit = { dir ->
-        val pitch = (listState.layoutInfo.visibleItemsInfo.firstOrNull()?.size ?: 0) + rowGapPx
-        if (pitch > 0f) {
-            holdScope.launch { listState.scrollBy(if (dir == FocusDirection.Down) pitch else -pitch) }
-        }
-    }
-    val holdDirections = remember {
-        mapOf(
-            Key.DirectionUp to FocusDirection.Up,
-            Key.DirectionDown to FocusDirection.Down,
-        )
-    }
-    // repeat 同时移动焦点，保持焦点与视口同步。
+    // repeat 键流期间由下方 onPreviewKeyEvent 消费并 syncStep 移焦，位移交给
+    // bring-into-view；「按住快滚自建重复」已退役——TCL 键流带原生 repeatCount，
+    // 不再需要 KeyDown/KeyUp 计时合成。
     val focusManager = LocalFocusManager.current
     val syncStep: (FocusDirection) -> Unit = { dir ->
         // 只 moveFocus，位移交给 bring-into-view，避免同帧叠加滚动。

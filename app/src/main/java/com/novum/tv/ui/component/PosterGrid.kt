@@ -66,8 +66,10 @@ fun PosterGrid(
     val gridState = rememberLazyGridState()
     val firstFocus = remember { FocusRequester() }
 
-    LaunchedEffect(items.firstOrNull()?.id) {
-        if (focusOnEnter && items.isNotEmpty()) runCatching { firstFocus.requestFocus() }
+    // 首焦落首卡：NovumInitialFocus 等帧重试——网格 item 在 measure 期才组合，
+    // 数据刚到位的那一帧 requestFocus 会因节点未挂载而静默失败
+    if (focusOnEnter) {
+        NovumInitialFocus(firstFocus, key = items.firstOrNull()?.id)
     }
 
     // 页头槽占 item 0：预取/加载更多的「最后可见下标」按内容 item 数

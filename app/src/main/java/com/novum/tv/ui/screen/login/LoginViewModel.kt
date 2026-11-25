@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.novum.tv.core.error.NovumError
 import com.novum.tv.core.result.NovumResult
+import com.novum.tv.core.result.runCatchingSuspend
 import com.novum.tv.data.repository.AuthRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
@@ -58,8 +59,8 @@ class LoginViewModel @Inject constructor(
     init {
         // 预填上次登录的服务器地址：电视上用遥控器重输域名成本很高
         viewModelScope.launch {
-            val lastServer = runCatching { authRepository.lastServer() }.getOrDefault("")
-            val lastUser = runCatching { authRepository.lastUsername() }.getOrDefault("")
+            val lastServer = runCatchingSuspend { authRepository.lastServer() }.getOrDefault("")
+            val lastUser = runCatchingSuspend { authRepository.lastUsername() }.getOrDefault("")
             _state.update { current ->
                 // 只读空字段：DataStore 读取慢于遥控器输入时，不能覆盖用户已经敲下的内容
                 current.copy(

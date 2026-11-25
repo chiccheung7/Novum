@@ -45,6 +45,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil3.SingletonImageLoader
 import coil3.request.ImageRequest
 import com.novum.tv.core.designsystem.R
+import com.novum.tv.core.result.runCatchingSuspend
 import com.novum.tv.core.state.ExitConfirmGate
 import com.novum.tv.core.state.UiState
 import com.novum.tv.model.HOME_ROW_RESUME
@@ -148,7 +149,7 @@ fun HomeScreen(
                 if (total > BACK_TO_TOP_INSTANT_THRESHOLD) {
                     listState.scrollToItem(BACK_TO_TOP_INSTANT_TARGET)
                 }
-                runCatching { listState.animateScrollToItem(0) }
+                runCatchingSuspend { listState.animateScrollToItem(0) }
                 repeat(FOCUS_REQUEST_FRAMES) {
                     if (runCatching { firstFocus.requestFocus() }.isSuccess) return@launch
                     withFrameNanos { }
@@ -377,7 +378,7 @@ fun HomeContent(
                         .onFocusChanged { state ->
                             if (state.hasFocus) {
                                 topBarScope.launch {
-                                    runCatching { listState.animateScrollToItem(0) }
+                                    runCatchingSuspend { listState.animateScrollToItem(0) }
                                 }
                             }
                         },

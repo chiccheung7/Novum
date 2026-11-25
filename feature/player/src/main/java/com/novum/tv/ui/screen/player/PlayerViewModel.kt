@@ -10,6 +10,7 @@ import com.novum.tv.core.data.di.ApplicationScope
 import com.novum.tv.core.designsystem.R
 import com.novum.tv.core.log.NovumLogger
 import com.novum.tv.core.result.NovumResult
+import com.novum.tv.core.result.runCatchingSuspend
 import com.novum.tv.core.state.UiState
 import com.novum.tv.data.repository.DanmuRepository
 import com.novum.tv.data.repository.ItemPlaybackPrefsStore
@@ -191,7 +192,7 @@ class PlayerViewModel @Inject constructor(
         _state.update { it.copy(playbackSpeed = speed) }
         viewModelScope.launch {
             // 原静默吞错——写失败不阻塞播放，但必须留痕
-            runCatching {
+            runCatchingSuspend {
                 settings.update { it.copy(playbackSpeed = speed) }
             }.onFailure { logger.w(TAG, "倍速偏好写入失败", it) }
         }
@@ -205,7 +206,7 @@ class PlayerViewModel @Inject constructor(
         val coerced = level.coerceIn(1, 4)
         _state.update { it.copy(subtitleSize = coerced) }
         viewModelScope.launch {
-            runCatching {
+            runCatchingSuspend {
                 settings.update { it.copy(subtitleSize = coerced) }
             }.onFailure { logger.w(TAG, "字幕字号偏好写入失败", it) }
         }
@@ -219,7 +220,7 @@ class PlayerViewModel @Inject constructor(
         val coerced = level.coerceIn(0, 4)
         _state.update { it.copy(subtitleOffsetLevel = coerced) }
         viewModelScope.launch {
-            runCatching {
+            runCatchingSuspend {
                 settings.update { it.copy(subtitleOffsetLevel = coerced) }
             }.onFailure { logger.w(TAG, "字幕高度偏好写入失败", it) }
         }
@@ -241,7 +242,7 @@ class PlayerViewModel @Inject constructor(
     ) {
         val ref = ItemPlaybackPrefsStore.TrackRef(label = label, language = language, rawLabel = rawLabel, channels = channels)
         viewModelScope.launch {
-            runCatching {
+            runCatchingSuspend {
                 playbackPrefs.update(
                     itemId = itemId,
                     subtitleTrack = if (isText && !disabled) ref else null,
@@ -333,7 +334,7 @@ class PlayerViewModel @Inject constructor(
             _state.update { it.copy(danmu = it.danmu.copy(load = DanmuLoad.Idle)) }
         }
         viewModelScope.launch {
-            runCatching { settings.update { it.copy(danmuEnabled = enabled) } }
+            runCatchingSuspend { settings.update { it.copy(danmuEnabled = enabled) } }
                 .onFailure { logger.w(TAG, "弹幕开关写入失败", it) }
         }
         if (enabled && _state.value.danmu.load == DanmuLoad.Idle) {
@@ -348,7 +349,7 @@ class PlayerViewModel @Inject constructor(
         val next = transform(_state.value.danmu.config)
         _state.update { it.copy(danmu = it.danmu.copy(config = next)) }
         viewModelScope.launch {
-            runCatching {
+            runCatchingSuspend {
                 settings.update { s ->
                     s.copy(
                         danmuOpacity = next.opacity,
@@ -379,7 +380,7 @@ class PlayerViewModel @Inject constructor(
         val next = (_state.value.danmu.offsetMs + deltaMs).coerceIn(-DANMU_OFFSET_LIMIT_MS, DANMU_OFFSET_LIMIT_MS)
         _state.update { it.copy(danmu = it.danmu.copy(offsetMs = next)) }
         viewModelScope.launch {
-            runCatching { playbackPrefs.update(itemId = itemId, danmuOffsetMs = next) }
+            runCatchingSuspend { playbackPrefs.update(itemId = itemId, danmuOffsetMs = next) }
                 .onFailure { logger.w(TAG, "弹幕偏移写入失败", it) }
         }
     }
@@ -388,7 +389,7 @@ class PlayerViewModel @Inject constructor(
     fun resetDanmuOffset() {
         _state.update { it.copy(danmu = it.danmu.copy(offsetMs = 0L)) }
         viewModelScope.launch {
-            runCatching { playbackPrefs.update(itemId = itemId, danmuOffsetMs = 0L) }
+            runCatchingSuspend { playbackPrefs.update(itemId = itemId, danmuOffsetMs = 0L) }
                 .onFailure { logger.w(TAG, "弹幕偏移写入失败", it) }
         }
     }
@@ -440,7 +441,7 @@ class PlayerViewModel @Inject constructor(
     fun selectDanmuEpisode(episode: DanmuEpisode) {
         danmuEpisodeId = episode.episodeId
         viewModelScope.launch {
-            runCatching { playbackPrefs.update(itemId = itemId, danmuEpisodeId = episode.episodeId) }
+            runCatchingSuspend { playbackPrefs.update(itemId = itemId, danmuEpisodeId = episode.episodeId) }
                 .onFailure { logger.w(TAG, "弹幕分集记忆写入失败", it) }
         }
         _state.update { it.copy(danmu = it.danmu.copy(search = DanmuSearch.Idle)) }
@@ -457,7 +458,7 @@ class PlayerViewModel @Inject constructor(
     fun useDanmuAutoMatch() {
         danmuEpisodeId = null
         viewModelScope.launch {
-            runCatching { playbackPrefs.update(itemId = itemId, clearDanmuEpisodeId = true) }
+            runCatchingSuspend { playbackPrefs.update(itemId = itemId, clearDanmuEpisodeId = true) }
                 .onFailure { logger.w(TAG, "弹幕分集记忆清除失败", it) }
         }
         _state.update { it.copy(danmu = it.danmu.copy(search = DanmuSearch.Idle)) }
@@ -482,13 +483,13 @@ class PlayerViewModel @Inject constructor(
             val detail = (media.detail(itemId) as? NovumResult.Success)?.value
             val resumeMs = detail?.resumePositionMs ?: 0L
             val title = detail?.title.orEmpty()
-            val snapshot = runCatching { settings.settings.first() }.getOrNull()
+            val snapshot = runCatchingSuspend { settings.settings.first() }.getOrNull()
             val subtitlesEnabled = snapshot?.subtitleEnabledByDefault ?: true
             val subtitleSize = snapshot?.subtitleSize ?: 2
             val subtitleOffsetLevel = snapshot?.subtitleOffsetLevel ?: 0
             // 条目级手动记忆：上次手动选过的版本/字幕/音轨
             // 优先于语言偏好与画质策略；读取失败静默（记忆只是增强，不阻塞播放）
-            val remembered = runCatching { playbackPrefs.get(itemId) }.getOrNull()
+            val remembered = runCatchingSuspend { playbackPrefs.get(itemId) }.getOrNull()
             // 从头看且开启片头跳过时，直接起播在片头之后；续播位置优先，避免覆盖用户进度
             val startMs = startOverrideMs
                 ?: routeStartMs
@@ -595,7 +596,7 @@ class PlayerViewModel @Inject constructor(
     fun setAudioPassthrough(enabled: Boolean, resumeAtMs: Long) {
         viewModelScope.launch {
             // 写失败不阻塞重载（设置落盘异常不应让页面崩掉），但要留痕
-            runCatching { settings.update { it.copy(audioPassthrough = enabled) } }
+            runCatchingSuspend { settings.update { it.copy(audioPassthrough = enabled) } }
                 .onFailure { logger.w(TAG, "音频直通设置写入失败", it) }
             load(startOverrideMs = resumeAtMs)
         }
