@@ -27,7 +27,8 @@ android {
         minSdk = 24
         targetSdk = 37
         versionCode = 3
-        versionName = "0.2.1"
+        // 与 :core:network 的 BuildConfig.VERSION_NAME 同源（gradle/libs.versions.toml 的 novum）
+        versionName = libs.versions.novum.get()
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }

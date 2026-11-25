@@ -66,11 +66,27 @@ private fun overrideTrackByRef(
     return true
 }
 
-/** 记忆命中判定：标题相等为主（跨会话稳定锚），语言码做次级校验。 */
-private fun trackMatchesRef(
+/**
+ * 记忆命中判定：容器原始标题（[ItemPlaybackPrefsStore.TrackRef.rawLabel]）相等为主，
+ * 语言码与声道数做次级校验。
+ *
+ * 新记录比对 `Format.label`（容器没给标题时两边都是空串，改由语言/声道定位）——
+ * 内嵌音/字幕轨通常没有 Format.label，旧实现拿「展示名 == Format.label」比对，
+ * 这类轨的记忆永远恢复不了；旧记录（无 rawLabel）仍按展示名比对，行为与此前一致。
+ */
+internal fun trackMatchesRef(
     format: Format,
     ref: ItemPlaybackPrefsStore.TrackRef,
-): Boolean = format.label == ref.label && (ref.language == null || format.language == ref.language)
+): Boolean {
+    val labelMatches = if (ref.rawLabel != null) {
+        format.label.orEmpty() == ref.rawLabel
+    } else {
+        format.label == ref.label
+    }
+    val languageMatches = ref.language == null || format.language == ref.language
+    val channelsMatch = ref.channels == null || format.channelCount == ref.channels
+    return labelMatches && languageMatches && channelsMatch
+}
 
 /**
  * 中英双语（zhdual）字幕钉选：语言码层面无 ISO 对应，ExoPlayer 原生

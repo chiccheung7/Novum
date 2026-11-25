@@ -60,6 +60,15 @@ class DisplayModeSwitcherTest {
     }
 
     @Test
+    fun `只有最新一代会话才允许还原`() {
+        assertTrue(isLatestSession(sessionGeneration = 2, latestGeneration = 2))
+        assertFalse(
+            "旧页离场晚于新页起播：代际落后必须放弃还原，不能打回新页刚切好的模式",
+            isLatestSession(sessionGeneration = 1, latestGeneration = 2),
+        )
+    }
+
+    @Test
     fun `窗口挂着默认偏好时不回落`() {
         // 偏好 == 原始默认（从未切换过）：无泄漏可言
         assertFalse(

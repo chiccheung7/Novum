@@ -93,6 +93,26 @@ class PlayerViewModelPlanReloadTest {
     }
 
     @Test
+    fun `换线与强转码重取计划沿用选定的版本`() = runTest {
+        val playback = RecordingPlaybackRepository(
+            plan = plan(lineBaseUrl = "http://line-a:8096"),
+        )
+        val viewModel = viewModel(playback, FakeSettingsRepository(), mediaSourceId = "src-4k")
+        advanceUntilIdle()
+        assertEquals("起播按路由指定版本", "src-4k", playback.calls.single().mediaSourceId)
+
+        playback.calls.clear()
+        viewModel.retryNextLine(positionMs = 1_000)
+        advanceUntilIdle()
+        assertEquals("换线只换域名，不得丢版本", "src-4k", playback.calls.single().mediaSourceId)
+
+        playback.calls.clear()
+        viewModel.retryWithTranscode(positionMs = 2_000)
+        advanceUntilIdle()
+        assertEquals("强转码是对同一版本转码，不得丢版本", "src-4k", playback.calls.single().mediaSourceId)
+    }
+
+    @Test
     fun `重取计划不会把倍速回写成快照里的旧档`() = runTest {
         // 设置快照停在 1.0（模拟「刚改的倍速还没落盘」）：重取计划时若照抄快照，
         // 用户在播放页调的 1.5x 会被打回 1.0，播放器按旧速度重建
@@ -115,6 +135,7 @@ class PlayerViewModelPlanReloadTest {
     private fun viewModel(
         playback: PlaybackRepository,
         settings: SettingsRepository,
+        mediaSourceId: String? = null,
     ) = PlayerViewModel(
         playback = playback,
         media = EmptyMediaRepository,
@@ -132,7 +153,12 @@ class PlayerViewModelPlanReloadTest {
         // 收尾上报用的是进程级作用域：测试里用 Unconfined 让它内联执行，避免用例
         // 跑完后还有游离协程越过用例边界
         appScope = CoroutineScope(Dispatchers.Unconfined),
-        savedStateHandle = SavedStateHandle(mapOf("itemId" to ITEM_ID)),
+        savedStateHandle = SavedStateHandle(
+            buildMap {
+                put("itemId", ITEM_ID)
+                mediaSourceId?.let { put("mediaSourceId", it) }
+            },
+        ),
     )
 
     /** 记录每次 plan 调用的参数。 */
@@ -140,6 +166,7 @@ class PlayerViewModelPlanReloadTest {
         val itemId: String,
         val startPositionMs: Long,
         val excludeLine: String?,
+        val mediaSourceId: String?,
     )
 
     private class RecordingPlaybackRepository(
@@ -155,7 +182,7 @@ class PlayerViewModelPlanReloadTest {
             excludeLine: String?,
             mediaSourceId: String?,
         ): NovumResult<PlaybackPlan> {
-            calls += PlanCall(itemId, startPositionMs, excludeLine)
+            calls += PlanCall(itemId, startPositionMs, excludeLine, mediaSourceId)
             return NovumResult.Success(plan)
         }
 

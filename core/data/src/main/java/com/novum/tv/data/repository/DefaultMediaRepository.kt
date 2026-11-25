@@ -89,16 +89,27 @@ class DefaultMediaRepository @Inject constructor(
         if (server.isBlank() || userId.isBlank()) {
             return@withContext failureOf(NovumError.Unauthorized())
         }
-        // 搜索走本地目录：Emby 的 SearchTerm 对中文只认从头匹配/整词，
+        // 搜索走本地目录：Emby 的 SearchTerm 对中文只认整词/从头匹配，
         // 「大明」搜不到「大明王朝1566」（数字片段反而能中）。目录已在
         // SearchCatalogStore 里按页拉全，这里只做 contains + 相关度排序。
+        //
+        // 本地未命中（目录被截断/条目类型不在目录里/目录拉取失败）时回落
+        // 服务端：它的整词与数字命中仍能兜住「信号」这类完整标题。
         if (searchTerm != null) {
-            return@withContext searchInCatalog(
-                query = searchTerm,
-                startIndex = startIndex,
-                limit = limit,
-                includeItemTypes = includeItemTypes,
-            )
+            val local = runCatching {
+                searchInCatalog(
+                    query = searchTerm,
+                    startIndex = startIndex,
+                    limit = limit,
+                    includeItemTypes = includeItemTypes,
+                )
+            }.getOrNull()
+            if (local is NovumResult.Success &&
+                (local.value.items.isNotEmpty() || local.value.total > 0 || startIndex > 0)
+            ) {
+                return@withContext local
+            }
+            logger.w(TAG, "搜索目录未命中「$searchTerm」，回落服务端 SearchTerm")
         }
         safeCall {
             val response = clients.api(server).items(
@@ -109,6 +120,7 @@ class DefaultMediaRepository @Inject constructor(
                 sortBy = sortBy,
                 sortOrder = if (ascending) "Ascending" else "Descending",
                 filters = filters,
+                searchTerm = searchTerm,
                 includeItemTypes = includeItemTypes,
                 fields = EmbyApi.DEFAULT_FIELDS,
             )
@@ -206,12 +218,14 @@ class DefaultMediaRepository @Inject constructor(
     /**
      * 人物搜索：三路来源合并，按相关度排序。
      *
-     * 1. 服务端 `/Persons` 端点（权威口径，但部分自建/托管网关不转发该路由，
-     *    直接 404/403，此时静默降级）；
+     * 1. 服务端 `/Persons` 端点——**只认 `Type == Person` 的结果**：实测部分
+     *    网关会把这个路由接到普通条目搜索上，不过滤的话人物区会摆一排电影
+     *    海报当"人物"；
      * 2. **条目搜索结果的 `People[]`**：走全站都在用的 `/Users/{uid}/Items`，
      *    把命中条目的演职员按姓名过滤、按出现次数排序——这条路一定能通，
      *    是"搜演员名搜不到人"的兜底；
-     * 3. 本地人物索引（已浏览过的演职员，离线/断网时仍可命中）。
+     * 3. 本地人物索引——搜索目录建好时会把**全库演职员**并入（见
+     *    [SearchCatalogStore]），这是最稳的一路。
      *
      * @param query 关键词（按姓名匹配）。
      * @param limit 返回条数上限。
@@ -228,7 +242,16 @@ class DefaultMediaRepository @Inject constructor(
                 clients.api(server)
                     .persons(userId = userId, searchTerm = keyword, limit = limit)
                     .Items
-                    .mapNotNull { dto -> dto.toPersonRef(server) }
+                    // 有的网关把 /Persons 路由到了普通条目搜索：按 Type 过滤，
+                    // 只有确凿是 Person 的才采纳（缺 Type 的按惯例视为人物）
+                    .mapNotNull { dto ->
+                        val type = dto.Type?.trim()
+                        if (type != null && !type.equals("Person", ignoreCase = true)) {
+                            null
+                        } else {
+                            dto.toPersonRef(server)
+                        }
+                    }
             }.onFailure {
                 logger.w(TAG, "守卫：/Persons 不可用，改用条目 People 兜底：$keyword", it)
             }.getOrDefault(emptyList())
@@ -239,6 +262,7 @@ class DefaultMediaRepository @Inject constructor(
 
             val local = runCatching { personIndex.search(keyword, limit) }.getOrDefault(emptyList())
 
+            logger.w(TAG, "人物搜索「$keyword」：远端 ${remote.size} / 条目兜底 ${derived.size} / 本地索引 ${local.size}")
             mergePersonHits(keyword = keyword, limit = limit, remote, derived, local)
         }
 
@@ -356,7 +380,8 @@ class DefaultMediaRepository @Inject constructor(
                     // 服务端偶尔把同一集下发两次（多版本/虚拟集）：不去重会让
                     // 选集列表出现重复 key（LazyRow 直接崩溃），也会让集号跳号
                     .distinctBy { it.id }
-                    .sortedBy { it.index }
+                    // 全季口径（seasonId = null）时先按季再按集：只按集号会把各季同号集交错
+                    .sortedWith(compareBy({ it.seasonIndex }, { it.index }))
             }
         }
 

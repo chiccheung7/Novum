@@ -325,6 +325,8 @@ internal fun PlayerStage(
                             selected = group.isTrackSelected(trackIndex),
                             // 条目记忆按「标题+语言」定位轨道，构造选项时带上
                             language = format.language,
+                            rawLabel = format.label.orEmpty(),
+                            channels = if (type == C.TRACK_TYPE_AUDIO) format.channelCount.takeIf { it > 0 } else null,
                             // 音轨带编码标注（音轨 tab 行尾展示），字幕轨不带
                             codec = if (type == C.TRACK_TYPE_AUDIO) audioCodecLabel(format) else null,
                         )

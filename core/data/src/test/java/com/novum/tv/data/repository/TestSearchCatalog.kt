@@ -14,10 +14,16 @@ internal fun testSearchCatalog(
     clients: EmbyApiProvider,
     holder: SessionHolder,
     dispatchers: DispatcherProvider,
+    personIndex: PersonIndexStore = PersonIndexStore(
+        // 独立临时文件：目录会往人物索引并入全库 People，不能与仓储
+        // 自己的索引共用同一个文件（会互相覆盖）
+        kotlin.io.path.createTempFile("catalog_person_index").toFile(),
+    ),
 ): SearchCatalogStore = SearchCatalogStore(
     clients = clients,
     sessionHolder = holder,
     strings = FakeMediaStrings,
     dispatchers = dispatchers,
     logger = NoopNovumLogger,
+    personIndex = personIndex,
 )

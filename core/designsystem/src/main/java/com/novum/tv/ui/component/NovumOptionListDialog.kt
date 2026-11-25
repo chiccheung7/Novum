@@ -109,12 +109,15 @@ fun NovumOptionListDialog(
                         vertical = NovumDimens.OverlayPaddingVertical,
                     ),
                 )
+                // selectedIndex 为 null / 越界（持久化值不在选项里）时不高亮任何行，
+                // 但初始焦点仍要落到首行——否则没有任何行持有索取器，遥控器按 OK 无处可去
+                val focusIndex = selectedIndex?.takeIf { it in options.indices } ?: 0
                 options.forEachIndexed { index, option ->
                     NovumOptionRow(
                         text = option,
                         selected = index == selectedIndex,
                         onClick = { onSelect(index) },
-                        focusRequester = currentRowFocus.takeIf { index == selectedIndex },
+                        focusRequester = currentRowFocus.takeIf { index == focusIndex },
                         modifier = Modifier.padding(horizontal = 8.dp),
                     )
                 }

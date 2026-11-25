@@ -79,6 +79,24 @@ class GridViewModelTest {
     }
 
     @Test
+    fun nameSortStartsAscendingOnFirstClick() = runTest {
+        val repository = FakeGridRepository(total = 0)
+        val viewModel = GridViewModel(repository)
+        viewModel.start(GridSource.Library(libraryId = "lib-1"))
+        advanceUntilIdle()
+
+        // 片名档首点按 A→Z（SortOption.ascending = true）；此前恒降序会按 Z→A 排
+        viewModel.setSortOption(SortOption.Name)
+        advanceUntilIdle()
+        assertEquals("片名应传 SortName", "SortName", repository.calls.last().sortBy)
+        assertEquals("片名首点应升序", true, repository.calls.last().ascending)
+
+        viewModel.setSortOption(SortOption.Name)
+        advanceUntilIdle()
+        assertEquals("同档再点翻降序", false, repository.calls.last().ascending)
+    }
+
+    @Test
     fun loadMoreAccumulatesUntilSortResets() = runTest {
         val repository = FakeGridRepository(total = 90, pageSize = 60)
         val viewModel = GridViewModel(repository)

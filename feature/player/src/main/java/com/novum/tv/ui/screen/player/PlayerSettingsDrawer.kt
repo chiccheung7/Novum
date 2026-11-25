@@ -115,6 +115,10 @@ internal data class TrackOption(
     val language: String? = null,
     /** 音轨编码展示名（如「AC-3」「TrueHD」）；字幕轨为 null。 */
     val codec: String? = null,
+    /** 容器原始 Format.label（空串 = 容器没给标题）；条目记忆按它定位轨道。 */
+    val rawLabel: String = "",
+    /** 音轨声道数（>0 时用于记忆定位同语言的多条轨）；未知/字幕为 null。 */
+    val channels: Int? = null,
 )
 
 /**
@@ -631,8 +635,10 @@ private fun SubtitleTab(
         label = stringResource(R.string.player_drawer_subtitle_delay),
         value = formatDelay(subtitleDelayMs),
         selected = subtitleDelayMs != 0L,
-        onClick = { onSubtitleDelayChanged(if (subtitleDelayMs >= 2_000L) -2_000L else subtitleDelayMs + 100L) },
-        onStep = { dir -> onSubtitleDelayChanged((subtitleDelayMs + dir * 100L).coerceIn(-2_000L, 2_000L)) },
+        // 字幕延迟只能「推后」：ExoPlayer 按时间送达 cue，提前显示拿不到未来的 cue，
+        // 负值在 CueDelayScheduler 里等价于 0——档位下限钳在 0，不给用户一个无效旋钮
+        onClick = { onSubtitleDelayChanged(if (subtitleDelayMs >= 2_000L) 0L else subtitleDelayMs + 100L) },
+        onStep = { dir -> onSubtitleDelayChanged((subtitleDelayMs + dir * 100L).coerceIn(0L, 2_000L)) },
         onAdjustFocus = onAdjustFocus,
         enabled = hasTracks,
     )

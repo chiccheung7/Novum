@@ -136,7 +136,8 @@ class GridViewModel @Inject constructor(
 
     /**
      * 切换排序并重新加载第一页，媒体库、收藏和搜索均响应。
-     * 首次选择排序档恒为降序，再次点按同档时翻转方向。
+     * 首次选择排序档按该档的默认方向（[SortOption.ascending]：片名升序、年份/评分降序），
+     * 再次点按同档时翻转方向。
      *
      * @param option 目标排序。
      */
@@ -145,9 +146,10 @@ class GridViewModel @Inject constructor(
             // 同档再点（用户已主动排过序）：翻转升降
             _sortDescending.value = !_sortDescending.value
         } else {
-            // 换档首点，或首次点当前默认档：恒降序
+            // 换档首点，或首次点当前默认档：用该档默认方向——此前恒降序让「片名」
+            // 首点按 Z→A 排，而 SortOption.ascending 字段从未被消费
             _sortOption.value = option
-            _sortDescending.value = true
+            _sortDescending.value = !option.ascending
         }
         userSorted = true
         when (val current = source) {

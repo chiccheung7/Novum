@@ -84,6 +84,21 @@ class DefaultMediaRepositoryPersonTest {
     }
 
     /** 同一人出现在多个来源时按 id 去重，并保留带头像的那条。 */
+    /**
+     * 回归：部分网关把 `/Persons` 接到普通条目搜索上，返回的是**条目**。
+     *
+     * 人物区因此摆出过一排电影海报（实测）。只有 `Type == Person`（或缺省）
+     * 的结果才允许进人物区。
+     */
+    @Test
+    fun personsEndpointItemsAreFilteredByType() = runTest(dispatcher) {
+        val repository = repository(ItemsAsPersonsApi())
+
+        val hits = repository.searchPersons("信号")
+
+        assertEquals(listOf("真人演员"), hits.map { it.name })
+    }
+
     @Test
     fun mergesDuplicatePersonFromDifferentSources() = runTest(dispatcher) {
         val repository = repository(DuplicateApi())
@@ -140,7 +155,8 @@ private class PersonsApi : EmbyApiStub() {
             PersonDto(
                 Id = "p1",
                 Name = "张若昀",
-                Type = "Actor",
+                // /Persons 端点返回的条目 Type 是 Person（People[] 里才是 Actor 等职位）
+                Type = "Person",
                 ImageTags = mapOf("Primary" to "tag-1"),
             ),
         ),
@@ -251,5 +267,22 @@ private class DuplicateApi : EmbyApiStub() {
             ),
         ),
         TotalRecordCount = 1,
+    )
+}
+
+/** `/Persons` 返回的其实是条目（Type != Person）：必须被过滤掉。 */
+private class ItemsAsPersonsApi : EmbyApiStub() {
+    override suspend fun persons(
+        userId: String?,
+        searchTerm: String?,
+        limit: Int,
+        fields: String,
+    ): QueryResultDto<PersonDto> = QueryResultDto(
+        Items = listOf(
+            PersonDto(Id = "movie-1", Name = "信号", Type = "Series"),
+            PersonDto(Id = "movie-2", Name = "信號", Type = "Movie"),
+            PersonDto(Id = "person-1", Name = "真人演员"),
+        ),
+        TotalRecordCount = 3,
     )
 }

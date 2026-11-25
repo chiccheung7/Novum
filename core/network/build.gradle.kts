@@ -11,9 +11,9 @@ android {
 
     defaultConfig {
         minSdk = 24
-        // 库模块没有 versionName 字段，显式注入；值必须与 :app 的 versionName 一致，
-        // 它会写进 X-Emby-Authorization 的 Version 字段，少数网关会校验。
-        buildConfigField("String", "VERSION_NAME", "\"0.1.0\"")
+        // 库模块没有 versionName 字段，显式注入；与 :app 的 versionName 同源
+        // （gradle/libs.versions.toml 的 novum）：它写进 X-Emby-Authorization 的 Version 字段，少数网关会校验。
+        buildConfigField("String", "VERSION_NAME", "\"${libs.versions.novum.get()}\"")
     }
 
     buildFeatures {

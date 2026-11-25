@@ -141,6 +141,13 @@ class PlayerViewModel @Inject constructor(
     /** 当前计划的资源文件名（弹幕自动匹配锚点）。 */
     private var planFileName: String? = null
 
+    /**
+     * 本次播放生效的版本（路由显式 > 条目记忆）。换线/强转码重取计划时必须沿用：
+     * 不传的话服务端会按默认/策略重新挑版本，用户在详情页选的「4K HDR」会在
+     * 兜底重试时悄悄换成别的版本。
+     */
+    private var requestedMediaSourceId: String? = null
+
     /** 手动选定/记忆的弹幕分集（null = 自动匹配）。 */
     private var danmuEpisodeId: String? = null
 
@@ -224,17 +231,21 @@ class PlayerViewModel @Inject constructor(
      * 只记改动的那类轨道（字幕/音轨互不覆盖）；「关闭字幕」记 disabled 位
      * 再选具体轨时自动清位。合并写由 [ItemPlaybackPrefsStore.update] 保证。
      */
-    fun rememberManualTrack(isText: Boolean, label: String, language: String?, disabled: Boolean = false) {
+    fun rememberManualTrack(
+        isText: Boolean,
+        label: String,
+        language: String?,
+        disabled: Boolean = false,
+        rawLabel: String? = null,
+        channels: Int? = null,
+    ) {
+        val ref = ItemPlaybackPrefsStore.TrackRef(label = label, language = language, rawLabel = rawLabel, channels = channels)
         viewModelScope.launch {
             runCatching {
                 playbackPrefs.update(
                     itemId = itemId,
-                    subtitleTrack = if (isText && !disabled) {
-                        ItemPlaybackPrefsStore.TrackRef(label, language)
-                    } else {
-                        null
-                    },
-                    audioTrack = if (!isText) ItemPlaybackPrefsStore.TrackRef(label, language) else null,
+                    subtitleTrack = if (isText && !disabled) ref else null,
+                    audioTrack = if (!isText) ref else null,
                     subtitleDisabled = if (isText) disabled else null,
                     // 关闭字幕时把旧的手动轨一并清掉，下次开启回到语言偏好默认轨
                     clearSubtitleTrack = isText && disabled,
@@ -489,12 +500,14 @@ class PlayerViewModel @Inject constructor(
             // 倍速只在首次取计划时采纳设置快照；重取计划沿用内存当前档（见 speedAdopted）
             val speed = if (speedAdopted) _state.value.playbackSpeed else snapshot?.playbackSpeed ?: 1f
 
+            // 路由显式版本 > 条目记忆的版本 > 画质策略（null = 交给服务端按策略挑）
+            val versionId = routeMediaSourceId ?: remembered?.mediaSourceId
+            requestedMediaSourceId = versionId
             when (
                 val result = playback.plan(
                     itemId = itemId,
                     startPositionMs = startMs,
-                    // 条目记忆的版本 > 路由显式版本 > 画质策略
-                    mediaSourceId = routeMediaSourceId ?: remembered?.mediaSourceId,
+                    mediaSourceId = versionId,
                 )
             ) {
                 is NovumResult.Success -> {
@@ -581,7 +594,9 @@ class PlayerViewModel @Inject constructor(
      */
     fun setAudioPassthrough(enabled: Boolean, resumeAtMs: Long) {
         viewModelScope.launch {
-            settings.update { it.copy(audioPassthrough = enabled) }
+            // 写失败不阻塞重载（设置落盘异常不应让页面崩掉），但要留痕
+            runCatching { settings.update { it.copy(audioPassthrough = enabled) } }
+                .onFailure { logger.w(TAG, "音频直通设置写入失败", it) }
             load(startOverrideMs = resumeAtMs)
         }
     }
@@ -595,7 +610,14 @@ class PlayerViewModel @Inject constructor(
         val currentLine = (_state.value.plan as? UiState.Success)?.data?.lineBaseUrl
         replan {
             _state.update { it.copy(plan = UiState.Loading) }
-            when (val result = playback.plan(itemId, positionMs, excludeLine = currentLine)) {
+            when (val result = playback.plan(
+                    itemId,
+                    positionMs,
+                    excludeLine = currentLine,
+                    // 换线只换域名，不换版本：否则重试时悄悄回到默认版本
+                    mediaSourceId = requestedMediaSourceId,
+                )
+            ) {
                 is NovumResult.Success -> {
                     method = result.value.method
                     playSessionId = result.value.playSessionId
@@ -632,7 +654,14 @@ class PlayerViewModel @Inject constructor(
      */
     fun retryWithTranscode(positionMs: Long) {
         replan {
-            when (val result = playback.plan(itemId, positionMs, forceTranscode = true)) {
+            when (val result = playback.plan(
+                    itemId,
+                    positionMs,
+                    forceTranscode = true,
+                    // 用户选定的版本必须沿用：强转码是对**同一个版本**转码
+                    mediaSourceId = requestedMediaSourceId,
+                )
+            ) {
                 is NovumResult.Success -> {
                     method = result.value.method
                     playSessionId = result.value.playSessionId

@@ -110,10 +110,11 @@ class DefaultPlaybackRepository @Inject constructor(
                     val unsupported = if (forceTranscode) null else source.unsupportedReasonForLog(capability.capabilities)
                     if (unsupported != null) {
                         logger.w(TAG, "片源超出设备能力（$unsupported），改请求服务端转码", null)
-                        // 失败回写：记录失败的编码到设置，协商时排除
-                        val videoCodec = source.MediaStreams
-                            .firstOrNull { it.Type == "Video" }?.Codec?.lowercase().orEmpty()
-                        if (videoCodec.isNotBlank()) {
+                        // 失败回写只针对「编码缺硬解」：Dolby Vision 是刻意转码保色彩，
+                        // 它的 hevc 容器层编码并没有失败——若也写进 failedVideoCodecs，
+                        // 之后所有 HEVC 片源都会被排除直连、一律转码
+                        val videoCodec = source.unsupportedVideoCodec(capability.capabilities)
+                        if (videoCodec != null) {
                             settings.update { s ->
                                 val existing = s.failedVideoCodecs.split(",").filter { it.isNotBlank() }.toMutableSet()
                                 existing += videoCodec
@@ -216,7 +217,8 @@ class DefaultPlaybackRepository @Inject constructor(
                     val vr = video?.VideoRange.orEmpty()
                     when (strategy.lowercase()) {
                         "dolby" -> vrt.startsWith("DOVI", true) || vrt.contains("Dolby", true)
-                        "hdr" -> vrt.contains("HDR", true) || vr.contains("HDR", true)
+                        "hdr" -> vrt.contains("HDR", true) || vrt.contains("HLG", true) ||
+                            vr.contains("HDR", true)
                         else -> vrt.contains("SDR", true) || vr.contains("SDR", true)
                     }
                 }
@@ -368,6 +370,8 @@ class DefaultPlaybackRepository @Inject constructor(
 
         val primary = directPath ?: transcodePath
         val primaryMethod = when {
+            // 直连/转码地址都没有：实际回落的是静态流（DirectPlay），不能上报 Transcode
+            primary == null -> PlayMethod.DirectPlay
             source.SupportsDirectPlay && directPath != null -> PlayMethod.DirectPlay
             directPath != null -> PlayMethod.DirectStream
             else -> PlayMethod.Transcode
@@ -405,16 +409,32 @@ class DefaultPlaybackRepository @Inject constructor(
  */
 private fun MediaSourceDto.unsupportedReasonForLog(capabilities: DeviceCapabilities): String? {
     val video = MediaStreams.firstOrNull { it.Type == "Video" } ?: return null
-    val range = video.VideoRangeType.orEmpty()
-    val isDolbyVision = range.contains("DOVI", ignoreCase = true) ||
-        video.VideoRange?.contains("Dolby", ignoreCase = true) == true
-    // Dolby Vision 统一使用服务端转码，避免普通 HEVC 解码路径错误处理 DV 色彩信息。
-    if (isDolbyVision) {
-        return "Dolby Vision（${range.ifBlank { "DOVI" }}，一律转码保色彩正确）"
+    if (isDolbyVision()) {
+        // Dolby Vision 统一使用服务端转码，避免普通 HEVC 解码路径错误处理 DV 色彩信息。
+        return "Dolby Vision（${video.VideoRangeType.orEmpty().ifBlank { "DOVI" }}，一律转码保色彩正确）"
     }
+    return unsupportedVideoCodec(capabilities)?.let { "缺少 $it 硬件解码" }
+}
+
+/**
+ * 片源视频编码若缺少本机硬件解码，返回该编码（小写）；Dolby Vision、可直连、
+ * 无视频流或编码未知均返回 null。
+ *
+ * 供 [unsupportedReasonForLog] 组织日志文案，也决定是否把编码回写进
+ * `failedVideoCodecs`——只有真正解不了的编码才该被排除直连。
+ */
+internal fun MediaSourceDto.unsupportedVideoCodec(capabilities: DeviceCapabilities): String? {
+    if (isDolbyVision()) return null
+    val video = MediaStreams.firstOrNull { it.Type == "Video" } ?: return null
     val codec = video.Codec?.lowercase()?.takeIf { it.isNotBlank() } ?: return null
-    if (codec !in capabilities.videoCodecs) return "缺少 $codec 硬件解码"
-    return null
+    return codec.takeIf { it !in capabilities.videoCodecs }
+}
+
+/** 视频流是否标记为 Dolby Vision（VideoRangeType 的 DOVI* 或 VideoRange 含 Dolby）。 */
+private fun MediaSourceDto.isDolbyVision(): Boolean {
+    val video = MediaStreams.firstOrNull { it.Type == "Video" } ?: return false
+    return video.VideoRangeType?.contains("DOVI", ignoreCase = true) == true ||
+        video.VideoRange?.contains("Dolby", ignoreCase = true) == true
 }
 
 /**

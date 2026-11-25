@@ -27,7 +27,17 @@ class ItemPlaybackPrefsStore(
 ) {
 
     @Serializable
-    data class TrackRef(val label: String, val language: String? = null)
+    data class TrackRef(
+        val label: String,
+        val language: String? = null,
+        /**
+         * 容器内原始 `Format.label`（空串 = 容器没给标题）；null = 旧版记录（只有展示名）。
+         * 记忆恢复按它比对：展示名可能带「· 5.1」后缀或回退成语言本地名，与 Format.label 对不上。
+         */
+        val rawLabel: String? = null,
+        /** 音轨声道数：区分同语言的「立体声 / 5.1」两条轨；字幕/未知为 null。 */
+        val channels: Int? = null,
+    )
 
     @Serializable
     data class ItemPrefs(

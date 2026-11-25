@@ -22,6 +22,7 @@ import com.novum.tv.data.settings.AppSettings
 import java.io.IOException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
@@ -238,7 +239,9 @@ class DefaultPlaybackRepositoryTest {
             ),
         )
 
-        val plan = (repository(api, capability = noDv).plan("movie-1") as NovumResult.Success).value
+        val settings = FakeSettingsRepository()
+
+        val plan = (repository(api, settings = settings, capability = noDv).plan("movie-1") as NovumResult.Success).value
 
         assertEquals("应发起两次 PlaybackInfo（第二次强制转码）", 2, api.bodies.size)
         assertTrue(
@@ -247,6 +250,61 @@ class DefaultPlaybackRepositoryTest {
         )
         assertEquals(PlayMethod.Transcode, plan.method)
         assertEquals("https://smart.uhdnow.com/videos/dv/master.m3u8?api_key=abc", plan.url)
+        // Dolby Vision 是刻意转码，hevc 本身并没有解不了：不能回写进 failedVideoCodecs，
+        // 否则之后所有 HEVC 片源都会被排除直连
+        assertEquals("DV 转码不得污染失败编码表", "", settings.settings.first().failedVideoCodecs)
+    }
+
+    @Test
+    fun recordsVideoCodecWhenHardwareDecoderIsMissing() = runTest(dispatcher) {
+        val api = object : EmbyApiStub() {
+            val bodies = mutableListOf<PlaybackInfoRequestDto>()
+            override suspend fun playbackInfo(
+                itemId: String,
+                userId: String,
+                body: PlaybackInfoRequestDto,
+            ): PlaybackInfoDto {
+                bodies += body
+                val direct = bodies.size == 1
+                return PlaybackInfoDto(
+                    MediaSources = listOf(
+                        MediaSourceDto(
+                            Id = "src-hevc",
+                            SupportsDirectPlay = direct,
+                            DirectStreamUrl = if (direct) "/play/video/hevc" else null,
+                            TranscodingUrl = "/videos/hevc/master.m3u8?api_key=abc",
+                            MediaStreams = listOf(
+                                MediaStreamDto(Type = "Video", Codec = "hevc", Width = 3840, Height = 2160),
+                            ),
+                        ),
+                    ),
+                )
+            }
+        }
+        val h264Only = FakeCapabilityProvider(DeviceCapabilities(videoCodecs = setOf("h264")))
+        val settings = FakeSettingsRepository()
+
+        val plan = (repository(api, settings = settings, capability = h264Only).plan("movie-1") as NovumResult.Success).value
+
+        assertEquals("缺硬解的编码必须回写，下次协商直接排除", "hevc", settings.settings.first().failedVideoCodecs)
+        assertEquals(PlayMethod.Transcode, plan.method)
+    }
+
+    @Test
+    fun reportsDirectPlayWhenBothServerUrlsAreMissing() = runTest(dispatcher) {
+        // 服务端既没给 DirectStreamUrl 也没给 TranscodingUrl：仓储回落 Emby 标准静态流，
+        // 实际是直连播放——PlayMethod 不能上报成 Transcode（会话统计会失真）
+        val api = StubPlaybackApi(
+            info = PlaybackInfoDto(
+                MediaSources = listOf(MediaSourceDto(Id = "src-bare", Container = "mkv")),
+            ),
+        )
+
+        val plan = (repository(api).plan("movie-1") as NovumResult.Success).value
+
+        assertEquals(PlayMethod.DirectPlay, plan.method)
+        assertTrue("应回落静态流地址", plan.url.endsWith("/Videos/movie-1/stream?Static=true&api_key=token"))
+        assertNull(plan.fallbackUrl)
     }
 
     @Test

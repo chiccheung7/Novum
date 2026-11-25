@@ -35,12 +35,6 @@ internal val SKIP_INTRO_STEPS = listOf(30, 60, 90, 120)
 internal val UI_SCALE_STEPS = listOf(0.85f, 1f, 1.15f, 1.3f, 1.5f)
 
 /**
- * 下一档「界面大小」：按档位表向上循环，越界回到最小档。
- *
- * 用「严格大于当前值」而不是 indexOf：持久化里可能存着历史/手改的中间值
- * （如 1.05），按区间落档才不会卡住不动。
- */
-/**
  * 0.1 步进的百分比档位：0.1 → 0.2 → … → 1.0 → 0.1。
  *
  * @param current 当前值（可能带浮点误差或历史脏值）。
@@ -51,6 +45,12 @@ internal fun nextPercentStep(current: Float): Float {
     return (if (level >= 10) 1 else level + 1) / 10f
 }
 
+/**
+ * 下一档「界面大小」：按档位表向上循环，越界回到最小档。
+ *
+ * 用「严格大于当前值」而不是 indexOf：持久化里可能存着历史/手改的中间值
+ * （如 1.05），按区间落档才不会卡住不动。
+ */
 internal fun nextUiScale(current: Float): Float =
     UI_SCALE_STEPS.firstOrNull { it > current + 0.001f } ?: UI_SCALE_STEPS.first()
 
@@ -211,7 +211,7 @@ class SettingsViewModel @Inject constructor(
     }
 
     /**
-     * 界面大小循环：85% → 100% → 115% → 130% → 85%。
+     * 界面大小循环：85% → 100% → 115% → 130% → 150% → 85%（按 [UI_SCALE_STEPS]）。
      *
      * 视口层订阅同一个设置流，改完立即整屏重算，用户在设置页就能看到效果。
      */

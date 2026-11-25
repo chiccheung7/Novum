@@ -16,7 +16,7 @@ object NovumPalette {
     /** 一级表面 surface.1 #0A0A0A（占位卡片、设置列表、Toast）。 */
     val InkElevated: Color = Color(0xFF0A0A0A)
 
-    /** 浮层面板底：InkElevated@.94，保证亮视频背景上的文字可读。 */
+    /** 浮层面板底（三级表面）#141418，比 [InkElevated] 略亮。 */
     val Surface: Color = Color(0xFF141418)
 
     /** 三级表面 #2A2A2A（菜单/浮层内聚焦底、选中行、进度槽）。 */
@@ -28,14 +28,12 @@ object NovumPalette {
     val PanelOverlay: Color = Color(0xF00A0A0A)
 
     /**
-     * 卡文次行 White@.56，供首页继续观看卡和选集卡的简介使用。
-     * 行一使用 [PaperMuted] 后，次行再降低亮度以拉开层级。
+     * 主文字色 #F5F5F7：标题、卡名、正文与按钮文案。
      */
     val Paper: Color = Color(0xFFF5F5F7)
 
     /**
-     * 高亮强调色 #FFFFFF，用于当前选中或进行中的状态。
-     * 白底聚焦场景反转为 Ink，避免白上加白。
+     * 按压态底 #D9D9D9：白底聚焦的按钮按下时略压暗，文字仍用 [Ink]。
      */
     val PaperPressed: Color = Color(0xFFD9D9D9)
 
@@ -43,8 +41,7 @@ object NovumPalette {
     val PaperMuted: Color = Color(0xCFFFFFFF)
 
     /**
-     * 交互控件常态底：磨砂烟玻璃 #141418@.62，确保亮背景上的白字保持对比。
-     * 聚焦态使用白底与 [Ink]，不使用此色。
+     * 三级文字 White@.66：Hero/详情简介等比 [PaperMuted] 再低一档、但暗底上仍可读的正文。
      */
     val PaperFaint: Color = Color(0xA8FFFFFF)
 
@@ -63,16 +60,16 @@ object NovumPalette {
      */
     val RowSelected: Color = Color(0x1FFFFFFF)
 
-    /** 播放器控件常态底·主档 #141418@.55。 */
+    /** 强调色 #FFFFFF：进度条已播段、输入光标、选中竖条等实底元素。 */
     val Accent: Color = Color(0xFFFFFFFF)
 
     /** 分隔线与非焦点描边 #3A3A3C。 */
     val Border: Color = Color(0xFF3A3A3C)
 
-    /** 控件禁用态底 #141418@.30，比常态更沉。 */
+    /** 交互控件常态底：烟玻璃 #141418@.62（按钮/芯片未聚焦时的底）。 */
     val Glass: Color = Color(0x9E141418)
 
-    /** 深一档磨砂烟玻璃 #141418@.76，用于叠加在海报/视频画面上的信息胶囊与播放器抽屉。 */
+    /** 叠加在视频画面上的控件底·主档 #141418@.55（播放器主按钮/开关）。 */
     val GlassVideo: Color = Color(0x8C141418)
 
     /**
@@ -86,10 +83,10 @@ object NovumPalette {
      */
     val GlassDisabled: Color = Color(0x4D141418)
 
-    /** 危险/错误色 #FF6961。 */
+    /** 深玻璃面板底 #141418@.76：播放器抽屉、信息面板与卡图角标/进度文案。 */
     val GlassDeep: Color = Color(0xC2141418)
 
-    /** 成功/已完成色 #34C759，与 [Danger] 构成语义色。 */
+    /** 遮罩黑 Black@.80：弹层/退出确认框背后的页面压暗。 */
     val Scrim: Color = Color(0xCC000000)
 
     /** 危险/错误色 #FF6961。 */

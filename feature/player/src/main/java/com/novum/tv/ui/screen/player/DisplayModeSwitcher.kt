@@ -26,9 +26,6 @@ internal object DisplayModeSwitcher {
     /** 最新会话的代际；0 = 进程内尚未有过会话。 */
     private var generation = 0
 
-    /** 各会话记下的自己的代际（[endSession] 比对，旧代际放弃还原）。 */
-    private var ownedGeneration = 0
-
     /** 进程首次会话前窗口的系统原始偏好（在任何写操作之前捕获，只记一次）。 */
     private var originalModeId = PREFERRED_DEFAULT
 
@@ -49,16 +46,16 @@ internal object DisplayModeSwitcher {
      * @param sourceWidth 片源宽（px）。
      * @param sourceHeight 片源高（px）。
      * @param sourceFps 片源帧率（候选面积相同取刷新率最近者；null 锚定当前刷新率）。
-     * @return 切到的目标模式；未切（输出已够/无需回落/规格缺失）为 null。
+     * @return 本次会话句柄；离场时交给 [endSession] 判断自己是否仍是最新会话。
      */
     fun beginSession(
         activity: Activity,
         sourceWidth: Int?,
         sourceHeight: Int?,
         sourceFps: Float?,
-    ): ModeCandidate? {
+    ): Session {
         generation++
-        ownedGeneration = generation
+        val session = Session(generation)
         val display = currentDisplay(activity)
         // 基准必须在任何写偏好之前捕获（此时偏好必是系统默认值）
         if (!captured) {
@@ -66,8 +63,8 @@ internal object DisplayModeSwitcher {
             originalModeId = activity.window.attributes.preferredDisplayModeId
             defaultMode = display?.mode?.toCandidate()
         }
-        if (sourceWidth == null || sourceHeight == null || sourceWidth <= 0 || sourceHeight <= 0) return null
-        if (display == null) return null
+        if (sourceWidth == null || sourceHeight == null || sourceWidth <= 0 || sourceHeight <= 0) return session
+        if (display == null) return session
         val current = display.mode
         val window = activity.window
         if (current.physicalWidth >= sourceWidth && current.physicalHeight >= sourceHeight) {
@@ -85,7 +82,7 @@ internal object DisplayModeSwitcher {
                     Log.i(LOG_TAG, "fall back to default preference (source ${sourceWidth}x${sourceHeight})")
                 }
             }
-            return null
+            return session
         }
         val target = matchDisplayMode(
             current = current.toCandidate(),
@@ -93,7 +90,7 @@ internal object DisplayModeSwitcher {
             sourceHeight = sourceHeight,
             sourceFps = sourceFps,
             candidates = display.supportedModes.map { it.toCandidate() },
-        ) ?: return null
+        ) ?: return session
         setPreference(window, target.modeId)
         if (BuildConfig.DEBUG) {
             Log.i(
@@ -103,17 +100,18 @@ internal object DisplayModeSwitcher {
                     "was ${current.physicalWidth}x${current.physicalHeight})",
             )
         }
-        return target
+        return session
     }
 
     /**
      * 结束会话：还原系统默认偏好。
      *
      * 只在「自己是最新一代会话」时生效——换集替换导航期旧页离场晚于新页起播，
-     * 代际落后的还原直接放弃，避免打回新页刚切好的模式。
+     * 代际落后的还原直接放弃，避免打回新页刚切好的模式。句柄为 null（从未起播成功）
+     * 时不碰窗口。
      */
-    fun endSession(activity: Activity) {
-        if (ownedGeneration != generation) return
+    fun endSession(activity: Activity, session: Session?) {
+        if (!isLatestSession(session?.generation ?: return, generation)) return
         setPreference(activity.window, originalModeId)
     }
 
@@ -143,7 +141,17 @@ internal object DisplayModeSwitcher {
     private const val PREFERRED_DEFAULT = 0
 
     private const val LOG_TAG = "NovumDisplayMode"
+
+    /**
+     * 起播会话句柄：换集替换导航时旧播放页离场晚于新页起播，[endSession]
+     * 用它判断「自己是否仍是最新一代会话」——代际落后的还原直接放弃。
+     */
+    internal data class Session(val generation: Int)
 }
+
+/** 旧会话的离场还原是否仍生效：只有最新一代会话才能还原（纯函数，便于单测）。 */
+internal fun isLatestSession(sessionGeneration: Int, latestGeneration: Int): Boolean =
+    sessionGeneration == latestGeneration
 
 /**
  * 显示模式的可测视图：[Display.Mode] 是框架类、无公开构造器，单测无法构造——

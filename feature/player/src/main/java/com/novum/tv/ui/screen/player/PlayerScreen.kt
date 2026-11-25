@@ -215,15 +215,18 @@ fun PlayerScreen(
     // 容纳片源的显示模式（4K 片源不再被 1080p 输出封顶），播放会话离场还原。
     // 本副作用必须排在 prepare 之前——同一黑场期完成切换，首帧即目标模式
     val activity = context as? Activity
+    // 本次会话的显示模式句柄：离场还原只对「最新一代会话」生效——换集替换导航时
+    // 旧页晚于新页起播离场，不能把新页刚切好的模式还原掉（详见 DisplayModeSwitcher）
+    var displaySession by remember { mutableStateOf<DisplayModeSwitcher.Session?>(null) }
     DisposableEffect(activity) {
-        // 还原挂播放页离场；换集替换导航期旧页还原晚于新页起播，由
-        // DisplayModeSwitcher 的代际计数让位（详见其文档）
-        onDispose { activity?.let(DisplayModeSwitcher::endSession) }
+        onDispose {
+            activity?.let { DisplayModeSwitcher.endSession(it, displaySession) }
+        }
     }
     LaunchedEffect(plan, activity) {
         if (plan == null || activity == null) return@LaunchedEffect
         val spec = plan.videoSpec
-        DisplayModeSwitcher.beginSession(activity, spec?.width, spec?.height, spec?.frameRate)
+        displaySession = DisplayModeSwitcher.beginSession(activity, spec?.width, spec?.height, spec?.frameRate)
     }
 
     LaunchedEffect(plan, subtitlesEnabled) {
@@ -299,7 +302,13 @@ fun PlayerScreen(
                         if (option.id == TEXT_OFF_ID) {
                             viewModel.rememberManualTrack(isText = true, label = "", language = null, disabled = true)
                         } else {
-                            viewModel.rememberManualTrack(isText, option.label, option.language)
+                            viewModel.rememberManualTrack(
+                                isText,
+                                option.label,
+                                option.language,
+                                rawLabel = option.rawLabel,
+                                channels = option.channels,
+                            )
                         }
                     },
                     plan = plan,
