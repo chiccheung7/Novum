@@ -46,6 +46,8 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.tv.material3.Text
 import com.novum.tv.core.designsystem.R
 import com.novum.tv.core.state.UiState
+import com.novum.tv.model.Episode
+import com.novum.tv.model.MediaVersionOption
 import com.novum.tv.model.MediaDetail
 import com.novum.tv.ui.component.NovumBrowseScaffold
 import com.novum.tv.ui.component.NovumImage
@@ -66,18 +68,18 @@ import kotlinx.coroutines.launch
  * 不展示相似推荐区；简介只在首屏显示。
  *
  * 结构：挂共享骨架 [NovumBrowseScaffold]（首焦重试、行下标自动分配）。
- * 操作行包含播放/从头播放、选季、收藏与已看状态按钮。
+ * 操作行包含播放/从头播放、收藏与已看状态按钮；多季选择器位于选集标题旁。
  * 主 CTA 在焦点序列最前；背景全出血单层渲染 + 双向遮罩。
  *
  * 同包分区件：[ActionRow]（操作行/元信息）、[EpisodeStrip]（选集行/分集卡）、[CastRow]（演职员）。
  * [VersionDialog]/[SeasonMenuDialog]/[SeasonMarkDialog]（浮层，DetailDialogs.kt）。
  *
  * 剧集详情页信息块始终展示剧集内容（标题/元信息/简介）。
- * 有 ClearLogo 时用 logo 替代文字标题；选集卡首次点击切当前集，再次按 OK 起播；
+ * 有 ClearLogo 时用 logo 替代文字标题；分集卡保留简短简介，按一次 OK 起播；
  * 图标与背景随当前集更新，标题简介保持剧集内容。多版本可用每次询问或长按选择。
  * 已看/未看默认修改当前集；菜单键或长按呼出整季标记。
  *
- * @param onBack 返回上一页。
+ * @param onBack 返回主页。
  * @param onPlay 播放回调：参数为要播放的条目 id（剧集时为分集 id）、起播位置
  *   覆盖毫秒（null 走默认续播规则，0 表示从头播放）与本次播放的版本 id
  *  （null = 按优先视频质量策略/服务端默认）。
@@ -103,7 +105,7 @@ fun DetailScreen(
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
-    // 详情页返回优先退栈，而不是退出应用
+    // 详情页返回直接交给导航层回主页，不先清空当前集选择。
     BackHandler(onBack = onBack)
 
     Box(
@@ -126,10 +128,8 @@ fun DetailScreen(
                     DetailBody(
                         data = data,
                         state = state,
-                        onBack = onBack,
                         onPlay = onPlay,
                         onSelectEpisode = viewModel::selectEpisode,
-                        onClearEpisodeContext = viewModel::clearEpisodeContext,
                         onOpenPerson = onOpenPerson,
                         onToggleFavorite = viewModel::toggleFavorite,
                         onConsumeFavoriteFailure = viewModel::consumeFavoriteFailure,
@@ -157,11 +157,11 @@ fun DetailScreen(
  *
  * 信息块始终展示剧集标题、元信息与简介。
  * 有 ClearLogo 时用 logo 替代文字标题；分集标题与简介落到选集卡下方。
- * 选集卡首次点击切换当前集，再次按 OK 起播；操作行图标与背景随当前集变化，
+ * 焦点卡同步选中集；按一次 OK 即起播，操作行图标与背景随当前集变化，
  * 标题简介不动。背景优先当前集的图，
  * 缺少分集图时回落到剧集图。
  *
- * 焦点路径：播放 → 从头播放 → 收藏 → 标为已看 → 季下拉 → 分集行。
+ * 焦点路径：播放 → 从头播放 → 收藏 → 标为已看 → 分集行（季选择在行标题处）。
  * 简介与演职员不可聚焦。
  *
  * 电影页操作行以下没有可聚焦内容，上下键用于翻页滚动。
@@ -171,10 +171,8 @@ fun DetailScreen(
 private fun DetailBody(
     data: MediaDetail,
     state: DetailUiState,
-    onBack: () -> Unit,
     onPlay: (itemId: String, startPositionMs: Long?, mediaSourceId: String?) -> Unit,
     onSelectEpisode: (String) -> Unit,
-    onClearEpisodeContext: () -> Unit,
     onOpenPerson: (personId: String, personName: String) -> Unit,
     onToggleFavorite: () -> Unit,
     onConsumeFavoriteFailure: () -> Unit,
@@ -192,35 +190,8 @@ private fun DetailBody(
     // 当前集：手动选中的集优先，否则使用默认播放目标集。
     // 操作行图标、版本候选与页面背景都跟着它；电影为 null
     val currentEpisode = state.currentEpisode
-    // 选中集索取器：返回键清选中时，焦点还给刚才那张卡
+    // 当前选中卡的焦点索取器。
     val contextEpisodeFocus = remember { FocusRequester() }
-
-    // 焦点即选中：焦点落到选集卡上就刷新该集信息。
-    // Back 清选中后焦点回到同一张卡时会再次触发选中，因此压制一次焦点回调。
-    var suppressFocusSelect by remember { mutableStateOf(false) }
-    val onFocusSelectEpisode: (String) -> Unit = { episodeId ->
-        if (suppressFocusSelect) {
-            suppressFocusSelect = false
-        } else {
-            onSelectEpisode(episodeId)
-        }
-    }
-
-    // 清选中优先于退出页面：组合顺序在 DetailScreen 的 BackHandler 之后，
-    // enabled 时本层优先消费。
-    // 继续观看入口直达（fromEntry）时集级语境是"进场即得"、用户没在页内主动
-    // 深入，返回直接退页；只有用户在页内点选分集产生的语境才先回剧级态。
-    BackHandler(enabled = state.episodeContextId != null) {
-        if (state.episodeContextFromEntry) {
-            onBack()
-        } else {
-            // 先索取再清状态：清空后 focusRequester 修饰符随重组摘除，晚了挂不上；
-            // 索焦触发的焦点选中被压制一次（见上）
-            suppressFocusSelect = true
-            runCatching { contextEpisodeFocus.requestFocus() }
-            onClearEpisodeContext()
-        }
-    }
 
     // 从继续观看入口直达当前集时，将首焦交给播放按钮；等待一帧让按钮进入焦点树。
     // 用户在页面内选集时 fromEntry=false，焦点保持在选集卡上。
@@ -253,25 +224,37 @@ private fun DetailBody(
     var versionPickAtMs by remember { mutableStateOf<Long?>(null) }
     var versionPickOpen by remember { mutableStateOf(false) }
     var versionPickByLongPress by remember { mutableStateOf(false) }
-    // 本次播放目标（当前集或电影条目）及其版本候选。
-    val playTargetId = currentEpisode?.id ?: data.id
-    val versions = state.currentVersions
-    val openVersionPick: (Boolean, Long?) -> Unit = { byLongPress, startMs ->
+    var versionPickTargetId by remember { mutableStateOf(data.id) }
+    var versionPickOptions by remember { mutableStateOf<List<MediaVersionOption>>(emptyList()) }
+    var versionPickTitlePrefix by remember { mutableStateOf(data.title) }
+    val openVersionPick: (Episode?, Boolean, Long?) -> Unit = { episode, byLongPress, startMs ->
         versionPickAtMs = startMs
         versionPickByLongPress = byLongPress
+        versionPickTargetId = episode?.id ?: data.id
+        versionPickOptions = episode?.versions ?: data.versions
+        versionPickTitlePrefix = episode?.let { ep ->
+            "${data.title} · S%02dE%02d".format(ep.seasonIndex, ep.index)
+        } ?: data.title
         versionPickOpen = true
     }
-    // 播放点击：多版本 + 「每次询问」→ 先弹版本层；否则按设置档/服务端默认直接播
-    val requestPlay: (Long?) -> Unit = { startMs ->
-        if (versions.size > 1 && state.versionStrategy.equals(ASK_STRATEGY, ignoreCase = true)) {
-            openVersionPick(false, startMs)
+    // 播放点击：多版本 +「每次询问」→ 先弹版本层；否则按设置档/服务端默认直接播。
+    // 目标集显式传入，分集卡一次确认即可起播，且不会在焦点状态异步更新时误播旧集。
+    val requestPlay: (Episode?, Long?, Boolean) -> Unit = { episode, startMs, byLongPress ->
+        val targetId = episode?.id ?: data.id
+        val candidates = episode?.versions ?: data.versions
+        if (
+            candidates.size > 1 &&
+            (byLongPress || state.versionStrategy.equals(ASK_STRATEGY, ignoreCase = true))
+        ) {
+            openVersionPick(episode, byLongPress, startMs)
         } else {
-            onPlay(playTargetId, startMs, null)
+            onPlay(targetId, startMs, null)
         }
     }
+    val actionRequestPlay: (Long?) -> Unit = { startMs -> requestPlay(currentEpisode, startMs, false) }
     // 长按时为多版本播放提供一次性选择入口。
-    val longPressPick: ((Long?) -> Unit)? = if (versions.size > 1) {
-        { startMs -> openVersionPick(true, startMs) }
+    val longPressPick: ((Long?) -> Unit)? = if ((currentEpisode?.versions ?: data.versions).size > 1) {
+        { startMs -> requestPlay(currentEpisode, startMs, true) }
     } else {
         null
     }
@@ -428,11 +411,9 @@ private fun DetailBody(
                         // （选中集或默认目标集），电影 = 条目自身
                         ActionRow(
                             data = data,
-                            state = state,
-                            selectedSeason = selectedSeason,
                             episode = currentEpisode,
                             playFocus = playFocus,
-                            onPlay = requestPlay,
+                            onPlay = actionRequestPlay,
                             // 长按时选择本次播放版本；从头播放以 0 为起播位置。
                             onPlayLongClick = longPressPick?.let { open -> { open(null) } },
                             onReplayLongClick = longPressPick?.let { open -> { open(0L) } },
@@ -442,7 +423,6 @@ private fun DetailBody(
                                 seasonMarkByLongPress = byLongPress
                                 seasonMarkMenuOpen = true
                             },
-                            onOpenSeasonMenu = { seasonMenuOpen = true },
                         )
                     }
 
@@ -482,20 +462,19 @@ private fun DetailBody(
                         // 反过来的话，早期留下的一点进度会把行首抢到旧集。
                         anchorEpisodeId = state.currentEpisodeId
                             ?: state.episodes.firstOrNull { it.progressRatio != null }?.id,
-                        // 选中卡显「已选中」角标
-                        selectedEpisodeId = state.episodeContextId,
+                        // 已选集或默认播放集显当前描边，焦点浏览时同步预览信息。
+                        selectedEpisodeId = currentEpisode?.id,
                         // 剧集 clearlogo 挂每张卡图左上角（同剧共用一张）
                         logoUrl = data.logoUrl,
                         episodeFocus = episodeFocus,
                         contextFocus = contextEpisodeFocus,
-                        // 焦点落到卡上即刷新该集信息；再次按 OK 可起播已选中的集。
-                        onFocusSelect = onFocusSelectEpisode,
-                        // 已选中的卡再次按 OK 时起播；每次询问策略先弹出版本选择层。
+                        // 焦点落到卡上即刷新该集信息；OK 一次直接起播卡片对应集。
+                        onFocusSelect = onSelectEpisode,
+                        selectedSeason = selectedSeason.takeIf { state.seasons.size > 1 },
+                        onOpenSeasonMenu = { seasonMenuOpen = true },
                         onCardClick = { episodeId ->
-                            if (state.episodeContextId == episodeId) {
-                                requestPlay(null)
-                            } else {
-                                onSelectEpisode(episodeId)
+                            state.episodes.firstOrNull { it.id == episodeId }?.let { episode ->
+                                requestPlay(episode, null, false)
                             }
                         },
                         onRetry = onRetryEpisodes,
@@ -545,19 +524,16 @@ private fun DetailBody(
 
         // 版本选择浮层由「每次询问」策略或长按播放/从头播放呼出。
         // 选中后按该版本起播，并写入条目级记忆：下次直接播放会沿用该版本。
-        if (versionPickOpen && versions.size > 1) {
+        if (versionPickOpen && versionPickOptions.size > 1) {
             VersionDialog(
-                versions = versions,
-                // 前缀 = 电影名/剧名（分集再带 SxxExx），与规格三段拼成一行
-                titlePrefix = currentEpisode?.let { ep ->
-                    "${data.title} · S%02dE%02d".format(ep.seasonIndex, ep.index)
-                } ?: data.title,
+                versions = versionPickOptions,
+                titlePrefix = versionPickTitlePrefix,
                 // 高亮上一次记忆的版本；没有记忆时 VersionDialog 回落首项
                 selectedId = state.rememberedMediaSourceId,
                 onSelect = { sourceId ->
                     versionPickOpen = false
                     onRememberVersion(sourceId)
-                    onPlay(playTargetId, versionPickAtMs, sourceId)
+                    onPlay(versionPickTargetId, versionPickAtMs, sourceId)
                 },
                 onDismiss = { versionPickOpen = false },
                 // 长按进入：吞掉「松手」那一下 OK（直接选中播放）

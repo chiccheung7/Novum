@@ -56,8 +56,8 @@ interface SessionStore {
     /** Returns the saved password after decrypting it with the device Keystore, if present. */
     suspend fun rememberedPassword(): String? = null
 
-    /** Whether the user last enabled credential remembering. */
-    suspend fun shouldRememberCredentials(): Boolean = false
+    /** Last saved choice; enabled when no choice has been saved yet. */
+    suspend fun shouldRememberCredentials(): Boolean = true
 
     /** Persists the user's choice before a login attempt. */
     suspend fun setRememberCredentials(remember: Boolean) = Unit

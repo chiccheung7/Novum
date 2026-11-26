@@ -145,7 +145,7 @@ class HomeScreenTest {
         composeRule.waitForIdle()
 
         composeRule.onNodeWithContentDescription("收藏").assertIsNotFocused()
-        val contentTexts = setOf("播放", "详情", "顺流逆流")
+        val contentTexts = setOf("立即播放", "详情", "顺流逆流")
         val focusedTexts = composeRule.onAllNodes(isFocused())
             .fetchSemanticsNodes()
             .flatMap { node -> node.config.getOrElse(SemanticsProperties.Text) { emptyList() } }
@@ -163,8 +163,12 @@ class HomeScreenTest {
 
         // 信息块：无 ClearLogo 时回退文本标题；双 CTA 同时在场
         // 页面不显示额外眉题。
-        composeRule.onNodeWithText("播放").assertIsDisplayed()
+        composeRule.onNodeWithText("立即播放").assertIsDisplayed()
         composeRule.onNodeWithText("详情").assertIsDisplayed()
+        val playBounds = composeRule.onNodeWithText("立即播放").fetchSemanticsNode().boundsInRoot
+        val detailBounds = composeRule.onNodeWithText("详情").fetchSemanticsNode().boundsInRoot
+        assertTrue("四字播放文案对应更宽的按钮", playBounds.width > detailBounds.width)
+        assertEquals("Hero 按钮保持相同高度", detailBounds.height, playBounds.height, 1f)
         // 片名只在信息块中显示一次。
         // （原 logo 位由放大标题补上）
         composeRule.onAllNodesWithText("顺流逆流").assertCountEquals(1)
@@ -181,7 +185,7 @@ class HomeScreenTest {
         )
 
         // Filled 播放 CTA：电影直接起播（无进度 → 从头播）
-        composeRule.onNodeWithText("播放").performSemanticsAction(SemanticsActions.OnClick)
+        composeRule.onNodeWithText("立即播放").performSemanticsAction(SemanticsActions.OnClick)
         composeRule.waitForIdle()
 
         assertEquals("电影 Hero 的播放 CTA 应直接起播", "m1", playedId)
@@ -200,7 +204,7 @@ class HomeScreenTest {
         )
 
         // 剧集没有「从哪播」的知识：播放 CTA 落详情页选集，由详情页起播
-        composeRule.onNodeWithText("播放").performSemanticsAction(SemanticsActions.OnClick)
+        composeRule.onNodeWithText("立即播放").performSemanticsAction(SemanticsActions.OnClick)
         composeRule.waitForIdle()
 
         assertEquals("剧集 Hero 的播放 CTA 应进详情页选源", "series-1", detailId)
@@ -241,7 +245,7 @@ class HomeScreenTest {
         composeRule.onNodeWithContentDescription("收藏")
             .performSemanticsAction(SemanticsActions.RequestFocus)
         composeRule.onNodeWithContentDescription("收藏").assertIsFocused()
-        composeRule.onNodeWithText("播放").assertIsNotFocused()
+        composeRule.onNodeWithText("立即播放").assertIsNotFocused()
         composeRule.mainClock.advanceTimeBy(500L)
         composeRule.waitForIdle()
         composeRule.onNodeWithText("海报二").assertIsDisplayed()
@@ -266,7 +270,7 @@ class HomeScreenTest {
         )
         composeRule.mainClock.advanceTimeBy(600L)
         composeRule.waitForIdle()
-        composeRule.onNodeWithText("播放").performKeyPress(
+        composeRule.onNodeWithText("立即播放").performKeyPress(
             ComposeKeyEvent(
                 NativeKeyEvent(0L, 0L, NativeKeyEvent.ACTION_DOWN, NativeKeyEvent.KEYCODE_DPAD_RIGHT, 0),
             ),

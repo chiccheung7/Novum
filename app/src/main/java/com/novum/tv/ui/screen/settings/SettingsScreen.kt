@@ -39,6 +39,7 @@ import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.tv.material3.Text
 import coil3.SingletonImageLoader
+import com.novum.tv.BuildConfig
 import com.novum.tv.core.designsystem.R
 import com.novum.tv.core.state.UiState
 import com.novum.tv.data.settings.AppSettings
@@ -71,6 +72,7 @@ enum class SettingsSection(val labelRes: Int) {
     Playback(R.string.settings_group_playback),
     Subtitle(R.string.settings_group_subtitle),
     Data(R.string.settings_group_data),
+    About(R.string.settings_group_about),
 }
 
 /**
@@ -419,7 +421,6 @@ private fun SectionContent(
                 }
 
                 SettingsSection.Playback -> {
-                    SettingsSubsectionTitle(stringResource(R.string.settings_subsection_playback))
                     // 播放线路置顶；锁定时展示线路名，未锁定时自动选取延迟最低的线路。
                     SettingRow(
                         label = stringResource(R.string.settings_playback_line),
@@ -464,9 +465,7 @@ private fun SectionContent(
                         checked = settings.autoPlayNext,
                         onCheckedChange = viewModel::setAutoPlayNext,
                     )
-                    // 弹幕（UHDNOW 原生能力）：设置页只给全局默认值，
-                    // 播放抽屉可对当前会话即时微调（写回同一存储，下次播放沿用）。
-                    SettingsSubsectionTitle(stringResource(R.string.settings_subsection_danmu))
+                    // 弹幕设置沿用同一操作列表，避免额外的小标题打断浏览。
                     NovumSwitchRow(
                         text = stringResource(R.string.danmu_enabled),
                         checked = settings.danmuEnabled,
@@ -573,6 +572,17 @@ private fun SectionContent(
                     )
                 }
 
+                SettingsSection.About -> {
+                    InfoRow(
+                        label = stringResource(R.string.settings_app_name),
+                        value = "Novum",
+                    )
+                    InfoRow(
+                        label = stringResource(R.string.settings_version),
+                        value = "${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})",
+                    )
+                }
+
                 SettingsSection.Data -> {
                     // 文案在组合期解析，配置变化会自动重读；回调里只做展示
                     val clearCacheToast = stringResource(R.string.toast_cache_cleared)
@@ -666,17 +676,6 @@ private fun InfoRow(label: String, value: String) {
             color = NovumPalette.Paper,
         )
     }
-}
-
-/** 设置分组内的非交互标题，帮助在长页滚动时快速区分播放行为和弹幕样式。 */
-@Composable
-private fun SettingsSubsectionTitle(text: String) {
-    Text(
-        text = text,
-        style = NovumType.Body,
-        color = NovumPalette.Paper,
-        modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp),
-    )
 }
 
 /** 字节数转可读文案（GB / MB / KB）。 */

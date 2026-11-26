@@ -25,7 +25,7 @@ import com.novum.tv.ui.component.POSTER_ASPECT
 import com.novum.tv.ui.component.NovumSkeletonBlock
 import com.novum.tv.ui.component.NovumSkeletonCard
 import com.novum.tv.ui.component.NovumSkeletonMediaInfo
-import com.novum.tv.ui.component.mediaCardWidth
+import com.novum.tv.ui.component.mediaRowCardWidth
 import com.novum.tv.ui.component.mediaGridColumns
 import com.novum.tv.ui.theme.NovumDimens
 import com.novum.tv.ui.theme.NovumPalette
@@ -77,7 +77,7 @@ fun HomeSkeleton(modifier: Modifier = Modifier) {
                     ) {
                         val target = if (aspect == POSTER_ASPECT) NovumDimens.PosterCardWidth else NovumDimens.CardWidth
                         repeat(mediaGridColumns(contentWidth.value, target.value)) {
-                            NovumSkeletonCard(mediaCardWidth(contentWidth, target), aspectRatio = aspect)
+                            NovumSkeletonCard(mediaRowCardWidth(contentWidth, aspect), aspectRatio = aspect)
                         }
                     }
                 }

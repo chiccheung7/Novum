@@ -34,6 +34,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.tv.material3.Icon
 import androidx.tv.material3.Text
@@ -80,6 +81,8 @@ internal fun PlayerControlOverlay(
     title: String,
     /** 左上角 ClearLogo（标题位换透明底标题图）；null 回落文本标题。 */
     logoUrl: String?,
+    episodeTitle: String? = null,
+    networkSpeed: State<Long>,
     chapters: List<Chapter>,
     isPlaying: Boolean,
     interactive: Boolean,
@@ -96,6 +99,7 @@ internal fun PlayerControlOverlay(
     onFocusedItemChange: (ControlItem) -> Unit,
     onActivate: (ControlItem) -> Unit,
 ) {
+    var logoLoaded by remember(logoUrl) { mutableStateOf(false) }
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -114,31 +118,33 @@ internal fun PlayerControlOverlay(
         ) {
             // 标题位：有 ClearLogo 用透明底标题图，无图回落文本标题
             if (logoUrl != null) {
+                Box(modifier = Modifier.height(PLAYER_LOGO_HEIGHT).fillMaxWidth(PLAYER_LOGO_MAX_WIDTH_RATIO)) {
+                    if (!logoLoaded) PlayerTextTitle(title)
                 NovumImage(
                     url = logoUrl,
                     // 标题语义兜底给读屏；无障碍名仍是作品标题
                     contentDescription = title.ifBlank { null },
                     contentScale = ContentScale.Fit,
                     alignment = Alignment.CenterStart,
-                    modifier = Modifier
-                        .height(PLAYER_LOGO_HEIGHT)
-                        .fillMaxWidth(PLAYER_LOGO_MAX_WIDTH_RATIO),
+                    modifier = Modifier.fillMaxSize(),
+                    onLoadState = { logoLoaded = it },
                 )
+                }
             } else {
-                Text(
-                    text = title.ifBlank { stringResource(R.string.player_unknown_title) },
-                    // 播放页标题压在画面上，用内容级 Section（28）而不是页级 Title（44）
-                    style = NovumType.Section,
-                    color = NovumPalette.Paper,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
+                PlayerTextTitle(title)
+            }
+            episodeTitle?.takeIf { it.isNotBlank() }?.let {
+                Text(text = it, style = NovumType.Body, color = NovumPalette.Paper,
+                    maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.fillMaxWidth(0.62f))
             }
             // 标题下显示当前章节指示。
             Row(verticalAlignment = Alignment.CenterVertically) {
                 ChapterIndicator(chapters = chapters, position = position)
             }
         }
+
+        NetworkSpeedLabel(networkSpeed, Modifier.align(Alignment.TopEnd)
+            .padding(horizontal = NovumDimens.SafeHorizontal, vertical = NovumDimens.SafeVertical))
 
         Column(
             modifier = Modifier
@@ -176,6 +182,21 @@ internal fun PlayerControlOverlay(
             )
         }
     }
+}
+
+@Composable
+private fun PlayerTextTitle(title: String) {
+    Text(text = title.ifBlank { stringResource(R.string.player_unknown_title) },
+        style = NovumType.Section.copy(fontFamily = FontFamily.Default), color = NovumPalette.Paper,
+        maxLines = 1, overflow = TextOverflow.Ellipsis)
+}
+
+/** Keep half-second speed samples out of the controls' recomposition scope. */
+@Composable
+private fun NetworkSpeedLabel(speed: State<Long>, modifier: Modifier = Modifier) {
+    val value = speed.value
+    if (value < 0L) return
+    Text(text = formatSpeed(value), style = NovumType.Caption, color = NovumPalette.Paper, modifier = modifier)
 }
 
 /** 顶部章节提示：「· 第 3 章 夜航」。 */

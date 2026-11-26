@@ -49,8 +49,8 @@ interface AuthRepository {
     /** Saved password is returned only after secure storage decrypts it. */
     suspend fun lastPassword(): String? = null
 
-    /** User's remembered-credentials choice, defaulting to false on first use. */
-    suspend fun shouldRememberCredentials(): Boolean = false
+    /** User's remembered-credentials choice, enabled until an explicit choice is saved. */
+    suspend fun shouldRememberCredentials(): Boolean = true
 
     /** Persists the current choice and immediately removes secrets when disabled. */
     suspend fun setRememberCredentials(remember: Boolean) = Unit

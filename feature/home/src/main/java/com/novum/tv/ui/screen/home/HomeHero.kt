@@ -15,6 +15,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.tv.material3.Text
@@ -38,6 +39,9 @@ private val HERO_CTA_GAP = 20.dp
 
 /** Hero 双 CTA 高度（= 全站统一按钮高度 [NovumDimens.ButtonHeight]）。 */
 private val HERO_CTA_HEIGHT = NovumDimens.ButtonHeight
+
+/** 四字播放文案留出与两字详情按钮相称的水平空间。 */
+private val HERO_PLAY_WIDTH = 176.dp
 
 /** Hero 信息区的固定高度，为内容和下方继续观看行预留空间。 */
 private val HERO_INFO_ZONE_H = 420.dp
@@ -166,7 +170,7 @@ private fun HeroInfoBlock(
 }
 
 /**
- * 「立即播放」CTA：使用全站统一的按钮宽高。
+ * 「立即播放」CTA：沿用统一高度，按四字文案加宽。
  *
  * 电影直接起播；剧集进入详情页选择分集。
  */
@@ -180,7 +184,7 @@ private fun HeroPlayButton(
         onClick = onClick,
         centerContent = true,
         modifier = Modifier
-            .width(novumActionButtonWidth())
+            .width(HERO_PLAY_WIDTH * LocalDensity.current.fontScale.coerceAtLeast(1f))
             .height(HERO_CTA_HEIGHT)
             .then(firstFocus?.let { Modifier.focusRequester(it) } ?: Modifier)
             .then(

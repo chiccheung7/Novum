@@ -139,13 +139,19 @@ class DefaultPlaybackRepository @Inject constructor(
                         )
                     }
                     val urls = resolveUrls(mediaServer, source, itemId, preferDirect, forceTranscode, owner.tokenForUrl(mediaServer))
+                    fun burnedLabel(url: String?): String? = url?.let(::burnedInSubtitleIndex)?.let { index ->
+                        source.MediaStreams.firstOrNull { it.Type == "Subtitle" && it.Index == index }
+                            ?.displayLabel("Subtitle", index, strings)
+                            ?: strings.subtitleTrackLabel(index + 1)
+                    }
+                    val burnedInLabel = burnedLabel(urls.primaryUrl)
                     successOf(
                         PlaybackPlan(
                             url = urls.primaryUrl,
                             method = urls.primaryMethod,
                             audioTracks = source.tracksOfType("Audio", strings),
                             subtitleTracks = source.tracksOfType("Subtitle", strings),
-                            subtitles = source.externalSubtitles(server, itemId, owner.tokenForUrl(server)),
+                            subtitles = if (burnedInLabel == null) source.externalSubtitles(server, itemId, owner.tokenForUrl(server)) else emptyList(),
                             durationMs = source.RunTimeTicks?.let { it / TICKS_PER_MS },
                             startPositionMs = startPositionMs,
                             lineLabel = lineLabel,
@@ -155,6 +161,8 @@ class DefaultPlaybackRepository @Inject constructor(
                             fallbackMethod = urls.fallbackMethod,
                             playSessionId = info.PlaySessionId,
                             fileName = source.danmuFileName(),
+                            burnedInSubtitleLabel = burnedInLabel,
+                            fallbackBurnedInSubtitleLabel = burnedLabel(urls.fallbackUrl),
                         ),
                     )
                 }
@@ -549,12 +557,13 @@ private fun MediaSourceDto.externalSubtitles(
                 null
             }
             val url = delivered ?: constructed ?: return@mapIndexed null
+            val mimeType = stream.Codec.toSubtitleMime() ?: return@mapIndexed null
             SubtitleSource(
                 id = "sub-$streamIndex-${stream.Language.orEmpty()}",
                 url = url,
                 language = stream.Language.normalizeLanguage(),
                 label = stream.DisplayTitle ?: stream.Title,
-                mimeType = stream.Codec.toSubtitleMime(),
+                mimeType = mimeType,
             )
         }.mapNotNull { it }
 
@@ -564,13 +573,27 @@ private fun String?.normalizeLanguage(): String? = this
     ?.trim()
     ?.takeIf { it.isNotBlank() && it != "und" }
 
-/** Emby 字幕编码 → 播放器 MIME。无法识别时按 SRT 处理，兼容性最好。 */
-private fun String?.toSubtitleMime(): String = when (this?.lowercase()) {
+/** Unsupported binary formats must never be advertised as plain-text SRT. */
+internal fun String?.toSubtitleMime(): String? = when (this?.lowercase()) {
     "ass", "ssa" -> MimeTypes.TEXT_SSA
     "vtt", "webvtt" -> MimeTypes.TEXT_VTT
     "ttml" -> MimeTypes.APPLICATION_TTML
     "mov_text" -> MimeTypes.APPLICATION_SUBRIP
-    else -> MimeTypes.APPLICATION_SUBRIP
+    "srt", "subrip" -> MimeTypes.APPLICATION_SUBRIP
+    "pgs", "pgssub", "hdmv_pgs_subtitle", "sup" -> MimeTypes.APPLICATION_PGS
+    // Raw DVB/VobSub deliveries need initialization/palette data not carried by SubtitleSource.
+    // Embedded DVB/PGS cues are rendered from the container through the native subtitle view.
+    else -> null
+}
+
+internal fun burnedInSubtitleIndex(url: String): Int? {
+    val query = url.substringAfter('?', "").substringBefore('#').split('&').mapNotNull { part ->
+        val key = part.substringBefore('=').lowercase()
+        val value = runCatching { java.net.URLDecoder.decode(part.substringAfter('=', ""), "UTF-8") }.getOrNull()
+        value?.let { key to it }
+    }.toMap()
+    if (!query["subtitlemethod"].equals("Encode", ignoreCase = true)) return null
+    return query["subtitlestreamindex"]?.toIntOrNull()?.takeIf { it >= 0 }
 }
 
 /** 过滤出指定类型的轨，并生成可展示的选项。 */

@@ -3,6 +3,7 @@ package com.novum.tv.data.session
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.PreferenceDataStoreFactory
 import androidx.datastore.preferences.core.Preferences
+import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import java.io.File
@@ -36,6 +37,15 @@ class DataStoreSessionStoreTest {
             scope = this,
             produceFile = { File(temporaryFolder.newFolder(), "session.preferences_pb") },
         )
+
+    @Test
+    fun missingRememberChoiceDefaultsToEnabledWithoutOverwritingStorage() = runTest {
+        val dataStore = createDataStore()
+        val store = DataStoreSessionStore(dataStore, cipher)
+
+        assertTrue(store.shouldRememberCredentials())
+        assertNull("Reading the default does not force a saved choice", dataStore.data.first()[booleanPreferencesKey("session_remember_credentials")])
+    }
 
     @Test
     fun savesTokenAndPasswordOnlyAsCiphertextAndRestoresThem() = runTest {
@@ -85,9 +95,12 @@ class DataStoreSessionStoreTest {
         val dataStore = createDataStore()
         val firstStore = DataStoreSessionStore(dataStore, cipher)
 
-        firstStore.setRememberCredentials(true)
+        firstStore.setRememberCredentials(false)
 
-        assertTrue(DataStoreSessionStore(dataStore, cipher).shouldRememberCredentials())
+        val restored = DataStoreSessionStore(dataStore, cipher)
+        assertFalse("An explicit false overrides the enabled default", restored.shouldRememberCredentials())
+        restored.setRememberCredentials(true)
+        assertTrue(firstStore.shouldRememberCredentials())
     }
 
     @Test

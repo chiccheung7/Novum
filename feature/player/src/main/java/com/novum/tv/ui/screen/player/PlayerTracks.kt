@@ -9,7 +9,50 @@ import androidx.media3.common.Player
 import androidx.media3.common.TrackSelectionOverride
 import androidx.media3.common.Tracks
 import com.novum.tv.data.repository.ItemPlaybackPrefsStore
+import com.novum.tv.core.player.subtitleLabel
+import com.novum.tv.model.PlaybackPlan
 import java.util.Locale
+
+/** Reset the TEXT gate for every plan: a previous burned-in stream must not mute a direct retry. */
+internal fun applySubtitleEnabledState(
+    player: Player,
+    burnedIn: Boolean,
+    remembered: ItemPlaybackPrefsStore.ItemPrefs?,
+    enabledByDefault: Boolean,
+): Boolean {
+    val disabled = burnedIn || remembered?.subtitleDisabled == true ||
+        (!enabledByDefault && remembered?.subtitleTrack == null)
+    if ((C.TRACK_TYPE_TEXT in player.trackSelectionParameters.disabledTrackTypes) != disabled) {
+        player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
+            .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, disabled).build()
+    }
+    return !disabled
+}
+
+/** The media item's tag follows actual playback, including fallback and same-player plan replacement. */
+internal fun currentSubtitleLabel(player: Player): String =
+    (player.currentMediaItem?.localConfiguration?.tag as? PlaybackPlan)?.burnedInSubtitleLabel ?: player.subtitleLabel()
+
+internal fun canSelectTrack(player: Player, option: TrackOption, isText: Boolean): Boolean {
+    if (!option.supported) return false
+    if (option.id == TEXT_OFF_ID) return isText
+    val parts = option.id.split(':')
+    val groupIndex = parts.getOrNull(0)?.toIntOrNull() ?: return false
+    val trackIndex = parts.getOrNull(1)?.toIntOrNull() ?: return false
+    val group = player.currentTracks.groups.getOrNull(groupIndex) ?: return false
+    return group.type == (if (isText) C.TRACK_TYPE_TEXT else C.TRACK_TYPE_AUDIO) &&
+        trackIndex in 0 until group.length && group.isTrackSupported(trackIndex)
+}
+
+/** Validate before updating the recovery snapshot; stale/unsupported rows must not replace memory. */
+internal fun selectManualTrack(
+    player: Player, option: TrackOption, isText: Boolean, remember: () -> Unit,
+): Boolean {
+    if (!canSelectTrack(player, option, isText)) return false
+    remember()
+    selectTrack(player, option, isText)
+    return true
+}
 
 /**
  * 恢复条目记忆的字幕轨（手动改过的选项按条目记忆）：
@@ -56,9 +99,11 @@ private fun overrideTrackByRef(
     type: Int,
     ref: ItemPlaybackPrefsStore.TrackRef,
 ): Boolean {
-    val target = player.currentTracks.groups
-        .filter { it.type == type }
-        .firstMatchingTrack { trackMatchesRef(it, ref) } ?: return false
+    val groups = player.currentTracks.groups.filter { it.type == type }
+    // Same-language tracks often have no title. Prefer the persisted format id before the
+    // legacy label/language fallback, otherwise a saved Simplified track can restore Traditional.
+    val target = ref.formatId?.let { id -> groups.firstMatchingTrack { it.id == id && trackMatchesRef(it, ref) } }
+        ?: groups.firstMatchingTrack { trackMatchesRef(it, ref) } ?: return false
     if (target.group.isTrackSelected(target.index)) return true
     player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
         .clearOverridesOfType(type)
@@ -98,16 +143,55 @@ internal fun trackMatchesRef(
  * 选中时直接返回，防 onTracksChanged 回写参数造成的事件循环。
  */
 internal fun applyDualSubtitlePreference(player: Player) {
-    val groups = player.currentTracks.groups.filter { it.type == C.TRACK_TYPE_TEXT }
-    val target = groups.firstMatchingTrack { format ->
-        DUAL_SUBTITLE_TITLE_KEYWORDS.any { format.label?.contains(it) == true }
-    } ?: groups.firstMatchingTrack { it.language == "chi" } ?: return
-    if (target.group.isTrackSelected(target.index)) return
+    applySubtitleLanguagePreference(player, "zhdual")
+}
+
+/** Chinese scripts must be matched explicitly; ISO chi/zh alone cannot distinguish 简/繁. */
+internal fun applySubtitleLanguagePreference(player: Player, preferredLanguage: String) {
+    if (preferredLanguage.isBlank()) return
+    var target: TrackTarget? = null
+    var bestScore = 0
+    player.currentTracks.groups.filter { it.type == C.TRACK_TYPE_TEXT }.forEach { group ->
+        for (index in 0 until group.length) {
+            if (!group.isTrackSupported(index)) continue
+            val score = subtitleLanguageScore(group.getTrackFormat(index), preferredLanguage)
+            if (score > bestScore) {
+                bestScore = score
+                target = TrackTarget(group, index)
+            }
+        }
+    }
+    val chosen = target ?: return
+    if (chosen.group.isTrackSelected(chosen.index)) return
     player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
         .clearOverridesOfType(C.TRACK_TYPE_TEXT)
-        .setOverrideForType(TrackSelectionOverride(target.group.mediaTrackGroup, target.index))
+        .setOverrideForType(TrackSelectionOverride(chosen.group.mediaTrackGroup, chosen.index))
         .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false)
         .build()
+}
+
+internal fun subtitleLanguageTag(preference: String): String? = when (preference.lowercase()) {
+    "", "zhdual" -> null
+    "chi", "zho", "zhs", "chs", "zh", "zh-cn", "zh-hans" -> "zh-Hans"
+    "zht", "cht", "zh-tw", "zh-hant" -> "zh-Hant"
+    else -> preference
+}
+
+internal fun subtitleLanguageScore(format: Format, preference: String): Int {
+    val language = format.language.orEmpty().lowercase()
+    val label = format.label.orEmpty().lowercase()
+    val traditional = language in setOf("zht", "cht", "zh-tw", "zh-hk", "zh-hant") ||
+        listOf("繁", "traditional", "hant", "cht").any(label::contains)
+    val simplified = language in setOf("zhs", "chs", "zh-cn", "zh-hans") ||
+        listOf("简", "簡", "simplified", "hans", "chs").any(label::contains)
+    val dual = DUAL_SUBTITLE_TITLE_KEYWORDS.any(label::contains)
+    val chinese = traditional || simplified || dual || language in setOf("zh", "chi", "zho")
+    return when (subtitleLanguageTag(preference)) {
+        "zh-Hans" -> when { traditional && !simplified -> 0; simplified -> 400; chinese -> 200; else -> 0 }
+        "zh-Hant" -> when { simplified && !traditional -> 0; traditional -> 400; chinese -> 200; else -> 0 }
+        null -> if (preference == "zhdual") when { dual -> 500; simplified -> 300; chinese -> 100; else -> 0 } else 0
+        else -> if (Locale.forLanguageTag(language).language == Locale.forLanguageTag(preference).language) 300 else 0
+    }
 }
 
 /**
@@ -118,6 +202,7 @@ internal fun applyDualSubtitlePreference(player: Player) {
  * @param isText true=字幕，false=音轨。
  */
 internal fun selectTrack(player: Player, option: TrackOption, isText: Boolean) {
+    if (!canSelectTrack(player, option, isText)) return
     val params = player.trackSelectionParameters.buildUpon()
     if (option.id == TEXT_OFF_ID) {
         params.setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true)
@@ -129,7 +214,7 @@ internal fun selectTrack(player: Player, option: TrackOption, isText: Boolean) {
     val trackIndex = parts.getOrNull(1)?.toIntOrNull() ?: return
     val group = player.currentTracks.groups.getOrNull(groupIndex) ?: return
     val expectedType = if (isText) C.TRACK_TYPE_TEXT else C.TRACK_TYPE_AUDIO
-    if (group.type != expectedType || trackIndex !in 0 until group.length) return
+    if (group.type != expectedType || trackIndex !in 0 until group.length || !group.isTrackSupported(trackIndex)) return
     params.setOverrideForType(
         TrackSelectionOverride(group.mediaTrackGroup, trackIndex),
     )
@@ -143,7 +228,7 @@ private data class TrackTarget(val group: Tracks.Group, val index: Int)
 private fun List<Tracks.Group>.firstMatchingTrack(predicate: (Format) -> Boolean): TrackTarget? {
     for (group in this) {
         for (index in 0 until group.length) {
-            if (predicate(group.getTrackFormat(index))) return TrackTarget(group, index)
+            if (group.isTrackSupported(index) && predicate(group.getTrackFormat(index))) return TrackTarget(group, index)
         }
     }
     return null
@@ -167,6 +252,8 @@ internal fun buildTrackOptions(
                     selected = group.isTrackSelected(trackIndex),
                     language = format.language,
                     rawLabel = format.label.orEmpty(),
+                    formatId = format.id,
+                    supported = group.isTrackSupported(trackIndex),
                     channels = if (type == C.TRACK_TYPE_AUDIO) format.channelCount.takeIf { it > 0 } else null,
                     codec = if (type == C.TRACK_TYPE_AUDIO) audioCodecLabel(format) else null,
                 ),

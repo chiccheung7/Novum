@@ -11,6 +11,7 @@ import com.novum.tv.data.remote.emby.PlaybackProgressDto
 import com.novum.tv.data.remote.emby.PublicInfoDto
 import com.novum.tv.data.remote.emby.QueryResultDto
 import com.novum.tv.data.remote.emby.UserDataDto
+import com.novum.tv.data.remote.emby.UserDataUpdateDto
 
 /**
  * 测试用 [EmbyApi] 桩实现：所有方法给出「空但合法」的返回值。
@@ -89,6 +90,8 @@ open class EmbyApiStub : EmbyApi {
     override suspend fun markPlayed(uid: String, itemId: String): UserDataDto = UserDataDto()
 
     override suspend fun markUnplayed(uid: String, itemId: String): UserDataDto = UserDataDto()
+
+    override suspend fun updateUserData(uid: String, itemId: String, body: UserDataUpdateDto) = Unit
 
     override suspend fun playbackInfo(
         itemId: String,

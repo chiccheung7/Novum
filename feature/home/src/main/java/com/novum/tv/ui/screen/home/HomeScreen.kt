@@ -21,6 +21,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.withFrameNanos
@@ -56,7 +57,6 @@ import com.novum.tv.model.HomeRow
 import com.novum.tv.ui.component.LocalNovumToast
 import com.novum.tv.ui.component.NovumBrowseScaffold
 import com.novum.tv.ui.component.NovumNavTab
-import com.novum.tv.ui.component.NovumStateView
 import com.novum.tv.ui.component.NovumTopBar
 import com.novum.tv.ui.theme.NovumDimens
 import com.novum.tv.ui.theme.NovumPalette
@@ -98,10 +98,13 @@ fun HomeScreen(
     onOpenLibrary: (libraryId: String, libraryName: String) -> Unit,
     modifier: Modifier = Modifier,
     onOpenSeriesResume: ((String) -> Unit)? = null,
+    onReauthenticate: () -> Unit = {},
     viewModel: HomeViewModel = hiltViewModel(),
 ) {
     val feedState by viewModel.feed.collectAsStateWithLifecycle()
     val focusEpoch by viewModel.focusEpoch.collectAsStateWithLifecycle()
+    val reauthenticating by viewModel.reauthenticating.collectAsStateWithLifecycle()
+    val reauthenticationError by viewModel.reauthenticationError.collectAsStateWithLifecycle()
     // Back 二次退出要 finish Activity（组合期取一次，非读资源）
     val context = LocalContext.current
 
@@ -188,9 +191,12 @@ fun HomeScreen(
             // 首屏用骨架屏而不是「正在加载…」：结构先到位，图片到达时不跳版
             UiState.Loading -> HomeSkeleton()
 
-            else -> NovumStateView(
+            else -> HomeStateView(
                 state = state,
                 onRetry = viewModel::load,
+                onReauthenticate = { viewModel.reauthenticate(onReauthenticate) },
+                reauthenticating = reauthenticating,
+                reauthenticationError = reauthenticationError,
                 modifier = Modifier.align(Alignment.Center),
             )
         }
@@ -302,24 +308,29 @@ fun HomeContent(
     // 背景视差、变暗和溶解由 Hero 行位移驱动。
     val backdropDensity = LocalDensity.current
     val backdropDriftPx = remember(backdropDensity) { with(backdropDensity) { BACKDROP_DRIFT_DP.toPx() } }
-    // Hero 行静止几何作为位移和溶解进度的基准。列表回到顶部且布局完成后捕获行的位置和尺寸。
-    // 未捕获（冷启动首帧/深链恢复）按完全离场处理（背景隐藏；回顶自动捕获）
-    val heroRestTopPx = remember { mutableFloatStateOf(Float.NaN) }
-    val heroRestBottomPx = remember { mutableFloatStateOf(Float.NaN) }
+    // 与列表滚动位置一起恢复几何；详情返回时列表可能已经滚到 Hero 中段，不能等到绝对顶部才显示背景。
+    val heroRestTopPx = rememberSaveable(backdropDensity.density) { mutableFloatStateOf(Float.NaN) }
+    val heroRestBottomPx = rememberSaveable(backdropDensity.density) { mutableFloatStateOf(Float.NaN) }
+    val defaultHeroTop = with(backdropDensity) {
+        (NovumDimens.SafeVertical + NovumDimens.TopBarHeight + NovumDimens.RowGap).toPx()
+    }
     LaunchedEffect(listState) {
         snapshotFlow {
-            val atTop = listState.firstVisibleItemIndex == 0 && listState.firstVisibleItemScrollOffset == 0
-            if (!atTop) {
-                null
-            } else {
-                listState.layoutInfo.visibleItemsInfo
-                    .firstOrNull { it.key == HERO_ROW_KEY }
-                    ?.let { it.offset to it.size }
+            val hero = listState.layoutInfo.visibleItemsInfo.firstOrNull { it.key == HERO_ROW_KEY }
+            hero?.let {
+                recoverHeroRestBounds(
+                    heroOffset = it.offset,
+                    heroHeight = it.size,
+                    firstVisibleIndex = listState.firstVisibleItemIndex,
+                    firstVisibleScrollOffset = listState.firstVisibleItemScrollOffset,
+                    savedRestTop = heroRestTopPx.floatValue,
+                    defaultRestTop = defaultHeroTop,
+                )
             }
         }.collect { hero ->
-            if (hero != null && heroRestTopPx.floatValue.isNaN()) {
-                heroRestTopPx.floatValue = hero.first.toFloat()
-                heroRestBottomPx.floatValue = (hero.first + hero.second).toFloat()
+            if (hero != null) {
+                heroRestTopPx.floatValue = hero.first
+                heroRestBottomPx.floatValue = hero.second
             }
         }
     }

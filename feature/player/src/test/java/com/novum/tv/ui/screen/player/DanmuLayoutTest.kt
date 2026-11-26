@@ -14,6 +14,27 @@ import org.junit.Test
  */
 class DanmuLayoutTest {
 
+    @Test
+    fun compiledTimelineMatchesLayoutWithoutRepeatingTextMeasurementsPerFrame() {
+        val comments = (0 until 60).map { comment(it * 200L, mode = listOf(1, 4, 5)[it % 3], text = "t$it") }
+        val spec = spec()
+        var measurements = 0
+        val timeline = compileDanmuTimeline(comments, spec, 1280f) { measurements++; measure(it) }
+        val compiledMeasurements = measurements
+        listOf(0L, 1000L, 5000L, 10_000L, 2000L).forEach { time ->
+            val frame = mutableListOf<DanmuItem>()
+            timeline.forEachVisible(time) { text, x, y, color -> frame += DanmuItem(text, x, y, color) }
+            val expected = danmuLayout(comments, time, spec, 1280f, ::measure)
+            assertEquals(expected.size, frame.size)
+            expected.zip(frame).forEach { (before, after) ->
+                assertEquals(before.text, after.text)
+                assertEquals(before.y, after.y, 0.001f)
+                assertEquals(before.x, after.x, 0.001f)
+            }
+        }
+        assertEquals(compiledMeasurements, measurements)
+    }
+
     private fun spec(
         laneCount: Int = 4,
         scrollDurationMs: Long = 8_000,

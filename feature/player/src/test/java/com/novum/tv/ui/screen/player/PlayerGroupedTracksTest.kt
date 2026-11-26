@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.media3.common.C
 import androidx.media3.common.Format
 import androidx.media3.common.MimeTypes
+import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
 import androidx.media3.common.TrackGroup
 import androidx.media3.common.TrackSelectionParameters
@@ -11,6 +12,9 @@ import androidx.media3.common.Tracks
 import androidx.test.core.app.ApplicationProvider
 import com.novum.tv.core.player.audioLabel
 import com.novum.tv.core.player.subtitleLabel
+import com.novum.tv.core.player.buildMediaItem
+import com.novum.tv.model.PlaybackPlan
+import com.novum.tv.model.PlayMethod
 import com.novum.tv.data.repository.ItemPlaybackPrefsStore
 import java.lang.reflect.Proxy
 import org.junit.Assert.assertEquals
@@ -144,6 +148,87 @@ class PlayerGroupedTracksTest {
         assertEquals("中英双语", player.instance.subtitleLabel())
     }
 
+    @Test
+    fun simplifiedPreferenceOverridesAnEarlierTraditionalTrackAndDoesNotLoop() {
+        val formats = listOf(
+            Format.Builder().setSampleMimeType(MimeTypes.APPLICATION_SUBRIP).setLanguage("chi").setLabel("繁體中文").build(),
+            Format.Builder().setSampleMimeType(MimeTypes.APPLICATION_SUBRIP).setLanguage("chi").setLabel("简体中文").build(),
+        )
+        val group = group("text", formats)
+        val player = FakePlayer(Tracks(listOf(group)))
+        applySubtitleLanguagePreference(player.instance, "chi")
+        assertEquals(listOf(1), player.parameters.overrides[group.mediaTrackGroup]?.trackIndices)
+        val alreadySelected = FakePlayer(Tracks(listOf(group("text", formats, selected = 1))))
+        applySubtitleLanguagePreference(alreadySelected.instance, "chi")
+        assertEquals(0, alreadySelected.parameterWrites)
+        assertTrue(subtitleLanguageScore(formats[0], "zht") > subtitleLanguageScore(formats[1], "zht"))
+    }
+
+    @Test
+    fun equalLanguageLabellessTracksRestoreTheirSavedFormatId() {
+        val formats = listOf("traditional", "simplified").map {
+            Format.Builder().setSampleMimeType(MimeTypes.APPLICATION_SUBRIP).setLanguage("chi").setId(it).build()
+        }
+        val group = group("text", formats)
+        val player = FakePlayer(Tracks(listOf(group)))
+        assertTrue(applyRememberedSubtitle(player.instance,
+            ItemPlaybackPrefsStore.ItemPrefs("movie", subtitleTrack = ItemPlaybackPrefsStore.TrackRef(
+                "Chinese", language = formats[1].language, rawLabel = "", formatId = "simplified"))))
+        assertEquals(listOf(1), player.parameters.overrides[group.mediaTrackGroup]?.trackIndices)
+    }
+
+    @Test
+    fun replacingABurnedPlanWithDirectPlaybackReenablesSoftSubtitles() {
+        val player = FakePlayer(Tracks(listOf(group("text", subtitleFormats))))
+        assertFalse(applySubtitleEnabledState(player.instance, true, null, true))
+        assertTrue(C.TRACK_TYPE_TEXT in player.parameters.disabledTrackTypes)
+        assertTrue(applySubtitleEnabledState(player.instance, false, null, true))
+        assertFalse(C.TRACK_TYPE_TEXT in player.parameters.disabledTrackTypes)
+        val writes = player.parameterWrites
+        applySubtitleEnabledState(player.instance, false, null, true)
+        assertEquals(writes, player.parameterWrites)
+    }
+
+    @Test
+    fun planResetPreservesManualOffAndHonorsDefaultAndExplicitOnMemory() {
+        val player = FakePlayer(Tracks(listOf(group("text", subtitleFormats))))
+        val closed = ItemPlaybackPrefsStore.ItemPrefs("movie", subtitleDisabled = true)
+        assertFalse(applySubtitleEnabledState(player.instance, false, closed, true))
+        assertTrue(C.TRACK_TYPE_TEXT in player.parameters.disabledTrackTypes)
+        assertFalse(applySubtitleEnabledState(player.instance, false, null, false))
+        val opened = ItemPlaybackPrefsStore.ItemPrefs("movie", subtitleTrack = ItemPlaybackPrefsStore.TrackRef("saved"))
+        assertTrue(applySubtitleEnabledState(player.instance, false, opened, false))
+        assertFalse(C.TRACK_TYPE_TEXT in player.parameters.disabledTrackTypes)
+    }
+
+    @Test
+    fun unsupportedOrStaleManualAudioSelectionNeverOverwritesTrackMemory() {
+        val unsupported = group("audio", audioFormats, supported = false)
+        val player = FakePlayer(Tracks(listOf(unsupported)))
+        var remembered = 0
+        val option = options(player.instance.currentTracks, C.TRACK_TYPE_AUDIO)[1]
+        assertFalse(option.supported)
+        assertFalse(selectManualTrack(player.instance, option, false) { remembered++ })
+        // A previously composed row may still claim support; validate the current runtime group.
+        assertFalse(selectManualTrack(player.instance, option.copy(supported = true), false) { remembered++ })
+        assertFalse(selectManualTrack(player.instance, option.copy(id = "9:1", supported = true), false) { remembered++ })
+        assertEquals(0, remembered)
+        assertEquals(0, player.parameterWrites)
+    }
+
+    @Test
+    fun subtitleSummaryReadsTheActualNewMediaItemAfterSamePlayerPlanReplacement() {
+        val player = FakePlayer(Tracks(listOf(group("text", subtitleFormats, selected = 1))))
+        val plan = PlaybackPlan("https://example.test/a", PlayMethod.Transcode,
+            emptyList(), emptyList(), emptyList(), null, 0L, burnedInSubtitleLabel = "burned-track")
+        player.mediaItem = buildMediaItem(plan, true)
+        assertEquals("burned-track", currentSubtitleLabel(player.instance))
+        player.mediaItem = buildMediaItem(plan.copy(url = "https://example.test/b", burnedInSubtitleLabel = null), true)
+        assertEquals("中英双语", currentSubtitleLabel(player.instance))
+        player.mediaItem = buildMediaItem(plan.copy(url = "https://example.test/c", burnedInSubtitleLabel = "new-burned-track"), true)
+        assertEquals("new-burned-track", currentSubtitleLabel(player.instance))
+    }
+
     private fun options(tracks: Tracks, type: Int) = buildTrackOptions(tracks, type, "Audio", "Text", "%d channels")
 
     private fun TrackOption.trackRef() = ItemPlaybackPrefsStore.TrackRef(
@@ -153,10 +238,10 @@ class PlayerGroupedTracksTest {
         channels = channels,
     )
 
-    private fun group(id: String, formats: List<Format>, selected: Int = 0) = Tracks.Group(
+    private fun group(id: String, formats: List<Format>, selected: Int = 0, supported: Boolean = true) = Tracks.Group(
         TrackGroup(id, *formats.toTypedArray()),
         false,
-        IntArray(formats.size) { C.FORMAT_HANDLED },
+        IntArray(formats.size) { if (supported) C.FORMAT_HANDLED else C.FORMAT_UNSUPPORTED_SUBTYPE },
         BooleanArray(formats.size) { it == selected },
     )
 
@@ -176,6 +261,7 @@ class PlayerGroupedTracksTest {
 
     /** 使用真实 Tracks/参数对象，只替身 Player 访问，不连接媒体地址或启动解码器。 */
     private class FakePlayer(tracks: Tracks) {
+        var mediaItem: MediaItem? = null
         var parameters = TrackSelectionParameters.Builder(ApplicationProvider.getApplicationContext<Context>()).build()
         var parameterWrites = 0
         val instance: Player = Proxy.newProxyInstance(
@@ -184,6 +270,7 @@ class PlayerGroupedTracksTest {
         ) { _, method, arguments ->
             when (method.name) {
                 "getCurrentTracks" -> tracks
+                "getCurrentMediaItem" -> mediaItem
                 "getTrackSelectionParameters" -> parameters
                 "setTrackSelectionParameters" -> {
                     parameterWrites++

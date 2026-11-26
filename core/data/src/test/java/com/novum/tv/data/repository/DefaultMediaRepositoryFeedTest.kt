@@ -28,7 +28,7 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/** 全库追新是 Hero 的唯一来源；内容行排序、续播与失败隔离保持各自契约。 */
+/** 全库追新是 Hero 的唯一来源；扩大轮播候选池不改变可见最新行与续播。 */
 @OptIn(ExperimentalCoroutinesApi::class)
 class DefaultMediaRepositoryFeedTest {
     private val dispatcher: CoroutineDispatcher = StandardTestDispatcher()
@@ -65,16 +65,17 @@ class DefaultMediaRepositoryFeedTest {
     }
 
     @Test
-    fun heroRandomlySamplesOnlyTheSourcesLatestEighteenWithoutGlobalRankingRequests() = runTest(dispatcher) {
-        val source = (1..25).map { candidate("source-$it") }
+    fun heroSamplesAWiderSourcePoolWithoutGrowingTheLatestRow() = runTest(dispatcher) {
+        val source = (1..120).map { candidate("source-$it") }
         val api = FeedApi(sourceItems = source)
         val feed = feed(api)
-        val availableIds = source.take(18).map { it.Id }.toSet()
+        val availableIds = source.take(HERO_CANDIDATE_LIMIT).map { it.Id }.toSet()
 
         assertEquals(HERO_LIMIT, feed.hero.size)
         assertTrue(feed.hero.all { it.id in availableIds })
         assertEquals(18, feed.latest.first().items.size)
-        assertEquals(18, api.latestCalls.single { it.parentId == SOURCE_LIBRARY_ID }.limit)
+        assertEquals(HERO_CANDIDATE_LIMIT, api.latestCalls.single { it.parentId == SOURCE_LIBRARY_ID }.limit)
+        assertTrue("候选不再局限于最新行的18部", feed.hero.any { it.id.removePrefix("source-").toInt() > 18 })
         assertEquals(
             setOf(MOVIE_LIBRARY_ID, SOURCE_LIBRARY_ID, TV_LIBRARY_ID, EMPTY_LIBRARY_ID),
             api.latestCalls.map { it.parentId }.toSet(),

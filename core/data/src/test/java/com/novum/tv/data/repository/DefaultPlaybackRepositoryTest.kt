@@ -42,6 +42,18 @@ import org.junit.Test
 @OptIn(ExperimentalCoroutinesApi::class)
 class DefaultPlaybackRepositoryTest {
 
+    @Test
+    fun actualEncodedSubtitleIsReadOnlyEvenWhenItsMetadataIsMissing() = runTest(dispatcher) {
+        val api = StubPlaybackApi(info = PlaybackInfoDto(MediaSources = listOf(MediaSourceDto(
+            Id = "src", SupportsDirectPlay = false,
+            TranscodingUrl = "/play/master.m3u8?SubtitleMethod=Encode&SubtitleStreamIndex=7",
+            MediaStreams = emptyList(),
+        ))))
+        val plan = (repository(api).plan("movie") as NovumResult.Success).value
+        assertTrue(!plan.burnedInSubtitleLabel.isNullOrBlank())
+        assertTrue(plan.subtitles.isEmpty())
+    }
+
     private val dispatcher: CoroutineDispatcher = StandardTestDispatcher()
 
     private val dispatchers = object : DispatcherProvider {

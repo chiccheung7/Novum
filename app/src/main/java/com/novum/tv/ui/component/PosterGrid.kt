@@ -1,6 +1,5 @@
 package com.novum.tv.ui.component
 
-import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -15,10 +14,8 @@ import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.input.key.Key
@@ -39,7 +36,6 @@ import com.novum.tv.ui.theme.NovumDimens
 import com.novum.tv.ui.theme.NovumFocusTokens
 import kotlin.math.roundToInt
 import kotlinx.coroutines.flow.distinctUntilChanged
-import kotlinx.coroutines.launch
 
 /**
  * 媒体库下钻、收藏与搜索共用的 2:3 海报网格，按可用宽度自适应列数，接近末尾时预加载。
@@ -145,33 +141,8 @@ fun PosterGrid(
         )
         val rowSpacing = if (ROW_GAP > bleed) ROW_GAP else bleed
 
-        // 长按自建重复与 repeat 键流使用即时步进，避免与内建 bring-into-view 动画叠加。
-        val gridScope = rememberCoroutineScope()
-        val rowSpacingPx = with(LocalDensity.current) { rowSpacing.toPx() }
-        // 纵向格距 = 卡高 + 行距，不使用可能被视口裁剪的可见项高度。
-        val rowPitchPx = with(LocalDensity.current) { cardHeight.toPx() } + rowSpacingPx
-        /**
-         * 网格即时位移。
-         *
-         * LazyGridState.scrollBy 仅滚动纵向主轴：
-         * - 上下键按整行位移。
-         * - 左右键只移动焦点，不调用 scrollBy；bring-into-view 保证卡片可见。
-         */
-        val instantGridScroll: (FocusDirection) -> Unit = { dir ->
-            if (dir == FocusDirection.Up || dir == FocusDirection.Down) {
-                if (rowPitchPx > 0f) {
-                    val forward = dir == FocusDirection.Down
-                    gridScope.launch { gridState.scrollBy(if (forward) rowPitchPx else -rowPitchPx) }
-                }
-            }
-        }
-        val holdDirections = remember {
-            mapOf(
-                Key.DirectionUp to FocusDirection.Up,
-                Key.DirectionDown to FocusDirection.Down,
-                Key.DirectionLeft to FocusDirection.Left,
-                Key.DirectionRight to FocusDirection.Right,
-            )
+        val directionKeys = remember {
+            setOf(Key.DirectionUp, Key.DirectionDown, Key.DirectionLeft, Key.DirectionRight)
         }
 
         // bring-into-view 的目标是图区 Card，图下文字不在目标矩形内。
@@ -199,29 +170,17 @@ fun PosterGrid(
                 verticalArrangement = Arrangement.spacedBy(rowSpacing),
                 modifier = Modifier
                     .fillMaxWidth()
-                    // repeat 纵向键流即时移动整行并消费事件，避免系统再次补滚。
-                    // 横向键流交给焦点系统；非 repeat 方向键仅做快扫速率检测。
+                    // 所有方向键均交给焦点系统；LazyGrid 的焦点搜索负责移动条目，
+                    // bring-into-view 负责滚动。只消费会导致视口移动、当前条目焦点不动。
                     .onPreviewKeyEvent { event ->
-                        val isNavDown = event.type == KeyEventType.KeyDown && holdDirections.containsKey(event.key)
-                        if (isNavDown && event.nativeKeyEvent.repeatCount > 0) {
-                            val dir = holdDirections[event.key]!!
-                            val vertical = dir == FocusDirection.Up || dir == FocusDirection.Down
-                            if (vertical) {
-                                // 纵向 repeat：整行即时位移
-                                instantGridScroll(dir)
+                        if (event.type == KeyEventType.KeyDown && event.key in directionKeys) {
+                            if (event.nativeKeyEvent.repeatCount > 0) {
                                 NovumFastNav.poke()
-                                // 消费：避免系统再走一次 bring-into-view 造成双滚
-                                true
                             } else {
-                                // 横向 repeat：不位移、不消费——焦点在列间移动，
-                                // bring-into-view 负责可见性
-                                NovumFastNav.poke()
-                                false
+                                NovumFastNav.onNavKeyDown()
                             }
-                        } else {
-                            if (isNavDown) NovumFastNav.onNavKeyDown()
-                            false
                         }
+                        false
                     }
 
             ) {

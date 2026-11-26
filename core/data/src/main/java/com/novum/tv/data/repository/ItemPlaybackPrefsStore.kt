@@ -39,6 +39,8 @@ class ItemPlaybackPrefsStore(
         val rawLabel: String? = null,
         /** 音轨声道数：区分同语言的「立体声 / 5.1」两条轨；字幕/未知为 null。 */
         val channels: Int? = null,
+        /** Media3 format id distinguishes equal-language, unlabelled tracks in the same media source. */
+        val formatId: String? = null,
     )
 
     @Serializable

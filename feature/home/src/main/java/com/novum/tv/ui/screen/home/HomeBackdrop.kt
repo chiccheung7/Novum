@@ -135,20 +135,27 @@ internal fun FullScreenBackdrop(
     }
 }
 
+/** 从可见 Hero 和保存的滚动位置恢复静止边界；无需把列表先滚回顶部。 */
+internal fun recoverHeroRestBounds(
+    heroOffset: Int,
+    heroHeight: Int,
+    firstVisibleIndex: Int,
+    firstVisibleScrollOffset: Int,
+    savedRestTop: Float,
+    defaultRestTop: Float,
+): Pair<Float, Float> {
+    val top = when {
+        firstVisibleIndex == 0 -> heroOffset.toFloat() + firstVisibleScrollOffset
+        savedRestTop.isFinite() -> savedRestTop
+        else -> defaultRestTop
+    }
+    return top to top + heroHeight
+}
+
 /**
- * 背景两联动滚动进度：`(f, g)`。
- *
- * - **f（过渡段）**：Hero 行位移 / 静止底位——视差、变暗的驱动值；
- * - **g（溶解段）**：背景整组的不透明度倒数。Hero 滚出视口的瞬间到
- *   [HERO_EXIT_DISSOLVE]（半黑），继续往下滚到下一个内容行时到 1（全黑）。
- *
- * g 用「已滚过的距离」而不是「Hero 是否还在视口里」来算：后者在 Hero 恰好
- * 离开视口时会跳变（旧实现直接返回常量），上翻与下翻停在同一行却是两种亮度。
- * Hero 不在 [LazyListState.layoutInfo] 里时，用首可见行的下标 + 行内偏移
- * 续上这段距离——列表结构固定为「0 顶栏 / 1 Hero / 2 起内容行」。
- *
- * 静止几何未捕获（NaN，冷启动首帧/深链恢复）时按完全离场处理（f=g=1）。
- * 绘制期调用，读 [LazyListState] 快照状态只触发重绘不重组。
+ * 背景两联动进度：(视差/变暗，整组溶解)。Hero 离场后用首个可见内容行延续溶解。
+ * 几何尚未恢复时暂时隐藏；[recoverHeroRestBounds] 在 Hero 可见后立即恢复边界。
+ * 绘制期读取列表状态，仅触发重绘。
  */
 internal fun backdropProgress(
     listState: LazyListState,
@@ -171,7 +178,17 @@ internal fun backdropProgress(
             (1f - HERO_EXIT_DISSOLVE) * rowsPastFirstContent.coerceIn(0f, 1f)
         return 1f to g
     }
-    val heroTop = hero.offset.toFloat()
+    return visibleHeroBackdropProgress(
+        hero.offset.toFloat(), heroRestTopPx, heroRestBottomPx, backdropDeadZonePx,
+    )
+}
+
+internal fun visibleHeroBackdropProgress(
+    heroTop: Float,
+    heroRestTopPx: Float,
+    heroRestBottomPx: Float,
+    backdropDeadZonePx: Float,
+): Pair<Float, Float> {
     // 软斜坡（替代硬钳制死区）：
     //   横向移焦点时 bring-into-view 会产生几像素纵向偏移，需要屏蔽；但硬钳制
     //   （<T 取 0、≥T 取实际值）在阈值处会**跳变**——25px 偏移瞬间让背景位移

@@ -54,7 +54,7 @@ data class AppSettings(
     val skipIntro: Boolean = false,
     val skipIntroSeconds: Int = 90,
     /** ASS/SSA 字幕烧录保留样式；开启时协商声明 Encode 并使用转码。 */
-    val assBurnIn: Boolean = false,
+    val assBurnIn: Boolean = true,
     /** 播放失败回写的视频编码列表（逗号分隔），DeviceProfile 协商时排除。 */
     val failedVideoCodecs: String = "",
     val pinnedLineUrl: String = "",

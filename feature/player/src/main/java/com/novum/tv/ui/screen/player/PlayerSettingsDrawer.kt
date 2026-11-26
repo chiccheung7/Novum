@@ -116,6 +116,8 @@ internal data class TrackOption(
     val language: String? = null,
     /** 音轨编码展示名（如「AC-3」「TrueHD」）；字幕轨为 null。 */
     val codec: String? = null,
+    val formatId: String? = null,
+    val supported: Boolean = true,
     /** 容器原始 Format.label（空串 = 容器没给标题）；条目记忆按它定位轨道。 */
     val rawLabel: String = "",
     /** 音轨声道数（>0 时用于记忆定位同语言的多条轨）；未知/字幕为 null。 */
@@ -421,6 +423,7 @@ internal fun PlayerSettingsDrawer(
                         )
 
                         DrawerTab.Subtitle -> SubtitleTab(
+                            burnedInLabel = plan.burnedInSubtitleLabel,
                             textTracks = textTracks,
                             subtitleDelayMs = subtitleDelayMs,
                             onSubtitleDelayChanged = onSubtitleDelayChanged,
@@ -629,6 +632,7 @@ internal fun drawerEpisodeLabel(seasonIndex: Int, episodeIndex: Int, title: Stri
 /** 字幕 tab：字幕延迟微调 + 字幕字号调节 + 字幕高度调节 + 轨道列表（首位「关闭字幕」）。 */
 @Composable
 private fun SubtitleTab(
+    burnedInLabel: String?,
     textTracks: List<TrackOption>,
     subtitleDelayMs: Long,
     onSubtitleDelayChanged: (Long) -> Unit,
@@ -641,6 +645,11 @@ private fun SubtitleTab(
     onSelectText: (TrackOption) -> Unit,
     onAdjustFocus: (Boolean) -> Unit,
 ) {
+    if (burnedInLabel != null) {
+        HintRow(stringResource(R.string.player_subtitle_burned_in))
+        DrawerRow(label = burnedInLabel, value = null, selected = true, enabled = false, onClick = {})
+        return
+    }
     // 页签就叫「字幕」，页内不再重复小标题。
     // 「关闭字幕」原来是轨道列表首行、常亮一块选中底框，看着像个去不掉的框。
     // 布尔语义统一交给开关：开 = 选第一条字幕轨，关 = 选中「关闭字幕」。
@@ -654,7 +663,7 @@ private fun SubtitleTab(
         text = stringResource(R.string.player_drawer_subtitle_switch),
         checked = tracks.any { it.selected },
         onCheckedChange = { enabled ->
-            (if (enabled) tracks.firstOrNull() else offOption)?.let(onSelectText)
+            (if (enabled) tracks.firstOrNull { it.supported } else offOption)?.let(onSelectText)
         },
         consumeAtBoundary = true,
     )
@@ -731,7 +740,7 @@ private fun SubtitleTab(
             onClick = { onSelectText(option) },
             // 只有一条字幕轨时没有可切换的对象：行保留（让用户知道当前用哪条），
             // 但不进焦点链、不显得可操作
-            enabled = tracks.size > 1 || !option.selected,
+            enabled = option.supported && (tracks.size > 1 || !option.selected),
         )
     }
 }
@@ -1074,7 +1083,7 @@ private fun AudioTab(
             value = option.codec,
             selected = option.selected,
             onClick = { onSelectAudio(option) },
-            enabled = !single,
+            enabled = option.supported && !single,
         )
     }
 }

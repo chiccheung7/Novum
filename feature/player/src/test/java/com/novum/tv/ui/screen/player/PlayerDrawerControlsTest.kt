@@ -25,6 +25,7 @@ import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsFocused
+import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onNodeWithContentDescription
@@ -183,11 +184,21 @@ class PlayerDrawerControlsTest {
         savePreview("drawer-watched.png")
     }
 
+    @Test
+    fun unsupportedAudioRowsAreDisabledEvenWhenMultipleTracksExist() {
+        showDrawer(DrawerTab.Audio, audioOptions = listOf(
+            TrackOption("0:0", "Supported audio", true),
+            TrackOption("0:1", "Unsupported audio", false, supported = false),
+        ))
+        composeRule.onNodeWithText("Unsupported audio").assertIsNotEnabled()
+    }
+
     private fun showDrawer(
         tab: DrawerTab,
         fontScale: Float = 1f,
         withSubtitles: Boolean = true,
         withAudioTracks: Boolean = true,
+        audioOptions: List<TrackOption>? = null,
     ) {
         composeRule.activityRule.scenario.onActivity { activity ->
             activity.enableEdgeToEdge()
@@ -207,7 +218,7 @@ class PlayerDrawerControlsTest {
                             onTabsFocusChanged = {},
                             onAdjustFocusChanged = { adjusting = it },
                             modifier = Modifier.align(Alignment.CenterEnd),
-                            audioTracks = if (withAudioTracks) {
+                            audioTracks = audioOptions ?: if (withAudioTracks) {
                                 listOf(TrackOption("audio", "English · 6 channels", true, codec = "AC-3"))
                             } else {
                                 emptyList()

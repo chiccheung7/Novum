@@ -90,15 +90,15 @@ data class DetailUiState(
      * 选集卡选中集 id（「点卡只切当前集」）：非 null 时播放/
      * 从头播放/已看三个图标与页面背景跟随该集。**不再切换标题与简介**——
      * 剧集详情页信息块恒为剧集内容，分集标题与简介在选集卡下方。
-     * null = 未手动选中（图标按默认播放目标集渲染）。进入路径：分集卡 OK 选中
+     * null = 未手动选中（图标按默认播放目标集渲染）。进入路径：分集卡获得焦点
      * （[selectEpisode]）或继续观看入口直达（路由 focusCurrentEpisode + NextUp
-     * 锚点）；返回键清空（[clearEpisodeContext]，焦点还给该卡）。切季/整页重载清空。
+     * 锚点）；切季/整页重载清空。返回键直接退出详情页，不重置选中集。
      */
     val episodeContextId: String? = null,
 
     /**
      * 集级语境是否来自进场直达（继续观看入口）：true 时页面把首焦交给播放
-     * 按钮；用户 OK 选中（[selectEpisode]）后置 false——选中走「留卡」规则，
+     * 按钮；用户浏览到分集卡时（[selectEpisode]）后置 false——焦点留在卡上，
      * 焦点保持在分集卡上不被抢走。
      */
     val episodeContextFromEntry: Boolean = false,
@@ -462,7 +462,7 @@ class DetailViewModel @Inject constructor(
     }
 
     /**
-     * 分集卡 OK 选中（「点卡只切当前集」）：当前集切为该集
+     * 分集卡获得焦点或用户确认（「点卡即播放」）：当前集切为该集
      * 播放/从头播放/已看图标与页面背景随之变化；**标题与简介不变**（剧集详情页
      * 信息块恒为剧集内容，分集标题/简介在选集卡下方）。选中走「留卡」规则：
      * [DetailUiState.episodeContextFromEntry] 置 false，页面不抢焦点。
@@ -477,7 +477,7 @@ class DetailViewModel @Inject constructor(
         refreshRememberedVersion()
     }
 
-    /** 返回键清空当前集选中（图标回落默认播放目标集，焦点由页面还给那张卡）。 */
+    /** 显式清空当前集选中，操作目标回落默认播放集；页面返回不调用此操作。 */
     fun clearEpisodeContext() {
         _state.update {
             it.copy(episodeContextId = null, episodeContextFromEntry = false)
@@ -538,13 +538,13 @@ class DetailViewModel @Inject constructor(
             coroutineScope {
                 episodes.map { episode ->
                     async {
-                        if (episode.played == played) {
+                        if (episode.played == played && episode.progressMs == 0L) {
                             // 本来就处于目标态，无需请求，也算"已到位"
                             succeeded += episode.id
                             return@async
                         }
                         semaphore.withPermit {
-                            when (repository.setPlayed(episode.id, played)) {
+                            when (repository.setPlayedAndResetProgress(episode.id, played)) {
                                 is NovumResult.Success -> succeeded += episode.id
                                 else -> failures += 1
                             }
@@ -552,12 +552,14 @@ class DetailViewModel @Inject constructor(
                     }
                 }.awaitAll()
             }
-            // 本季未看数按"实际到位的集数"重算（全部到位 → 0 或全集数），
-            // 让"已看 x/y 集"与批量标记结果一致。
+            // 先合并成功项，再按全部分集的最终观看状态计数。原本未看但有进度的集
+            // 清零失败时仍然未看，不能因为不在 succeeded 中就漏计。
+            val mergedEpisodes = episodes.map { ep ->
+                if (ep.id in succeeded) ep.copy(played = played, progressMs = 0L) else ep
+            }
+            val newUnplayed = mergedEpisodes.count { !it.played }
             fun applyResult(current: DetailUiState, detail: UiState<MediaDetail>): DetailUiState {
                 val seasonIndex = episodes.firstOrNull()?.seasonIndex
-                val total = episodes.size
-                val newUnplayed = if (played) total - succeeded.size else succeeded.size
                 val seasons = if (seasonIndex == null) {
                     current.seasons
                 } else {
@@ -569,7 +571,7 @@ class DetailViewModel @Inject constructor(
                     playedBusy = false,
                     episodes = current.episodes.map { ep ->
                         if (ep.id in succeeded) {
-                            ep.copy(played = played, progressMs = if (played) 0L else ep.progressMs)
+                            ep.copy(played = played, progressMs = 0L)
                         } else {
                             ep
                         }

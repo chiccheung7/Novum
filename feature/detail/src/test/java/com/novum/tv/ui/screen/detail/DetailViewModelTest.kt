@@ -48,7 +48,7 @@ import org.robolectric.annotation.Config
  *
  * 覆盖：电影/剧集加载、默认季选择（未看集优先 → 第一常规季 → 第一个）
  * 标为已看的乐观切换（成功校正 + 失败回滚 + 内联标记）、收藏状态
- * 当前集选中（进场直达/点卡切当前集/返回清选中/切季清空）
+ * 当前集选中（进场直达/焦点切当前集/显式清选中/切季清空）
  * 与优先视频质量策略读取。
  *
  * state 是 StateFlow：空转测试调度器后读 `.value` 即终态（
@@ -762,7 +762,7 @@ class DetailViewModelTest {
     @Test
     fun currentEpisodeFollowsSelectionAndFallsBackToDefault() = runTest {
         // 点卡只切当前集：currentEpisode = 选中集
-        // 清选中（返回键）回落默认播放目标集——操作行图标与页面背景都跟它走
+        // 显式清选中回落默认播放目标集——页面返回直接退出，不再触发此操作
         val seasons = listOf(season("s1", index = 1, unplayed = 8))
         val repository = FakeDetailRepository(
             detail = seriesDetail(),
@@ -817,6 +817,49 @@ class DetailViewModelTest {
         assertFalse("series 本身不得被打标记", repository.playedCalls.any { it.first == "se1" })
         assertTrue("本季分集应全部置已看", viewModel.state.value.episodes.all { it.played })
         assertEquals("成功提示应为整季已看", 1, toast.texts.size)
+    }
+
+    @Test
+    fun markSeasonWatchedClearsProgressEvenForEpisodesAlreadyMarkedWatched() = runTest {
+        val repository = FakeDetailRepository(
+            detail = seriesDetail(),
+            seasons = listOf(season("s1", 1, unplayed = 1)),
+            episodesFor = mapOf("s1" to listOf(
+                episode("e1").copy(progressMs = 60_000L),
+                episode("e2", played = true).copy(progressMs = 120_000L),
+                episode("e3", played = true),
+            )),
+        )
+        val (vm, _) = viewModel(repository, itemId = "se1")
+        advanceUntilIdle()
+
+        vm.markSeasonPlayed(true)
+        advanceUntilIdle()
+
+        assertEquals(listOf("e1" to true, "e2" to true), repository.playedCalls.sortedBy { it.first })
+        assertTrue(vm.state.value.episodes.all { it.played && it.progressMs == 0L })
+        assertEquals(0, vm.state.value.seasons.single().unplayedCount)
+    }
+
+    @Test
+    fun markSeasonUnwatchedAlsoResetsPartlyWatchedEpisodeProgress() = runTest {
+        val repository = FakeDetailRepository(
+            detail = seriesDetail(),
+            seasons = listOf(season("s1", 1, unplayed = 1)),
+            episodesFor = mapOf("s1" to listOf(
+                episode("e1").copy(progressMs = 60_000L),
+                episode("e2", played = true),
+            )),
+        )
+        val (vm, _) = viewModel(repository, itemId = "se1")
+        advanceUntilIdle()
+
+        vm.markSeasonPlayed(false)
+        advanceUntilIdle()
+
+        assertEquals(listOf("e1" to false, "e2" to false), repository.playedCalls.sortedBy { it.first })
+        assertTrue(vm.state.value.episodes.all { !it.played && it.progressMs == 0L })
+        assertEquals(2, vm.state.value.seasons.single().unplayedCount)
     }
 
     @Test
@@ -1063,6 +1106,40 @@ class DetailViewModelTest {
         assertTrue("成功的 e1 应为已看", eps.getValue("e1").played)
         assertFalse("失败的 e2 必须保持未看", eps.getValue("e2").played)
         assertTrue("部分失败应提示", toast.texts.any { it.contains("部分") })
+    }
+
+    @Test
+    fun seasonUnwatchedCountIncludesAlreadyUnwatchedEpisodesWhoseProgressResetFailed() = runTest {
+        val repository = FakeDetailRepository(
+            detail = seriesDetail(),
+            seasons = listOf(season("s1", 1, unplayed = 2)),
+            episodesFor = mapOf("s1" to listOf(
+                episode("e1").copy(progressMs = 60_000L),
+                episode("e2", played = true),
+                episode("e3", played = true).copy(progressMs = 120_000L),
+                episode("e4"),
+            )),
+            playedResult = { id, played ->
+                if (id == "e1" || id == "e3") NovumResult.Failure(NovumError.Network())
+                else NovumResult.Success(played)
+            },
+        )
+        val (vm, toast) = viewModel(repository, itemId = "se1")
+        advanceUntilIdle()
+
+        vm.markSeasonPlayed(false)
+        advanceUntilIdle()
+
+        val result = vm.state.value.episodes.associateBy { it.id }
+        assertFalse(result.getValue("e1").played)
+        assertEquals("重置失败保留原进度", 60_000L, result.getValue("e1").progressMs)
+        assertFalse(result.getValue("e2").played)
+        assertEquals(0L, result.getValue("e2").progressMs)
+        assertTrue("原本已看且重置失败的集仍已看", result.getValue("e3").played)
+        assertFalse(result.getValue("e4").played)
+        assertEquals("未看计数应匹配合并结果，不应仅数成功请求", 3, vm.state.value.seasons.single().unplayedCount)
+        assertEquals(3, vm.state.value.episodes.count { !it.played })
+        assertTrue(toast.texts.any { it.contains("部分") })
     }
 
     @Test

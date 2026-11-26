@@ -7,6 +7,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.nativeCanvas
@@ -17,6 +20,8 @@ import com.novum.tv.model.DanmuComment
 import com.novum.tv.model.DanmuConfig
 import com.novum.tv.model.DanmuArea
 import kotlinx.coroutines.isActive
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlin.math.sqrt
 
 /**
@@ -276,8 +281,7 @@ internal fun DanmuOverlay(
         var lastTickMs = 0L
         while (isActive) {
             withFrameNanos { frameNs ->
-                // 30fps 足够让滚动弹幕平滑（横向每帧移动约 1% 屏宽）；
-                // 60fps 会把 GPU 绘制占满，视频解码/UI 都会跟着卡。
+                // 与显示时钟同步，最多 60fps；播放暂停时不请求多余重绘。
                 val nowMs = frameNs / 1_000_000L
                 if (nowMs - lastTickMs >= DANMU_TICK_MS) {
                     lastTickMs = nowMs
@@ -325,23 +329,101 @@ internal fun DanmuOverlay(
                 color = android.graphics.Color.BLACK
             }
         }
-        val widths = remember(fontPx) { TextWidthCache(fillPaint) }
+        var timeline by remember(comments, spec, widthPx) { mutableStateOf<DanmuTimeline?>(null) }
+        LaunchedEffect(comments, spec, widthPx) {
+            // Lane assignment and text measurement used to replay the preceding 16 seconds on
+            // every video frame. Compile once off the UI thread, then only update x positions.
+            timeline = withContext(Dispatchers.Default) {
+                val measurePaint = android.graphics.Paint(fillPaint)
+                val widths = TextWidthCache(measurePaint)
+                compileDanmuTimeline(comments, spec, widthPx, widths::width)
+            }
+        }
         Canvas(modifier = Modifier.fillMaxSize()) {
             // 渲染时间 = 播放位置 - 偏移（偏移正=弹幕延后出现）
             val renderPosition = clockMs.longValue - offsetMs
-            val items = danmuLayout(comments, renderPosition, spec, widthPx, widths::width)
             val alpha = (config.opacity.coerceIn(0.1f, 1f) * 255).toInt()
             val canvas = drawContext.canvas.nativeCanvas
-            items.forEach { item ->
-                val baseline = item.y + fontPx
+            timeline?.forEachVisible(renderPosition) { text, x, y, color ->
+                val baseline = y + fontPx
                 outlinePaint.alpha = alpha
-                canvas.drawText(item.text, item.x, baseline, outlinePaint)
-                fillPaint.color = item.color.toInt()
+                canvas.drawText(text, x, baseline, outlinePaint)
+                fillPaint.color = color.toInt()
                 fillPaint.alpha = alpha
-                canvas.drawText(item.text, item.x, baseline, fillPaint)
+                canvas.drawText(text, x, baseline, fillPaint)
             }
         }
     }
+}
+
+internal data class ScheduledDanmu(
+    val comment: DanmuComment,
+    val width: Float,
+    val y: Float,
+    val durationMs: Long,
+)
+
+/** Seek-safe immutable schedule: no lane arrays, item lists or text measurements per frame. */
+internal class DanmuTimeline(
+    private val entries: List<ScheduledDanmu>,
+    private val widthPx: Float,
+    private val maxDurationMs: Long,
+) {
+    fun forEachVisible(positionMs: Long, draw: (String, Float, Float, Long) -> Unit) {
+        var low = 0
+        var high = entries.size
+        while (low < high) {
+            val mid = (low + high) ushr 1
+            if (entries[mid].comment.timeMs < positionMs - maxDurationMs) low = mid + 1 else high = mid
+        }
+        var visible = 0
+        var index = low
+        while (index < entries.size && visible < DANMU_MAX_VISIBLE) {
+            val entry = entries[index++]
+            val elapsed = positionMs - entry.comment.timeMs
+            if (elapsed < 0L) break
+            if (elapsed > entry.durationMs) continue
+            val x = if (entry.comment.mode == 1) {
+                widthPx - (widthPx + entry.width) * elapsed.toFloat() / entry.durationMs
+            } else (widthPx - entry.width) / 2f
+            draw(entry.comment.text, x, entry.y, entry.comment.color)
+            visible++
+        }
+    }
+}
+
+internal fun compileDanmuTimeline(
+    comments: List<DanmuComment>, spec: DanmuLayoutSpec, widthPx: Float, measure: (String) -> Float,
+): DanmuTimeline {
+    if (spec.laneCount == 0) return DanmuTimeline(emptyList(), widthPx, 0L)
+    val free = LongArray(spec.laneCount)
+    val exit = LongArray(spec.laneCount)
+    val top = LongArray(spec.laneCount)
+    val bottom = LongArray(spec.laneCount)
+    val entries = ArrayList<ScheduledDanmu>()
+    comments.forEach { comment ->
+        if (!danmuKeptByDensity(comment, spec.density)) return@forEach
+        val width = measure(comment.text)
+        val lane = when (comment.mode) {
+            1 -> pickScrollLane(free, exit, comment.timeMs, widthPx, width, spec.scrollDurationMs)
+            5 -> firstFreeLane(top, comment.timeMs, spec.laneCount)
+            4 -> firstFreeLane(bottom, comment.timeMs, spec.laneCount)
+            else -> -1
+        }
+        if (lane < 0) return@forEach
+        val duration = if (comment.mode == 1) spec.scrollDurationMs else spec.fixedDurationMs
+        when (comment.mode) {
+            1 -> {
+                free[lane] = comment.timeMs + (duration * (width + DANMU_LANE_GAP_PX) / (widthPx + width)).toLong()
+                exit[lane] = comment.timeMs + duration
+            }
+            5 -> top[lane] = comment.timeMs + duration
+            4 -> bottom[lane] = comment.timeMs + duration
+        }
+        val row = if (comment.mode == 4) spec.laneCount - lane - 1 else lane
+        entries += ScheduledDanmu(comment, width, spec.topInsetPx + row * spec.laneHeightPx, duration)
+    }
+    return DanmuTimeline(entries, widthPx, maxOf(spec.scrollDurationMs, spec.fixedDurationMs))
 }
 
 /** 文本宽度缓存：同一字号下重复出现的弹幕不再逐帧 measureText。 */

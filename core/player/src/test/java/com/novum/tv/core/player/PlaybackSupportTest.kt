@@ -26,6 +26,14 @@ import org.robolectric.annotation.Config
 @Config(sdk = [35])
 class PlaybackSupportTest {
 
+    @Test
+    fun encodedSubtitlesNeverAlsoAttachAnExternalSubtitle() {
+        val plan = plan(listOf(subtitle("s1"))).copy(burnedInSubtitleLabel = "Subtitle 7")
+        val item = buildMediaItem(plan, subtitlesEnabled = true)
+        assertTrue(item.localConfiguration?.subtitleConfigurations.isNullOrEmpty())
+        assertEquals(plan, item.localConfiguration?.tag)
+    }
+
     private fun plan(subtitles: List<SubtitleSource>) = PlaybackPlan(
         url = "http://host:8096/Videos/1/stream",
         method = PlayMethod.DirectPlay,

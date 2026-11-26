@@ -55,6 +55,7 @@ dependencies {
     implementation(libs.androidx.hilt.lifecycle.viewmodel.compose)
     implementation(libs.media3.exoplayer)
     implementation(libs.media3.ui.compose)
+    implementation(libs.media3.ui)
     implementation(libs.media3.datasource.okhttp)
     implementation(libs.okhttp)
     implementation(project(":core:network"))

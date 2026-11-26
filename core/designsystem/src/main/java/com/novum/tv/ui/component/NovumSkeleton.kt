@@ -21,6 +21,7 @@ import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.unit.Dp
@@ -101,13 +102,17 @@ fun NovumSkeletonCardGrid(
 ) {
     BoxWithConstraints(modifier = modifier.fillMaxSize()) {
         val contentWidth = maxWidth - NovumDimens.SafeHorizontal * 2
-        val target = if (aspectRatio == POSTER_ASPECT) NovumDimens.PosterCardWidth else NovumDimens.CardWidth
-        val columns = mediaGridColumns(contentWidth.value, target.value)
-        val cardWidth = mediaCardWidth(contentWidth, target)
+        val isPoster = aspectRatio == POSTER_ASPECT
+        val cardWidth = mediaRowCardWidth(contentWidth, aspectRatio)
+        val columns = if (isPoster) {
+            mediaGridColumns(contentWidth.value)
+        } else {
+            ((contentWidth + NovumDimens.CardGap) / (cardWidth + NovumDimens.CardGap)).toInt().coerceAtLeast(1)
+        }
         val cardHeight = cardWidth / aspectRatio + NovumDimens.CardTextBlockMaxHeight(1)
         val bleed = NovumFocusTokens.bleed(maxOf(cardWidth, cardHeight))
         LazyVerticalGrid(
-            columns = GridCells.Fixed(columns),
+            columns = if (isPoster) GridCells.Fixed(columns) else GridCells.FixedSize(cardWidth),
             modifier = Modifier.fillMaxSize(),
             contentPadding = PaddingValues(
                 start = NovumDimens.SafeHorizontal,
@@ -124,7 +129,10 @@ fun NovumSkeletonCardGrid(
                     Box(modifier = Modifier.padding(bottom = NovumDimens.RowGap)) { header() }
                 }
             }
-            items(columns * rows) { NovumSkeletonCard(cardWidth, aspectRatio = aspectRatio) }
+            items(columns * rows) { index ->
+                NovumSkeletonCard(cardWidth, aspectRatio = aspectRatio,
+                    modifier = Modifier.testTag("media-skeleton-card-$index"))
+            }
         }
     }
 }

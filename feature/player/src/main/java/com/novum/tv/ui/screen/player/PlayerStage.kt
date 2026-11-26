@@ -49,6 +49,7 @@ import androidx.media3.common.Tracks
 import androidx.media3.common.VideoSize
 import androidx.media3.ui.compose.SURFACE_TYPE_SURFACE_VIEW
 import androidx.media3.common.text.CueGroup
+import androidx.media3.common.text.Cue
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.compose.PlayerSurface
 import androidx.tv.material3.Icon
@@ -58,7 +59,6 @@ import com.novum.tv.core.player.seekStepMs
 import com.novum.tv.core.player.audioLabel
 import com.novum.tv.core.player.audioOutputLabel
 import com.novum.tv.core.player.buildMediaItem
-import com.novum.tv.core.player.subtitleLabel
 import com.novum.tv.feature.player.BuildConfig
 import com.novum.tv.model.Chapter
 import com.novum.tv.model.Episode
@@ -131,6 +131,7 @@ internal fun PlayerStage(
     title: String,
     /** 左上角 ClearLogo（标题位换透明底标题图）；null 回落文本标题。 */
     logoUrl: String?,
+    episodeTitle: String? = null,
     overview: String? = null,
     subtitle: String,
     subtitleSize: Int,
@@ -181,9 +182,9 @@ internal fun PlayerStage(
 ) {
     var isPlaying by remember { mutableStateOf(true) }
     var buffering by remember { mutableStateOf(false) }
-    var cueText by remember { mutableStateOf("") }
+    var subtitleCues by remember { mutableStateOf<List<Cue>>(emptyList()) }
     val cueHandler = remember { android.os.Handler(android.os.Looper.getMainLooper()) }
-    val cueScheduler = remember(cueHandler) { CueDelayScheduler(cueHandler) { cueText = it } }
+    val cueScheduler = remember(cueHandler) { CueDelayScheduler(cueHandler) { subtitleCues = it } }
     var audioLabel by remember { mutableStateOf("") }
     // 音频输出路径文案（信息面板实时展示）；取好在协程里捕获，避免 Composable 上下文外调用
     val audioPcmText = stringResource(R.string.player_audio_out_pcm)
@@ -239,6 +240,7 @@ internal fun PlayerStage(
     var drawerAdjusting by remember { mutableStateOf(false) }
     var audioTracks by remember { mutableStateOf<List<TrackOption>>(emptyList()) }
     var textTracks by remember { mutableStateOf<List<TrackOption>>(emptyList()) }
+    var activeBurnedInLabel by remember(plan.url) { mutableStateOf(plan.burnedInSubtitleLabel) }
 
     // 兜底状态：一旦切过转码就不再切回，避免在两个地址之间反复横跳
     var fallbackUsed by remember(plan.url) { mutableStateOf(false) }
@@ -250,11 +252,9 @@ internal fun PlayerStage(
     val position = remember { mutableLongStateOf(plan.startPositionMs) }
     val duration = remember { mutableLongStateOf(0L) }
     val buffered = remember { mutableLongStateOf(0L) }
-    // 缓冲速度（bps）：「缓冲速度经常不变」根治——带宽计的
-    // EMA 在慢速滴流下长期不动，改用「缓冲前沿推进速率 × 流码率」估算实时下载
-    // 速率（缓冲期播放位置静止，前沿推进 = 真实下载量）；码率未知退回带宽估计
-    val bandwidthBps = remember { mutableLongStateOf(0L) }
-    val lastBufferedMs = remember { mutableLongStateOf(0L) }
+    // -1 表示尚无样本；0 表示当前采样区间没有网络字节。
+    val bandwidthBps = remember { mutableLongStateOf(-1L) }
+    val bandwidthEstimateLive by rememberUpdatedState(bandwidthEstimate)
 
     // 播放实时状态：listener 写画面尺寸/丢帧，轮询写显示
     // 模式/缓冲/带宽；只在抽屉·画质 tab 在场时被读取（常态零重组成本）
@@ -353,8 +353,10 @@ internal fun PlayerStage(
 
             PlaybackRecoveryAction.UseFallback -> {
                 fallbackUsed = true
+                activeBurnedInLabel = plan.fallbackBurnedInSubtitleLabel
                 player.setMediaItem(
-                    buildMediaItem(plan.copy(url = requireNotNull(plan.fallbackUrl)), subtitlesEnabled),
+                    buildMediaItem(plan.copy(url = requireNotNull(plan.fallbackUrl),
+                        burnedInSubtitleLabel = activeBurnedInLabel), subtitlesEnabled),
                     positionMs.coerceAtLeast(0L),
                 )
                 player.prepare()
@@ -396,21 +398,18 @@ internal fun PlayerStage(
             }
 
             override fun onCues(cueGroup: CueGroup) {
-                val text = cueGroup.cues
-                    .mapNotNull { it.text?.toString()?.takeIf(String::isNotBlank) }
-                    .joinToString("\n")
                 // 字幕延迟微调：撤销上一条未执行任务，避免旧 cue 覆盖新 cue
-                cueScheduler.submit(text, subtitleDelayLive)
+                cueScheduler.submit(cueGroup.cues, subtitleDelayLive)
                 // 字幕是外挂文件，出问题时（轨已选中但屏幕没字）没有别的观测点，
                 // 这条日志是排查「字幕轨通、渲染不通」的唯一线索；Release 自动静默。
-                if (BuildConfig.DEBUG && text.isNotEmpty()) {
-                    android.util.Log.d(CUE_LOG_TAG, "cue: $text")
+                if (BuildConfig.DEBUG && cueGroup.cues.isNotEmpty()) {
+                    android.util.Log.d(CUE_LOG_TAG, "cues=${cueGroup.cues.size}, bitmap=${cueGroup.cues.count { it.bitmap != null }}")
                 }
             }
 
             override fun onTracksChanged(tracks: androidx.media3.common.Tracks) {
                 audioLabel = player.audioLabel()
-                subtitleLabel = player.subtitleLabel()
+                subtitleLabel = currentSubtitleLabel(player)
             }
 
             override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
@@ -483,20 +482,7 @@ internal fun PlayerStage(
             position.longValue = player.currentPosition.coerceAtLeast(0L)
             duration.longValue = player.duration.takeIf { it != C.TIME_UNSET && it > 0 } ?: 0L
             buffered.longValue = player.bufferedPosition.coerceAtLeast(0L)
-            // 缓冲速度（「经常不变」根治）：带宽计 EMA 在慢速
-            // 滴流下长期不动——改用「缓冲前沿推进速率 × 流码率」估算实时下载速率
-            // （缓冲期播放位置静止，前沿推进 = 真实下载量）；码率未知退回带宽估计
-            val bufferedNow = buffered.longValue
-            val streamBitrate = player.videoFormat?.bitrate?.takeIf { it > 0L }
-            bandwidthBps.longValue = when {
-                streamBitrate != null && bufferedNow > lastBufferedMs.longValue ->
-                    (bufferedNow - lastBufferedMs.longValue) * streamBitrate / POSITION_TICK_MS
-
-                // 缓冲前沿没推进（卡住/片尾）时用带宽计估计兜底：
-                // 旧实现这里直接给 0，界面看起来就是"速度一直不动"
-                else -> bandwidthEstimate()
-            }
-            lastBufferedMs.longValue = bufferedNow
+            bandwidthBps.longValue = bandwidthEstimateLive()
             // 实时状态（画质 tab）：显示模式切换异步生效，500ms 轮询正好捕捉落地
             liveStats.bufferedPercentage = player.bufferedPercentage
             liveStats.bufferedAheadSeconds =
@@ -918,17 +904,17 @@ internal fun PlayerStage(
         // 字幕落位：宽银幕影片时放进**下黑边区域**
         // 且与画面下缘保持距离（不紧贴黑边上部）——按视频比例反算黑边高度
         BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
-            val bottomBarHeight = videoAspectRatio
-                ?.let { aspect -> ((maxHeight - maxHeight / aspect) / 2).coerceAtLeast(0.dp) }
-                ?: 0.dp
+            val bottomBarHeight = bottomLetterboxHeight(maxWidth.value, maxHeight.value, videoAspectRatio, scaleMode).dp
             SubtitleLayer(
-                text = cueText,
+                cues = subtitleCues,
                 sizeLevel = subtitleSize,
                 weightLevel = subtitleWeight,
                 offsetLevel = subtitleOffsetLevel,
                 controlsShown = controlsVisible || peeked,
                 bottomBarHeight = bottomBarHeight,
-                modifier = Modifier.align(Alignment.BottomCenter),
+                videoAspectRatio = videoAspectRatio,
+                scaleMode = scaleMode,
+                modifier = Modifier.fillMaxSize(),
             )
         }
 
@@ -937,7 +923,7 @@ internal fun PlayerStage(
             // 网速只在有估计值时显示（起播首轮/本地无数据时不挂空文案）
             // 缓冲网速按网络传输习惯用 MB/s（÷8 字节口径）
             // 抽屉画质 tab 的规格行仍用 Mbps 码率口径（formatBitrate）
-            speedText = bandwidthBps.longValue.takeIf { it > 0L }?.let(::formatSpeed),
+            speedText = bandwidthBps.longValue.takeIf { it >= 0L }?.let(::formatSpeed),
             modifier = Modifier.align(Alignment.Center),
         )
 
@@ -952,6 +938,8 @@ internal fun PlayerStage(
         PlayerControlOverlay(
             title = title,
             logoUrl = logoUrl,
+            episodeTitle = episodeTitle,
+            networkSpeed = bandwidthBps,
             chapters = chapters,
             isPlaying = isPlaying,
             interactive = controlsVisible && !confirmExit,
@@ -1090,7 +1078,7 @@ internal fun PlayerStage(
                 audioTracks = audioTracks,
                 textTracks = textTracks,
                 passthrough = audioPassthrough,
-                plan = plan,
+                plan = plan.copy(burnedInSubtitleLabel = activeBurnedInLabel),
                 title = title,
                 subtitle = subtitle,
                 overview = overview,
@@ -1112,12 +1100,12 @@ internal fun PlayerStage(
                 danmuActions = danmuActions,
                 danmuSearchPrefill = danmuSearchPrefill,
                 onSelectAudio = { option ->
-                    onRememberTrack(option, false)
-                    selectTrack(player, option, isText = false)
+                    selectManualTrack(player, option, isText = false) { onRememberTrack(option, false) }
                 },
                 onSelectText = { option ->
-                    onRememberTrack(option, true)
-                    selectTrack(player, option, isText = true)
+                    if (activeBurnedInLabel == null) {
+                        selectManualTrack(player, option, isText = true) { onRememberTrack(option, true) }
+                    }
                 },
                 onTogglePassthrough = {
                     drawerVisible = false
@@ -1249,24 +1237,24 @@ internal fun PlayerStage(
  * 字幕延迟调度：新 cue 到达时先撤销上一条未执行的延迟任务，
  * 延迟归零时立即显示且不再排任务，避免旧字幕覆盖新字幕。
  */
-private class CueDelayScheduler(
+internal class CueDelayScheduler(
     private val handler: android.os.Handler,
-    private val onText: (String) -> Unit,
+    private val onCues: (List<Cue>) -> Unit,
 ) {
     private var pending: Runnable? = null
 
-    fun submit(text: String, delayMs: Long) {
+    fun submit(cues: List<Cue>, delayMs: Long) {
         pending?.let(handler::removeCallbacks)
         pending = null
         if (delayMs > 0) {
             val runnable = Runnable {
                 pending = null
-                onText(text)
+                onCues(cues)
             }
             pending = runnable
             handler.postDelayed(runnable, delayMs)
         } else {
-            onText(text)
+            onCues(cues)
         }
     }
 

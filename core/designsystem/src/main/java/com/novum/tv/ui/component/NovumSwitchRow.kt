@@ -6,6 +6,7 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -14,6 +15,7 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -35,6 +37,7 @@ import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
@@ -94,13 +97,12 @@ fun NovumSwitchRow(
 }
 
 /**
- * 行内开关（紧凑形态）：用于和按钮并排（登录页「记住我 + 登录」），
- * 语义、焦点描边与左右键切换和 [NovumSwitchRow] 完全一致，只是不占满整行。
+ * 行内开关：标签只作说明，焦点与高亮仅落在开关控件上。
  *
  * @param text 文案。
  * @param checked 是否开启。
  * @param onCheckedChange 切换回调。
- * @param modifier 外部修饰符（通常传 `Modifier.weight(1f)`）。
+ * @param modifier 外部修饰符。
  * @param focusRequester 焦点索取器。
  * @param onFocused 焦点变化回调。
  */
@@ -112,19 +114,71 @@ fun NovumSwitchInline(
     modifier: Modifier = Modifier,
     focusRequester: FocusRequester? = null,
     onFocused: ((Boolean) -> Unit)? = null,
+    labelSpacing: Dp = 8.dp,
 ) {
-    SwitchRow(
-        text = text,
-        checked = checked,
-        onCheckedChange = onCheckedChange,
-        modifier = modifier,
-        focusRequester = focusRequester,
-        onFocused = onFocused,
-        horizontalPadding = 16.dp,
-        verticalPadding = 10.dp,
-        consumeAtBoundary = false,
-        enabled = true,
+    var focused by remember { mutableStateOf(false) }
+    val stateText = stringResource(
+        if (checked) R.string.settings_state_on else R.string.settings_state_off,
     )
+    Row(
+        modifier = modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(labelSpacing, Alignment.End),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text = text,
+            style = NovumType.Body,
+            color = NovumPalette.Paper,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f, fill = false),
+        )
+        Box(
+            modifier = Modifier
+                .size(width = 72.dp, height = 48.dp)
+                .clip(NovumShapes.Pill)
+                .background(if (focused) NovumPalette.RowSelected else Color.Transparent)
+                .border(
+                    width = if (focused) 2.dp else 0.dp,
+                    color = if (focused) NovumPalette.Paper else Color.Transparent,
+                    shape = NovumShapes.Pill,
+                )
+                .then(if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier)
+                .onFocusChanged { focused = it.isFocused; onFocused?.invoke(it.isFocused) }
+                .onPreviewKeyEvent { event ->
+                    if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                    when (event.key) {
+                        Key.DirectionLeft -> if (checked) {
+                            onCheckedChange(false)
+                            true
+                        } else {
+                            false
+                        }
+
+                        Key.DirectionRight -> if (!checked) {
+                            onCheckedChange(true)
+                            true
+                        } else {
+                            false
+                        }
+
+                        else -> false
+                    }
+                }
+                .toggleable(
+                    value = checked,
+                    role = Role.Switch,
+                    onValueChange = onCheckedChange,
+                )
+                .semantics {
+                    contentDescription = text
+                    stateDescription = stateText
+                },
+            contentAlignment = Alignment.Center,
+        ) {
+            NovumSwitch(checked = checked)
+        }
+    }
 }
 
 /**

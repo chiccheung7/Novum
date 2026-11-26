@@ -34,8 +34,7 @@ import com.novum.tv.ui.component.NovumGridFocusScrollScope
 import com.novum.tv.ui.component.NovumInitialFocus
 import com.novum.tv.ui.component.NovumSkeletonCardGrid
 import com.novum.tv.ui.component.NovumStateView
-import com.novum.tv.ui.component.mediaCardWidth
-import com.novum.tv.ui.component.mediaGridColumns
+import com.novum.tv.ui.component.mediaRowCardWidth
 import com.novum.tv.ui.theme.NovumDimens
 import com.novum.tv.ui.theme.NovumFocusTokens
 import com.novum.tv.ui.theme.NovumPalette
@@ -101,10 +100,10 @@ fun LibrariesScreen(
 }
 /**
  * 库卡网格：与首页续播、详情选集共用 [NovumDimens.CardWidth] 目标宽度。
- * 列数与实际卡宽由共享布局函数计算，出血按同一实际尺寸反推。
+ * 与横卡行使用相同的固定卡宽；网格按可用空间容纳完整列，行尾保留余量。
  */
 @Composable
-private fun LibraryGrid(
+internal fun LibraryGrid(
     libraries: List<MediaLibrary>,
     firstFocus: FocusRequester,
     onOpenLibrary: (libraryId: String, libraryName: String) -> Unit,
@@ -112,10 +111,9 @@ private fun LibraryGrid(
 ) {
     BoxWithConstraints(modifier = modifier.fillMaxWidth()) {
         val gap = NovumDimens.CardGap
-        // 内容区宽（68dp 对齐线内侧）→ 列数
+        // 固定 304dp，与续播/选集横卡相同；窄视口夹到实际内容宽度。
         val contentWidth = maxWidth - NovumDimens.SafeHorizontal * 2
-        val columns = mediaGridColumns(contentWidth.value, NovumDimens.CardWidth.value)
-        val cardWidth = mediaCardWidth(contentWidth, NovumDimens.CardWidth)
+        val cardWidth = mediaRowCardWidth(contentWidth, LANDSCAPE_ASPECT)
         // 标准卡实际高度（16:9 图区 + 文字区）→ 出血
         val cardHeight = cardWidth / LANDSCAPE_ASPECT + NovumDimens.CardTextBlockMaxHeight(1)
         val bleed = NovumFocusTokens.bleed(
@@ -131,7 +129,7 @@ private fun LibraryGrid(
                 COLUMN_BOTTOM_SETTLE_DEAD_ZONE,
         ) {
             LazyVerticalGrid(
-                columns = GridCells.Fixed(columns),
+                columns = GridCells.FixedSize(cardWidth),
                 // 首列卡静止位 = 68dp 对齐线；上下留出血：首/末行聚焦放大与漫射
                 // 阴影不被网格视口裁切
                 contentPadding = PaddingValues(

@@ -41,10 +41,10 @@ internal fun formatBitrate(bps: Long): String =
  *
  * 与 [formatBitrate] 的口径区分（缓冲网速用 MB/s）：
  * **网络传输习惯用字节**（MB/s），**流媒体码率习惯用比特**（Mbps）——
- * [DefaultBandwidthMeter.bitrateEstimate] 是比特/秒，这里 ÷8 转字节。
+ * 网络字节采样器输出比特/秒，这里 ÷8 转字节。
  * [PlayerSettingsDrawer] 画质 tab 的规格行继续走 [formatBitrate]。
  *
- * @param bps 比特/秒（[DefaultBandwidthMeter.bitrateEstimate]）。
+ * @param bps 实际接收字节采样换算的比特/秒。
  */
 internal fun formatSpeed(bps: Long): String {
     val bytesPerSec = bps / 8f

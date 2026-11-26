@@ -1,19 +1,13 @@
 package com.novum.tv.ui.screen.detail
 
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.key
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.input.key.Key
@@ -21,15 +15,15 @@ import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.tv.material3.Icon
 import androidx.tv.material3.Text
 import com.novum.tv.core.designsystem.R
 import com.novum.tv.model.Episode
 import com.novum.tv.model.MediaDetail
-import com.novum.tv.model.Season
 import com.novum.tv.ui.component.NovumButton
 import com.novum.tv.ui.component.novumActionButtonWidth
 import com.novum.tv.ui.component.NovumIconButton
@@ -39,21 +33,19 @@ import com.novum.tv.ui.theme.NovumPalette
 import com.novum.tv.ui.theme.NovumType
 
 /**
- * 操作行：立即播放/继续播放 + 从头播放 + **选季 ▾** +
+ * 操作行：立即播放/继续播放 + 从头播放 +
  * 收藏 + 标为已看/未看。
  *
- * **播放按钮只有两态文案**——「立即播放 / 继续播放」，不显示集号。
+ * 剧集播放按钮显示当前目标集号；电影使用「立即播放 / 继续播放」。
  * 多版本时若优先视频质量策略为「每次询问」，播放点击先弹版本层；长按播放/从头播放可手动选版本。
  * 已看/未看按钮切换当前集状态；遥控器菜单键或长按 OK 呼出整季标记浮层。
  * 电影的状态操作作用于整个条目。
  * 剧级态与集级态共用同一操作行：
  *   播放目标/已看目标 = 当前集（选中集或默认目标集）。
  *
- * 文本按钮与首页共用字号、高度和紧凑宽度，大字体时按同一比例放宽。
+ * 文本按钮与首页共用字号和高度；主播放按钮固定加宽，大字体时按同一比例放宽。
  *
  * @param data 详情数据。
- * @param state 页面状态（选季钮的未看圆点用）。
- * @param selectedSeason 当前选中季（剧集多季时显示在下拉钮上）。
  * @param episode 当前集（剧集 = 选中集或默认目标集；电影为 null）。
  * @param playFocus 播放按钮的焦点索取器。
  * @param onPlay 播放回调（参数 = 起播位置覆盖毫秒；null 走续播规则、0 从头播放）。
@@ -63,13 +55,10 @@ import com.novum.tv.ui.theme.NovumType
  * @param onTogglePlayed 已看/未看切换（目标 = 当前集或整个条目）。
  * @param onMarkSeasonMenuOpen 呼出整季标记浮层（已看图标的菜单键/长按；电影无季不挂）
  *   参数 = 是否长按进入（长按的浮层要吞掉「松手」那一下 OK）。
- * @param onOpenSeasonMenu 呼出选季浮层。
  */
 @Composable
 internal fun ActionRow(
     data: MediaDetail,
-    state: DetailUiState,
-    selectedSeason: Season?,
     episode: Episode?,
     playFocus: FocusRequester,
     onPlay: (startPositionMs: Long?) -> Unit,
@@ -78,7 +67,6 @@ internal fun ActionRow(
     onToggleFavorite: () -> Unit,
     onTogglePlayed: () -> Unit,
     onMarkSeasonMenuOpen: (byLongPress: Boolean) -> Unit,
-    onOpenSeasonMenu: () -> Unit,
 ) {
     // 剧集分集尚未加载/加载失败时无可播目标：主按钮禁用占位（防误播剧集 id），
     // 已看按钮同理禁用——否则会退化成「整条剧集标记已看」这种批量语义
@@ -86,13 +74,34 @@ internal fun ActionRow(
     // 是否已有观影进度（决定「继续播放」文案与「从头播放」按钮是否出现）
     val resume = (episode?.progressMs ?: data.resumePositionMs) > 0L
     val playedState = episode?.played ?: data.played
+    val episodeNumber = episode?.let { "S%02dE%02d".format(it.seasonIndex, it.index) }
+        ?: if (data.type == "Episode" && data.seasonIndex != null && data.index != null) {
+            "S%02dE%02d".format(data.seasonIndex, data.index)
+        } else {
+            null
+        }
     val playLabel = when {
         // 剧集但分集尚未加载完时，不要先显示「立即播放」再闪成别的
         // （「进入页面闪一下播放两个字」）——先显示省略号占位
         data.isSeries && episode == null -> "…"
+        episodeNumber != null -> stringResource(R.string.detail_play_episode, episodeNumber)
         resume -> stringResource(R.string.detail_resume)
         else -> stringResource(R.string.detail_play)
     }
+    // 电影、续播、加载占位和分集共用固定宽度，文案切换时操作行不会跳动。
+    val density = LocalDensity.current
+    val playButtonWidth = DETAIL_PLAY_BUTTON_WIDTH * density.fontScale.coerceAtLeast(1f)
+    val textWidth = rememberTextMeasurer().measure(
+        text = playLabel,
+        style = NovumType.ButtonLg,
+        maxLines = 1,
+        softWrap = false,
+    ).size.width.coerceAtLeast(1)
+    val textScale = (with(density) { (playButtonWidth - 48.dp).toPx() } / textWidth).coerceAtMost(1f)
+    val playTextStyle = NovumType.ButtonLg.copy(
+        fontSize = NovumType.ButtonLg.fontSize * textScale,
+        letterSpacing = NovumType.ButtonLg.letterSpacing * textScale,
+    )
 
     // 操作按钮成组：播放为文字主按钮
     // 从头播放使用紧邻主播放按钮的文字按钮，遥控器扫视时能直接读出语义；
@@ -117,14 +126,15 @@ internal fun ActionRow(
                 onLongClick = onPlayLongClick,
                 enabled = playable,
                 modifier = Modifier
-                    .width(novumActionButtonWidth())
+                    .width(playButtonWidth)
                     .focusRequester(playFocus),
                 centerContent = true,
             ) {
                 Text(
                     text = playLabel,
-                    style = NovumType.ButtonLg,
+                    style = playTextStyle,
                     maxLines = 1,
+                    softWrap = false,
                     overflow = TextOverflow.Ellipsis,
                 )
             }
@@ -147,40 +157,6 @@ internal fun ActionRow(
                 }
             }
         }
-        // 选季按钮；单季剧集不显示。
-        if (data.isSeries && (state.seasons.size > 1) && (selectedSeason != null)) {
-            key("season") {
-                NovumButton(
-                    onClick = onOpenSeasonMenu,
-                    modifier = Modifier.width(novumActionButtonWidth()),
-                    centerContent = true,
-                ) {
-                    Text(
-                        text = seasonDisplayName(selectedSeason),
-                        modifier = Modifier.weight(1f, fill = false),
-                        style = NovumType.ButtonLg,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                    // 当前季有新集（未看 > 0）时在选季钮上加圆点标记
-                    if ((selectedSeason.unplayedCount ?: 0) > 0) {
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Box(
-                            modifier = Modifier
-                                .size(8.dp)
-                                .clip(CircleShape)
-                                .background(NovumPalette.Paper),
-                        )
-                    }
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Icon(
-                        imageVector = NovumIcons.ChevronDown,
-                        contentDescription = null,
-                        modifier = Modifier.size(16.dp),
-                    )
-                }
-            }
-        }
         key("favorite") {
             NovumIconButton(
                 // 已收藏显示红色实心红心；未收藏显示白色描边。
@@ -194,17 +170,18 @@ internal fun ActionRow(
             )
         }
         key("played") {
-            // 已看/未看使用空心/实心白色对号，与选集卡角标保持一致。
+            // 眼睛 = 未看，实心绿勾 = 已看；两态形状与颜色都不同。
             // 点击切换当前集状态；遥控器菜单键或长按 OK
             // 呼出整季标记浮层（电影没有季，两者都不挂）
             NovumIconButton(
-                icon = if (playedState) NovumIcons.CheckFilled else NovumIcons.Check,
+                icon = if (playedState) NovumIcons.CheckFilled else NovumIcons.Eye,
                 contentDescription = stringResource(
                     if (playedState) R.string.detail_mark_unplayed else R.string.detail_mark_played,
                 ),
                 onClick = onTogglePlayed,
                 onLongClick = if (data.isSeries) ({ onMarkSeasonMenuOpen(true) }) else null,
                 enabled = playable,
+                tintOverride = if (playedState) NovumPalette.Success else null,
                 modifier = Modifier.onPreviewKeyEvent { event ->
             // 在 preview 阶段拦截 Menu；图标钮自身不消费该键：
                     // onKeyDown 类的后置拦截会被 clickable 的焦点容器吞掉）
@@ -285,6 +262,8 @@ internal fun detailMetaParts(
 
 /** 操作行按钮/图标间距：对齐首页 Hero 双 CTA 的 20dp。 */
 private val ACTION_ROW_GAP = 20.dp
+
+private val DETAIL_PLAY_BUTTON_WIDTH = 280.dp
 
 private val COMPACT_ACTION_ROW_BREAKPOINT = 680.dp
 private val COMPACT_ACTION_ROW_GAP = 12.dp

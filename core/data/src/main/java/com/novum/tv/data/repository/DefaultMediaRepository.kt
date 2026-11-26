@@ -14,6 +14,7 @@ import com.novum.tv.data.remote.emby.MediaSourceDto
 import com.novum.tv.data.remote.emby.MediaStreamDto
 import com.novum.tv.data.remote.emby.SessionHolder
 import com.novum.tv.data.remote.emby.SessionSnapshot
+import com.novum.tv.data.remote.emby.UserDataUpdateDto
 import com.novum.tv.data.text.MediaStrings
 import com.novum.tv.model.CastMember
 import com.novum.tv.model.Chapter
@@ -334,6 +335,35 @@ class DefaultMediaRepository @Inject constructor(
             }
         }
 
+    override suspend fun setPlayedAndResetProgress(itemId: String, played: Boolean): NovumResult<Boolean> =
+        withSession { owner ->
+            if (owner.server.isBlank() || owner.userId.isBlank()) {
+                return@withSession failureOf(NovumError.Unauthorized())
+            }
+            safeCall {
+                val api = clients.api(owner.server, owner)
+                val data = if (played) api.markPlayed(owner.userId, itemId) else api.markUnplayed(owner.userId, itemId)
+                api.updateUserData(
+                    uid = owner.userId,
+                    itemId = itemId,
+                    body = UserDataUpdateDto(
+                        PlaybackPositionTicks = 0L,
+                        Played = data.Played,
+                        PlayedPercentage = 0.0,
+                        IsFavorite = data.IsFavorite,
+                        PlayCount = data.PlayCount,
+                        UnplayedItemCount = data.UnplayedItemCount,
+                        Rating = data.Rating,
+                        LastPlayedDate = data.LastPlayedDate,
+                        Key = data.Key,
+                        ItemId = data.ItemId,
+                        ServerId = data.ServerId,
+                    ),
+                )
+                data.Played
+            }
+        }
+
     override suspend fun feed(): NovumResult<HomeFeed> = withSession { owner ->
         val server = owner.server
         val userId = owner.userId
@@ -352,7 +382,13 @@ class DefaultMediaRepository @Inject constructor(
                 val resumeItems = asyncOrNull { api.resume(uid = userId).Items }
                 val nextUpItems = asyncOrNull { api.nextUp(uid = userId).Items }
                 val latestPerLibrary = libraries.map { library ->
-                    asyncOrNull { library.id to api.latest(uid = userId, parentId = library.id) }
+                    asyncOrNull {
+                        library.id to api.latest(
+                            uid = userId,
+                            parentId = library.id,
+                            limit = if (library.id == recentLibraryId) HERO_CANDIDATE_LIMIT else HOME_LATEST_ROW_LIMIT,
+                        )
+                    }
                 }
 
                 // 各库最新：保留原始 DTO（Hero 需要背景图标签），再映射成行数据
@@ -362,7 +398,7 @@ class DefaultMediaRepository @Inject constructor(
                     library to items
                 }
                 val latest = rawLatest.mapNotNull { (library, items) ->
-                    val entries = items.mapNotNull { dto -> dto.toHomeEntry(server, strings) }
+                    val entries = items.take(HOME_LATEST_ROW_LIMIT).mapNotNull { dto -> dto.toHomeEntry(server, strings) }
                     if (entries.isEmpty()) {
                         null
                     } else {
@@ -392,7 +428,7 @@ class DefaultMediaRepository @Inject constructor(
                 val mergedResume = (resumeDtoItems.map { it to false } + nextUpEntries.map { it to true })
                     .distinctBy { (dto, _) -> dto.SeriesId ?: dto.Id }
                     .take(HOME_ROW_RESUME_LIMIT)
-                // Hero 只复用全库追新的最新18部；源库不可用或无可展示候选时保持为空。
+                // Hero 从全库追新的较大候选池取样；源库不可用时保持为空。
                 val recentItems = rawLatest.firstOrNull { (library, _) -> library.id == recentLibraryId }
                     ?.second.orEmpty()
                 val hero = heroRotationPool(recentItems.filter { dto -> dto.Id !in resumeIds })

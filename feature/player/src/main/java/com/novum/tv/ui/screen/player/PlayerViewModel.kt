@@ -57,6 +57,8 @@ data class PlayerUiState(
     val title: String = "",
     /** 左上角 ClearLogo（标题位换透明底标题图）；无图为 null，界面回落文本标题。 */
     val logoUrl: String? = null,
+    /** 分集名独立放在作品标题 / ClearLogo 下方。 */
+    val episodeTitle: String? = null,
     val subtitle: String = "",
     val subtitlesEnabled: Boolean = true,
     val subtitleSize: Int = 2,
@@ -258,8 +260,9 @@ class PlayerViewModel @Inject constructor(
         disabled: Boolean = false,
         rawLabel: String? = null,
         channels: Int? = null,
+        formatId: String? = null,
     ) {
-        val ref = ItemPlaybackPrefsStore.TrackRef(label = label, language = language, rawLabel = rawLabel, channels = channels)
+        val ref = ItemPlaybackPrefsStore.TrackRef(label = label, language = language, rawLabel = rawLabel, channels = channels, formatId = formatId)
         // 轨道变更会立即触发 onTracksChanged。先更新恢复策略的快照，
         // 否则监听器还拿着起播时的旧记忆，会把用户刚选的轨道切回去。
         _state.update { state ->
@@ -513,7 +516,10 @@ class PlayerViewModel @Inject constructor(
             // 先取详情：标题与续播位置都来自它；失败不阻塞播放
             val detail = (media.detail(itemId) as? NovumResult.Success)?.value
             val resumeMs = detail?.resumePositionMs ?: 0L
-            val title = detail?.title.orEmpty()
+            val series = detail?.takeIf { it.type == "Episode" }?.seriesId?.let { id ->
+                (media.detail(id) as? NovumResult.Success)?.value
+            }
+            val title = series?.title ?: detail?.title.orEmpty()
             val snapshot = runCatchingSuspend { settings.settings.first() }.getOrNull()
             val subtitlesEnabled = snapshot?.subtitleEnabledByDefault ?: true
             val subtitleSize = snapshot?.subtitleSize ?: 2
@@ -558,7 +564,10 @@ class PlayerViewModel @Inject constructor(
                         it.copy(
                             plan = UiState.Success(result.value),
                             title = title,
-                            logoUrl = detail?.logoUrl,
+                            logoUrl = series?.logoUrl ?: detail?.logoUrl,
+                            episodeTitle = detail?.takeIf { it.type == "Episode" }?.let {
+                                drawerEpisodeLabel(it.seasonIndex ?: 1, it.index ?: 1, it.title)
+                            },
                             overview = detail?.overview,
                             subtitle = result.value.method.label(appContext),
                             subtitlesEnabled = subtitlesEnabled,

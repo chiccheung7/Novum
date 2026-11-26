@@ -78,7 +78,11 @@ object ServerAddress {
      *
      * @param baseUrl 规范化后的地址（不带尾部斜杠）。
      */
-    fun toBaseUrl(baseUrl: String): String = if (baseUrl.endsWith("/")) baseUrl else "$baseUrl/"
+    fun toBaseUrl(baseUrl: String): String {
+        val boundary = baseUrl.indexOfFirst { it == '?' || it == '#' }.takeIf { it >= 0 } ?: baseUrl.length
+        val path = baseUrl.substring(0, boundary)
+        return (if (path.endsWith('/')) path else "$path/") + baseUrl.substring(boundary)
+    }
 
     /** Keep API-relative media paths below the configured proxy prefix without duplicating it. */
     fun resolveUrl(server: String, path: String): String? {
@@ -94,46 +98,12 @@ object ServerAddress {
     }
 
     /**
-     * 该地址是否将以**明文 HTTP** 传输（登录页据此要求用户显式确认）。
+     * 候选地址是否可能使用**明文 HTTP**（登录页据此要求用户显式确认）。
      *
-     * 判定规则（避免对「域名 + HTTPS 兜底」的无谓打扰）：
-     * - 显式 `https://` → false；
-     * - 显式 `http://` → true；
-     * - 无 scheme 但带显式端口（且非 443）→ true；
-     * - 无 scheme 的私有网段 IP（10/8、172.16/12、192.168/16、localhost）→ true；
-     * - 其余（裸域名，会先试 HTTP 再兜底 HTTPS）→ false。
-     *
-     * 家庭 Emby 绝大多数是「局域网 IP + 8096 明文」，这条路必须能走通；
-     * 但对「确定会明文」的输入要把风险讲清楚，而不是静默发送凭据。
+     * 与实际登录候选保持一致：未填写协议时，即使填写了域名或 443 端口，
+     * 仍会尝试 HTTP，不能在发送凭据前跳过确认。显式 HTTPS 不需要明文确认。
      *
      * @param raw 用户原始输入。
      */
-    fun usesCleartext(raw: String): Boolean {
-        val input = raw.trim().trimEnd('/')
-        if (input.isEmpty()) return false
-        val lower = input.lowercase()
-        if (lower.startsWith("https://")) return false
-        if (lower.startsWith("http://")) return true
-
-        val hostPart = lower.substringBefore('/')
-        val portText = hostPart.substringAfterLast(':', missingDelimiterValue = "")
-        val port = portText.toIntOrNull()
-        if (port != null && port != DEFAULT_HTTPS_PORT) return true
-        val host = if (port != null) hostPart.substringBeforeLast(':') else hostPart
-        return isPrivateHost(host)
-    }
-
-    /** 私有网段 / 本机地址判定（不含 IPv6，家庭电视场景用不到）。 */
-    private fun isPrivateHost(host: String): Boolean {
-        if (host == "localhost") return true
-        val octets = host.split('.').mapNotNull { it.toIntOrNull() }
-        if (octets.size != 4 || octets.any { it !in 0..255 }) return false
-        return when {
-            octets[0] == 10 -> true
-            octets[0] == 192 && octets[1] == 168 -> true
-            octets[0] == 172 && octets[1] in 16..31 -> true
-            octets[0] == 127 -> true
-            else -> false
-        }
-    }
+    fun usesCleartext(raw: String): Boolean = candidates(raw).any { it.startsWith("http://") }
 }

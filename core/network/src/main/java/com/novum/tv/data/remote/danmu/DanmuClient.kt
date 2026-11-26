@@ -66,8 +66,17 @@ class DanmuClient @Inject constructor(
 
     /** 弹幕服务的 URL 前缀（含 token）；未登录或地址无效时为 null。 */
     fun baseUrl(): String? {
-        val server = holder.server.trimEnd('/')
-        val token = holder.token
+        // Server + token form one identity: capture once so a concurrent account switch
+        // cannot combine one server with another account's token.
+        return danmuBaseUrl(holder.capture())
+    }
+
+    /**
+     * Build a prefix from one immutable session identity. Internal for regression coverage.
+     */
+    internal fun danmuBaseUrl(session: com.novum.tv.data.remote.emby.SessionSnapshot): String? {
+        val server = session.server.trimEnd('/')
+        val token = session.token
         if (server.isBlank() || token.isBlank()) return null
         return runCatching {
             (server + "/").toHttpUrl().newBuilder()

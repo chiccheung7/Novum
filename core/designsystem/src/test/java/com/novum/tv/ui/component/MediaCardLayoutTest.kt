@@ -14,6 +14,14 @@ import org.junit.Test
 class MediaCardLayoutTest {
 
     @Test
+    fun landscapeRowsAreLargerWithoutChangingPosterRows() {
+        assertEquals(304f, mediaRowCardWidth(1144.dp, LANDSCAPE_ASPECT).value, EPSILON)
+        assertTrue(mediaRowCardWidth(1144.dp, LANDSCAPE_ASPECT) > mediaCardWidth(1144.dp, 280.dp))
+        assertEquals(mediaCardWidth(1144.dp), mediaRowCardWidth(1144.dp, POSTER_ASPECT))
+        assertEquals(200.dp, mediaRowCardWidth(200.dp, LANDSCAPE_ASPECT))
+    }
+
+    @Test
     fun widerCanvasAddsPosterColumnsInsteadOfEnlargingPosters() {
         val baseContent = 1280f - 136f
         val wideContent = 1920f - 136f

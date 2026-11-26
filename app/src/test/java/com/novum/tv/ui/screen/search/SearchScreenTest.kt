@@ -45,14 +45,15 @@ class SearchScreenTest {
     fun automaticSearchPreservesInputAndCategoryFocusButImeCanRepeatTheQuery() {
         val repository = SearchScreenRepository()
         val grid = GridViewModel(repository)
-        val people = PersonSearchViewModel(repository)
         val history = historyViewModel()
         composeRule.setContent {
             NovumTheme {
-                SearchScreen({}, { _, _ -> }, viewModel = grid, personViewModel = people, historyViewModel = history)
+                SearchScreen({}, viewModel = grid, historyViewModel = history)
             }
         }
         enterQueryAndWait()
+        composeRule.onNodeWithText("人物").assertDoesNotExist()
+        composeRule.runOnIdle { assertEquals(0, repository.personCalls) }
         composeRule.onNode(hasSetTextAction()).assertIsFocused()
         composeRule.runOnIdle { assertEquals(1, repository.itemCalls) }
 
@@ -72,7 +73,6 @@ class SearchScreenTest {
     fun returningToSavedSearchKeepsLoadedPagesAndGridPosition() {
         val repository = SearchScreenRepository()
         val grid = GridViewModel(repository)
-        val people = PersonSearchViewModel(repository)
         val history = historyViewModel()
         val visible = mutableStateOf(true)
         composeRule.setContent {
@@ -80,7 +80,7 @@ class SearchScreenTest {
             if (visible.value) {
                 saved.SaveableStateProvider("search") {
                     NovumTheme {
-                        SearchScreen({}, { _, _ -> }, viewModel = grid, personViewModel = people, historyViewModel = history)
+                        SearchScreen({}, viewModel = grid, historyViewModel = history)
                     }
                 }
             }
@@ -102,7 +102,7 @@ class SearchScreenTest {
         composeRule.runOnIdle {
             assertEquals("返回不能重新查询第一页", 2, repository.itemCalls)
             assertEquals(120, (grid.state.value as UiState.Success).data.size)
-            assertEquals("人物请求也复用 ViewModel 现有结果", 1, repository.personCalls)
+            assertEquals("搜索不调用服务器不支持的人物接口", 0, repository.personCalls)
         }
     }
 
@@ -110,7 +110,6 @@ class SearchScreenTest {
     fun restoredQueryWithNewViewModelsStillLoadsResults() {
         val repository = SearchScreenRepository()
         val grid = mutableStateOf(GridViewModel(repository))
-        val people = mutableStateOf(PersonSearchViewModel(repository))
         val history = historyViewModel()
         val visible = mutableStateOf(true)
         composeRule.setContent {
@@ -118,7 +117,7 @@ class SearchScreenTest {
             if (visible.value) {
                 saved.SaveableStateProvider("search") {
                     NovumTheme {
-                        SearchScreen({}, { _, _ -> }, viewModel = grid.value, personViewModel = people.value, historyViewModel = history)
+                        SearchScreen({}, viewModel = grid.value, historyViewModel = history)
                     }
                 }
             }
@@ -128,7 +127,6 @@ class SearchScreenTest {
         composeRule.waitForIdle()
         composeRule.runOnIdle {
             grid.value = GridViewModel(repository)
-            people.value = PersonSearchViewModel(repository)
             visible.value = true
         }
         awaitDebouncedSearch()
@@ -137,7 +135,7 @@ class SearchScreenTest {
         composeRule.runOnIdle {
             assertTrue(grid.value.state.value is UiState.Success)
             assertEquals("新 VM 不能因恢复的查询状态而跳过请求", 2, repository.itemCalls)
-            assertEquals(2, repository.personCalls)
+            assertEquals(0, repository.personCalls)
         }
     }
 

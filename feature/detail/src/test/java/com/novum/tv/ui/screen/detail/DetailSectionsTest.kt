@@ -6,12 +6,18 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsFocused
+import androidx.compose.ui.test.hasClickAction
+import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.hasScrollToIndexAction
 import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
+import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.assertCountEquals
+import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performScrollToIndex
 import androidx.compose.ui.test.performSemanticsAction
 import com.novum.tv.model.Episode
+import com.novum.tv.model.Season
 import com.novum.tv.ui.theme.NovumTheme
 import org.junit.Rule
 import org.junit.Test
@@ -94,5 +100,51 @@ class DetailSectionsTest {
         }
 
         composeRule.onNodeWithContentDescription("S01E101 · 测试分集").assertIsDisplayed()
+    }
+
+    @Test
+    fun episodeStripKeepsOnlyTheCardOverviewAndSeasonSelectorBesideTheHeading() {
+        var seasonMenuOpened = false
+        composeRule.setContent {
+            NovumTheme {
+                EpisodeStrip(
+                    episodes = listOf(
+                        Episode(
+                            id = "ep-1",
+                            title = "分集标题",
+                            seasonIndex = 1,
+                            index = 1,
+                            played = false,
+                            progressMs = 90_000L,
+                            runtimeMinutes = 45,
+                            imageUrl = null,
+                            overview = "这是完整的分集简介，不应受卡片两行省略限制。",
+                        ),
+                    ),
+                    episodesEmpty = false,
+                    episodesFailed = false,
+                    firstUnplayedId = "ep-1",
+                    anchorEpisodeId = null,
+                    selectedEpisodeId = "ep-1",
+                    selectedSeason = Season("season-1", "第一季", 1, 10, 3),
+                    onOpenSeasonMenu = { seasonMenuOpened = true },
+                    logoUrl = null,
+                    episodeFocus = remember { FocusRequester() },
+                    contextFocus = remember { FocusRequester() },
+                    onCardClick = {},
+                    onRetry = {},
+                )
+            }
+        }
+
+        composeRule.onAllNodesWithText("这是完整的分集简介，不应受卡片两行省略限制。")
+            .assertCountEquals(1)
+        composeRule.onNodeWithText("当前集").assertDoesNotExist()
+        composeRule.onNodeWithText("3%", substring = true).assertDoesNotExist()
+        composeRule.onNodeWithContentDescription("未看", useUnmergedTree = true).assertExists()
+        // TV 按钮由遥控器语义动作触发，不走触摸注入。
+        composeRule.onNode(hasText("第 1 季") and hasClickAction())
+            .performSemanticsAction(SemanticsActions.OnClick)
+        composeRule.runOnIdle { assert(seasonMenuOpened) }
     }
 }

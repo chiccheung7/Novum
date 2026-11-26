@@ -3,7 +3,6 @@ package com.novum.tv.data.repository
 import com.novum.tv.data.remote.emby.ItemDto
 import com.novum.tv.model.HomeEntry
 import com.novum.tv.model.HomeRow
-import java.util.Calendar
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Deferred
@@ -12,7 +11,7 @@ import kotlinx.coroutines.async
 /**
  * 首页 Hero 单库候选池组装与并发区块工具。
  *
- * 单库去重与当天种子确定性洗牌、条目信息完整度打分和并发拉取容错。
+ * 单库去重与每次刷新洗牌、条目信息完整度打分和并发拉取容错。
  */
 
 /**
@@ -27,29 +26,22 @@ internal const val HERO_LIMIT = 16
 internal const val HOME_ROW_RESUME_LIMIT = 16
 
 /**
- * Hero 轮换种子提供者：默认取「本地日序号」（epochDay 同义，每天 +1）——
- * **按天轮换**（Netflix 日更口径）。生产路径零感知；公开仅为让 :app 单测
+ * Hero 轮换种子提供者：每次刷新生成新种子，避免全天反复展示同一顺序。公开仅为让 :app 单测
  * 注入固定种子获得确定性输出（跨模块 internal 不可见），请勿在生产代码改写。
  *
- * 用 Calendar 而非 LocalDate：minSdk 24 且未开 core library desugaring（lint NewApi）。
  */
 var DefaultMediaRepository.heroSeedProvider: () -> Long
     get() = _heroSeedProvider
     set(value) { _heroSeedProvider = value }
 
-private const val MILLIS_PER_DAY = 86_400_000L
+internal var _heroSeedProvider: () -> Long = { kotlin.random.Random.nextLong() }
 
-internal var _heroSeedProvider: () -> Long = {
-    Calendar.getInstance().apply {
-        set(Calendar.HOUR_OF_DAY, 0)
-        set(Calendar.MINUTE, 0)
-        set(Calendar.SECOND, 0)
-        set(Calendar.MILLISECOND, 0)
-    }.timeInMillis / MILLIS_PER_DAY
-}
+/** 源库取更大的候选池；可见最新行仍只展示 18 条。 */
+internal const val HERO_CANDIDATE_LIMIT = 96
+internal const val HOME_LATEST_ROW_LIMIT = 18
 
 /**
- * Hero 只从指定源库取样，再按本地日种子确定性洗牌。
+ * Hero 只从指定源库取样，按本次请求的新种子洗牌。
  * 仅保留有背景图的条目，按 id 去重并限制候选池容量。
  *
  * 候选不足 [HERO_LIMIT] 条时返回全部可用条目。
@@ -79,7 +71,7 @@ private fun scoreOf(dto: ItemDto): Int =
 
 /**
  * 确定性 Fisher–Yates 洗牌：同 (输入, seed) 恒同输出。
- * 不能用无参 [kotlin.collections.shuffled]——不确定顺序破坏「同日稳定」。
+ * 显式种子让测试可重复，生产每次请求使用新种子。
  */
 internal fun <T> List<T>.seededShuffle(seed: Long): List<T> {
     val list = toMutableList()

@@ -12,7 +12,9 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.requiredSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -23,12 +25,16 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.viewinterop.AndroidView
+import androidx.media3.common.text.Cue
+import androidx.media3.ui.CaptionStyleCompat
+import androidx.media3.ui.SubtitleView
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.text.font.FontFamily
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.tv.material3.Text
@@ -44,7 +50,7 @@ import com.novum.tv.ui.theme.NovumType
  * 下缘保持距离（黑边高度的 40% 深处，不紧贴黑边上部）；黑边不足时回落到
  * 画面底部之上的原位置；控制条可见时仍让位到控制条上方。
  *
- * @param text 当前字幕文本，空串时整层不渲染。
+ * @param cues Media3 完整字幕 cue（保留位图、定位和样式）。
  * @param sizeLevel 字号档位（1 小 – 4 超大）。
  * @param weightLevel 粗细档位（0 细、1 标准、2 粗）。
  * @param offsetLevel 高度档位：0 居中，1/2 上移，3/4 下移。
@@ -53,16 +59,19 @@ import com.novum.tv.ui.theme.NovumType
  * @param modifier 外部修饰符（调用方负责 align BottomCenter）。
  */
 @Composable
+@androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
 internal fun SubtitleLayer(
-    text: String,
+    cues: List<Cue>,
     sizeLevel: Int,
     offsetLevel: Int,
     controlsShown: Boolean,
     bottomBarHeight: Dp,
+    videoAspectRatio: Float?,
+    scaleMode: VideoScaleMode,
     modifier: Modifier = Modifier,
     weightLevel: Int = 1,
 ) {
-    if (text.isEmpty()) return
+    if (cues.isEmpty()) return
     // 高度档位：0=按黑边自适应，1/2 上移，3/4 下移（负档在满屏画面触底钳制）
     val lift = when (offsetLevel.coerceIn(0, 4)) {
         1 -> SUBTITLE_LIFT_STEP
@@ -94,25 +103,59 @@ internal fun SubtitleLayer(
     )
     // 字幕四档入字阶表：档位值唯一来源 NovumType.SubtitleSizes
     val fontSize = NovumType.subtitleSize(sizeLevel)
-    Text(
-        text = text,
-        style = NovumType.Section.copy(
-            // 系统无衬线字体含轻/常规/粗字重，避免 Inter 只有 400–600 时细档回落为标准。
-            fontFamily = FontFamily.SansSerif,
-            fontWeight = when (weightLevel.coerceIn(0, 2)) {
-                0 -> FontWeight.Light
-                2 -> FontWeight.Bold
-                else -> FontWeight.Normal
-            },
-            fontSize = fontSize,
-            lineHeight = fontSize * 1.35f,
-        ),
-        color = NovumPalette.Paper,
-        textAlign = TextAlign.Center,
-        modifier = modifier
-            .fillMaxWidth(0.8f)
-            .padding(bottom = bottom.value),
+    val fontPx = with(LocalDensity.current) { fontSize.toPx() }
+    val typeface = remember(weightLevel) {
+        android.graphics.Typeface.create(
+            if (weightLevel == 0) "sans-serif-light" else "sans-serif",
+            if (weightLevel == 2) android.graphics.Typeface.BOLD else android.graphics.Typeface.NORMAL,
+        )
+    }
+    val captionStyle = remember(typeface) {
+        CaptionStyleCompat(android.graphics.Color.WHITE, android.graphics.Color.TRANSPARENT,
+            android.graphics.Color.TRANSPARENT, CaptionStyleCompat.EDGE_TYPE_OUTLINE,
+            android.graphics.Color.BLACK, typeface)
+    }
+    // Normal dialogue can use the adaptive lower bar. Positioned text and bitmap cues remain
+    // in video coordinates so PGS/DVB graphics and ASS positioning keep their original geometry.
+    val defaultCues = remember(cues) { cues.filter(::usesDefaultSubtitlePosition) }
+    val positionedCues = remember(cues) { cues.filterNot(::usesDefaultSubtitlePosition) }
+    BoxWithConstraints(modifier = modifier.clipToBounds(), contentAlignment = Alignment.Center) {
+        if (defaultCues.isNotEmpty()) {
+            NativeSubtitleView(defaultCues, captionStyle, fontPx,
+                (bottom.value.value / maxHeight.value.coerceAtLeast(1f)).coerceIn(0f, 0.9f), Modifier.fillMaxSize())
+        }
+        if (positionedCues.isNotEmpty()) {
+            val viewport = videoViewport(maxWidth.value, maxHeight.value, videoAspectRatio, scaleMode)
+            NativeSubtitleView(positionedCues, captionStyle, fontPx, 0f,
+                Modifier.requiredSize(viewport.width.dp, viewport.height.dp))
+        }
+    }
+}
+
+internal fun usesDefaultSubtitlePosition(cue: Cue): Boolean = cue.bitmap == null &&
+    cue.line == Cue.DIMEN_UNSET && cue.position == Cue.DIMEN_UNSET
+
+@androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
+@Composable
+private fun NativeSubtitleView(cues: List<Cue>, style: CaptionStyleCompat, fontPx: Float, bottomFraction: Float, modifier: Modifier) {
+    AndroidView(
+        factory = { context -> SubtitleView(context).apply {
+            isFocusable = false
+            importantForAccessibility = android.view.View.IMPORTANT_FOR_ACCESSIBILITY_NO
+            setApplyEmbeddedStyles(true)
+            setApplyEmbeddedFontSizes(true)
+        } },
+        update = { view -> configureSubtitleView(view, cues, style, fontPx, bottomFraction) },
+        modifier = modifier,
     )
+}
+
+@androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
+internal fun configureSubtitleView(view: SubtitleView, cues: List<Cue>, style: CaptionStyleCompat, fontPx: Float, bottomFraction: Float) {
+    view.setStyle(style)
+    view.setFixedTextSize(android.util.TypedValue.COMPLEX_UNIT_PX, fontPx)
+    view.setBottomPaddingFraction(bottomFraction)
+    view.setCues(cues)
 }
 
 /**

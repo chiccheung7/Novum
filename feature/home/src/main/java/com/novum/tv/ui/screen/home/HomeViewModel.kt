@@ -2,8 +2,11 @@ package com.novum.tv.ui.screen.home
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.novum.tv.core.error.NovumError
 import com.novum.tv.core.result.NovumResult
+import com.novum.tv.core.result.runCatchingSuspend
 import com.novum.tv.core.state.UiState
+import com.novum.tv.data.repository.AuthRepository
 import com.novum.tv.data.repository.MediaRepository
 import com.novum.tv.model.HomeFeed
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -28,6 +31,7 @@ import kotlinx.coroutines.launch
 @HiltViewModel
 class HomeViewModel @Inject constructor(
     private val repository: MediaRepository,
+    private val authRepository: AuthRepository,
 ) : ViewModel() {
 
     private val _feed = MutableStateFlow<UiState<HomeFeed>>(UiState.Loading)
@@ -39,6 +43,12 @@ class HomeViewModel @Inject constructor(
      */
     private val _focusEpoch = MutableStateFlow(0)
     val focusEpoch: StateFlow<Int> = _focusEpoch.asStateFlow()
+
+    private val _reauthenticating = MutableStateFlow(false)
+    val reauthenticating: StateFlow<Boolean> = _reauthenticating.asStateFlow()
+
+    private val _reauthenticationError = MutableStateFlow<NovumError?>(null)
+    val reauthenticationError: StateFlow<NovumError?> = _reauthenticationError.asStateFlow()
 
     private var feedJob: Job? = null
     private var feedRequest = 0
@@ -67,6 +77,23 @@ class HomeViewModel @Inject constructor(
         requestFeed(silent = true)
     }
 
+    /** Only an explicit action on a rejected session clears it; network failures keep the session. */
+    fun reauthenticate(onDone: () -> Unit) {
+        val state = _feed.value
+        if (state !is UiState.Error || state.error !is NovumError.Unauthorized || _reauthenticating.value) return
+        _reauthenticating.value = true
+        _reauthenticationError.value = null
+        // An in-flight feed must not restore protected content after the session is cleared.
+        feedRequest += 1
+        feedJob?.cancel()
+        viewModelScope.launch {
+            val result = runCatchingSuspend { authRepository.logout() }
+            _reauthenticating.value = false
+            result.onSuccess { onDone() }
+                .onFailure { _reauthenticationError.value = NovumError.Unknown(it) }
+        }
+    }
+
     /** 页面反复恢复或重试时，仅最新请求可以提交状态。 */
     private fun requestFeed(silent: Boolean) {
         val request = ++feedRequest
@@ -83,7 +110,12 @@ class HomeViewModel @Inject constructor(
                     if (!silent) _focusEpoch.value += 1
                 }
 
-                is NovumResult.Failure -> if (!silent) _feed.update { UiState.Error(result.error) }
+                is NovumResult.Failure -> {
+                    // A revoked token must expose recovery even on a quiet return-to-home refresh.
+                    if (!silent || result.error is NovumError.Unauthorized) {
+                        _feed.update { UiState.Error(result.error) }
+                    }
+                }
             }
         }
     }

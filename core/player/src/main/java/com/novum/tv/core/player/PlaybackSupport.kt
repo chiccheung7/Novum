@@ -26,7 +26,8 @@ fun buildMediaItem(plan: PlaybackPlan, subtitlesEnabled: Boolean): MediaItem {
     val builder = MediaItem.Builder()
         .setUri(plan.url)
         .setMediaId(plan.url)
-    if (plan.subtitles.isNotEmpty()) {
+        .setTag(plan)
+    if (plan.subtitles.isNotEmpty() && plan.burnedInSubtitleLabel == null) {
         builder.setSubtitleConfigurations(
             plan.subtitles.mapIndexed { index, subtitle ->
                 MediaItem.SubtitleConfiguration.Builder(subtitle.url.toUri())

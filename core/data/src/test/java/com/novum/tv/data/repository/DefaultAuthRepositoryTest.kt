@@ -29,6 +29,7 @@ import kotlinx.coroutines.test.runTest
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.ResponseBody.Companion.toResponseBody
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import retrofit2.HttpException
@@ -47,6 +48,20 @@ class DefaultAuthRepositoryTest {
         override val default = dispatcher
         override val io = dispatcher
         override val main = dispatcher
+    }
+
+    @Test
+    fun rememberChoicePreservesOptOutAndUsesEnabledFallbackOnReadFailure() = runTest(dispatcher) {
+        val optedOutStore = object : SessionStore by FakeSessionStore() {
+            override suspend fun shouldRememberCredentials(): Boolean = false
+        }
+        val optedOut = DefaultAuthRepository(FixedProvider(FakeEmbyApi()), optedOutStore, SessionHolder(), dispatchers)
+        assertFalse(optedOut.shouldRememberCredentials())
+        val failingStore = object : SessionStore by FakeSessionStore() {
+            override suspend fun shouldRememberCredentials(): Boolean = throw IOException("read failed")
+        }
+        val fallback = DefaultAuthRepository(FixedProvider(FakeEmbyApi()), failingStore, SessionHolder(), dispatchers)
+        assertTrue(fallback.shouldRememberCredentials())
     }
 
     @Test

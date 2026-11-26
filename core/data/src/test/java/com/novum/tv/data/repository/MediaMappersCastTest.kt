@@ -1,8 +1,11 @@
 package com.novum.tv.data.repository
 
 import com.novum.tv.data.remote.emby.PersonDto
+import com.novum.tv.data.remote.emby.ItemDto
 import com.novum.tv.testing.FakeMediaStrings
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
@@ -23,8 +26,42 @@ class MediaMappersCastTest {
         val cast = people.toCastMembers("http://server", FakeMediaStrings)
 
         assertEquals(listOf("陈晓卿", "李立宏"), cast.map { it.name })
-        assertEquals("保留首次出现的职位", listOf("导演", "解说"), cast.map { it.role })
+        assertEquals("同人优先展示演员角色", listOf("旁白", "解说"), cast.map { it.role })
         assertEquals(2, cast.mapNotNull { it.id }.distinct().size)
+    }
+
+    @Test
+    fun actorRecordKeepsItsOwnAvatarAndRoleTogether() {
+        val cast = listOf(
+            PersonDto(Name = "成龙", Type = "Director", Id = "jackie", PrimaryImageTag = "director-tag"),
+            PersonDto(Name = "成龙", Role = "陈家驹", Type = "Actor", Id = "jackie", PrimaryImageTag = "actor-tag"),
+        ).toCastMembers("https://server", FakeMediaStrings)
+
+        assertEquals(1, cast.size)
+        assertEquals("陈家驹", cast.single().role)
+        assertTrue(cast.single().imageUrl!!.contains("/Items/jackie/Images/Primary"))
+        assertTrue(cast.single().imageUrl!!.endsWith("tag=actor-tag"))
+    }
+
+    @Test
+    fun noAvatarTagUsesNamePlaceholderInsteadOfAnUnverifiedImage() {
+        val cast = listOf(PersonDto(Name = "成龙", Type = "Actor", Id = "jackie"))
+            .toCastMembers("https://server", FakeMediaStrings)
+        assertNull(cast.single().imageUrl)
+        assertEquals("jackie", cast.single().id)
+    }
+
+    @Test
+    fun seasonFrequencyCountsEpisodesInsteadOfRepeatedPositions() {
+        val main = PersonDto(Name = "主演", Type = "Actor", Id = "main")
+        val guest = PersonDto(Name = "客串", Type = "Actor", Id = "guest")
+        val cast = listOf(
+            ItemDto(People = listOf(guest.copy(Type = "Director"), guest, guest, main)),
+            ItemDto(People = listOf(main)),
+        ).toSeasonCast("https://server", FakeMediaStrings)
+
+        assertEquals(listOf("main", "guest"), cast.map { it.id })
+        assertEquals("演员", cast.last().role)
     }
 
     @Test

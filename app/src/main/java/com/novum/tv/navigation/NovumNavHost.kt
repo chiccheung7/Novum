@@ -40,7 +40,7 @@ import com.novum.tv.ui.screen.settings.SettingsScreen
  *
  * 路由约定：
  * - 页面通过 lambda 回调通信，不把 NavController 传进 Screen。
- * - 详情页返回走 popBackStack，由页面自行处理 BackHandler 优先级。
+ * - 详情页返回直接回首页，弹窗由页面自行处理 BackHandler 优先级。
  * - 页签跳转使用 popUpTo(HomeRoute)+launchSingleTop；当前页签点击由组件守卫为 no-op。
  *
  * 详情目的地采用缩放淡入：进入时 0.94 → 1，返回时对称缩小淡出；其他目的地使用默认淡入。
@@ -105,6 +105,12 @@ fun NovumNavHost(
                 onPlay = { itemId -> navController.navigate(PlayerRoute(itemId)) },
                 onNavigateTab = navigateTab,
                 onOpenLibrary = { id, name -> navController.navigate(GridRoute(id, name)) },
+                onReauthenticate = {
+                    navController.navigate(LoginRoute) {
+                        popUpTo(0) { inclusive = true }
+                        launchSingleTop = true
+                    }
+                },
             )
         }
         composable<LibrariesRoute>(
@@ -135,7 +141,7 @@ fun NovumNavHost(
             },
         ) {
             DetailScreen(
-                onBack = { navController.popBackStack() },
+                onBack = { navigateTab(NovumNavTab.Home) },
                 onPlay = { itemId, startPositionMs, mediaSourceId ->
                     navController.navigate(PlayerRoute(itemId, startPositionMs, mediaSourceId))
                 },
@@ -189,9 +195,6 @@ fun NovumNavHost(
             SearchScreen(
                 modifier = Modifier.fillMaxSize(),
                 onOpenDetail = { itemId -> navController.navigate(DetailRoute(itemId)) },
-                onOpenPerson = { personId, personName ->
-                    navController.navigate(PersonRoute(personId, personName))
-                },
             )
         }
         composable<GridRoute> { backStackEntry ->

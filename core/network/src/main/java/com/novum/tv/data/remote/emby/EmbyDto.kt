@@ -193,4 +193,25 @@ data class UserDataDto(
     val PlayedPercentage: Double = 0.0,
     /** 未看完的子项数量（季 → 未看集数；服务端未返回时为 null）。 */
     val UnplayedItemCount: Int? = null,
+    val Rating: Double? = null,
+    val LastPlayedDate: String? = null,
+    val Key: String? = null,
+    val ItemId: String? = null,
+    val ServerId: String? = null,
+)
+
+/** 更新请求中的零值与 false 均为必填字段，不能因 encodeDefaults=false 而被省略。 */
+@Serializable
+data class UserDataUpdateDto(
+    val PlaybackPositionTicks: Long,
+    val Played: Boolean,
+    val PlayedPercentage: Double,
+    val IsFavorite: Boolean,
+    val PlayCount: Int? = null,
+    val UnplayedItemCount: Int? = null,
+    val Rating: Double? = null,
+    val LastPlayedDate: String? = null,
+    val Key: String? = null,
+    val ItemId: String? = null,
+    val ServerId: String? = null,
 )

@@ -24,6 +24,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
@@ -68,7 +69,7 @@ fun NovumMediaInfoBlock(
         } else if (title != null) {
             Text(
                 text = title,
-                style = NovumType.Display,
+                style = NovumType.Display.copy(fontFamily = FontFamily.Default),
                 color = NovumPalette.Paper,
                 maxLines = titleMaxLines,
                 overflow = TextOverflow.Ellipsis,

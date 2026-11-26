@@ -155,4 +155,7 @@ data class PlaybackPlan(
      * UHDNOW 弹幕自动匹配按文件名定位分集；服务端不下发时为 null（弹幕只能手动搜索）。
      */
     val fileName: String? = null,
+    /** Only set when the actual playback URL explicitly selects a server-encoded subtitle. */
+    val burnedInSubtitleLabel: String? = null,
+    val fallbackBurnedInSubtitleLabel: String? = null,
 )

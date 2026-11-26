@@ -34,7 +34,7 @@ fun mediaCardWidth(
     return ((available - spacing * (columns - 1)) / columns).coerceAtLeast(1f).dp
 }
 
-/** Full-width browsing rows share the exact sizing of the full-width grids. */
+/** Poster rows share grid dimensions; landscape rows retain their preferred width. */
 @Composable
 fun rememberMediaCardWidth(aspectRatio: Float = POSTER_ASPECT): Dp {
     val window = LocalWindowInfo.current.containerSize
@@ -42,6 +42,14 @@ fun rememberMediaCardWidth(aspectRatio: Float = POSTER_ASPECT): Dp {
     val target = if (aspectRatio == POSTER_ASPECT) NovumDimens.PosterCardWidth else NovumDimens.CardWidth
     return remember(window.width, density.density, target) {
         val available = with(density) { window.width.toDp() } - NovumDimens.SafeHorizontal * 2
-        mediaCardWidth(available, target)
+        mediaRowCardWidth(available, aspectRatio)
     }
 }
+
+/** 横卡行保留约一成的加宽，不再因四舍五入为四列而把新尺寸压回 271dp。 */
+fun mediaRowCardWidth(contentWidth: Dp, aspectRatio: Float): Dp =
+    if (aspectRatio == POSTER_ASPECT) {
+        mediaCardWidth(contentWidth)
+    } else {
+        minOf((contentWidth.value.takeIf { it.isFinite() && it > 0f } ?: 1f).dp, NovumDimens.CardWidth)
+    }

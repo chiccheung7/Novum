@@ -10,7 +10,8 @@ import kotlinx.serialization.Serializable
  *
  * @param itemId Emby 条目 id。
  * @param focusCurrentEpisode 继续观看入口直达集级语境：进场
- *   直接呈现 NextUp 当前集的集级态（背景/简介/播放都是该集），返回键先回剧级态。
+ *   直接选中 NextUp 当前集并聚焦播放按钮，背景与播放目标随该集，标题简介仍为剧集。
+ *   返回键直接退出详情页回主页，不先清空当前集选择。
  *   仅首页继续观看行传 true；无 NextUp 提示时静默回落剧级态。
  */
 @Serializable

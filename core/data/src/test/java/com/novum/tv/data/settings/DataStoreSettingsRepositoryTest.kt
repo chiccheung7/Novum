@@ -56,6 +56,7 @@ class DataStoreSettingsRepositoryTest {
         assertTrue("优先直连默认开启", settings.preferDirect)
         assertTrue("音频直通默认开启", settings.audioPassthrough)
         assertTrue("字幕默认开启", settings.subtitleEnabledByDefault)
+        assertTrue("未保存设置时 ASS 字幕烧录默认开启", settings.assBurnIn)
         assertEquals("片头默认 90 秒", 90, settings.skipIntroSeconds)
     }
 
@@ -68,6 +69,24 @@ class DataStoreSettingsRepositoryTest {
         val settings = repository.settings.first()
         assertFalse(settings.preferDirect)
         assertFalse(settings.audioPassthrough)
+    }
+
+    @Test
+    fun savedAssBurnInOptOutSurvivesReloadAndUnrelatedWrites() = runTest {
+        val dataStore = createDataStore()
+        val key = booleanPreferencesKey("ass_burn_in")
+        dataStore.edit { it[key] = false }
+        val repository = DataStoreSettingsRepository(dataStore)
+        assertFalse("An existing false must not be replaced by the enabled default", repository.settings.first().assBurnIn)
+
+        repository.update { it.copy(audioPassthrough = false) }
+
+        assertFalse(DataStoreSettingsRepository(dataStore).settings.first().assBurnIn)
+        assertEquals(false, dataStore.data.first()[key])
+        repository.update { it.copy(assBurnIn = true) }
+        assertTrue(DataStoreSettingsRepository(dataStore).settings.first().assBurnIn)
+        repository.update { it.copy(assBurnIn = false) }
+        assertFalse(DataStoreSettingsRepository(dataStore).settings.first().assBurnIn)
     }
 
     @Test

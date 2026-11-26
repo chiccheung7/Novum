@@ -25,7 +25,10 @@ import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
@@ -50,6 +53,8 @@ import com.novum.tv.ui.theme.NovumType
  * @param isPassword 是否密码框（以圆点掩码显示）。
  * @param imeAction 软键盘回车键行为。
  * @param keyboardActions 软键盘动作回调，如 `onSearch`（搜索框专用）。
+ * @param showLabel 是否显示字段上方的标签；隐藏时仍保留无障碍名称。
+ * @param keyboardType 系统输入法类型，例如端口的数字键盘。
  */
 @Composable
 fun NovumTextField(
@@ -61,6 +66,8 @@ fun NovumTextField(
     isPassword: Boolean = false,
     imeAction: ImeAction = ImeAction.Next,
     keyboardActions: KeyboardActions = KeyboardActions.Default,
+    showLabel: Boolean = true,
+    keyboardType: KeyboardType = KeyboardType.Text,
 ) {
     var focused by remember { mutableStateOf(false) }
     val borderColor by animateColorAsState(
@@ -70,17 +77,20 @@ fun NovumTextField(
     val keyboard = LocalSoftwareKeyboardController.current
 
     Column(modifier = modifier.fillMaxWidth()) {
-        Text(
-            text = label,
-            modifier = Modifier.padding(bottom = 6.dp),
-            style = NovumType.Caption,
-            color = NovumPalette.PaperMuted,
-        )
+        if (showLabel) {
+            Text(
+                text = label,
+                modifier = Modifier.padding(bottom = 6.dp),
+                style = NovumType.Caption,
+                color = NovumPalette.PaperMuted,
+            )
+        }
         BasicTextField(
             value = value,
             onValueChange = onValueChange,
             modifier = Modifier
                 .fillMaxWidth()
+                .semantics { contentDescription = label }
                 .clip(NovumShapes.Card)
                 .background(NovumPalette.Surface)
                 .border(width = if (focused) 2.dp else 1.dp, color = borderColor, shape = NovumShapes.Card)
@@ -102,7 +112,7 @@ fun NovumTextField(
             } else {
                 VisualTransformation.None
             },
-            keyboardOptions = KeyboardOptions(imeAction = imeAction),
+            keyboardOptions = KeyboardOptions(imeAction = imeAction, keyboardType = keyboardType),
             keyboardActions = keyboardActions,
             decorationBox = { innerTextField ->
                 Box {

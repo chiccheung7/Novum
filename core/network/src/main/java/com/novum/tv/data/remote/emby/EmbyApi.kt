@@ -259,6 +259,14 @@ interface EmbyApi {
         @Path("itemId") itemId: String,
     ): UserDataDto
 
+    /** 更新完整用户数据；批量标记时用标记响应复制并清除续播位置，保留收藏、次数等字段。 */
+    @POST("Users/{uid}/Items/{itemId}/UserData")
+    suspend fun updateUserData(
+        @Path("uid") uid: String,
+        @Path("itemId") itemId: String,
+        @Body body: UserDataUpdateDto,
+    )
+
     /**
      * 取播放信息：服务端据此下发直连或转码地址。
      *

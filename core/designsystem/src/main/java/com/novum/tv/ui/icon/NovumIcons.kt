@@ -342,6 +342,26 @@ object NovumIcons {
         }
     }
 
+    /** 未看状态的眼睛：与已看实心对勾形成明确区别。 */
+    val Eye: ImageVector by lazy {
+        stroked("novum_eye") {
+            moveTo(2.5f, 12f)
+            curveTo(4.5f, 7.5f, 8f, 5.2f, 12f, 5.2f)
+            curveTo(16f, 5.2f, 19.5f, 7.5f, 21.5f, 12f)
+            curveTo(19.5f, 16.5f, 16f, 18.8f, 12f, 18.8f)
+            curveTo(8f, 18.8f, 4.5f, 16.5f, 2.5f, 12f)
+            close()
+            circle(12f, 12f, 3f)
+        }
+    }
+
+    /** 空心圆。 */
+    val CircleOutline: ImageVector by lazy {
+        stroked("novum_circle_outline") {
+            circle(12f, 12f, 8.5f)
+        }
+    }
+
     /** 更多（三个圆点）。 */
     val More: ImageVector by lazy {
         filled("novum_more") {

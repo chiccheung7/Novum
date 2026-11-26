@@ -175,17 +175,35 @@ private fun formatBitrate(bps: Long): String = when {
 
     /** People[] → 演职员模型（详情/季级聚合共用）。 */
     internal fun List<PersonDto>.toCastMembers(server: String, strings: MediaStrings): List<CastMember> {
-        // 同一个人可能以多个职位出现（导演 + 旁白 + 演员），Emby 的 People 会下发多条
-        // **同 id** 记录；直接 map 会让列表里出现重复 key，LazyRow 抛
-        // "Key ... was already used" 直接闪退。按人物 id（缺 id 时按姓名）去重，保留首次出现。
-        val seen = LinkedHashSet<String>()
-        return mapNotNull { person ->
-            val key = person.Id?.takeIf { it.isNotBlank() }
-                ?: person.Name?.trim()?.takeIf { it.isNotBlank() }?.lowercase()
-                ?: return@mapNotNull null
-            if (!seen.add(key)) return@mapNotNull null
-            person.toCastMember(server, strings)
+        // 保留服务器人物顺序；同人兼任多个职位时优先展示演员记录及其角色、头像。
+        // 不能简单保留第一条，否则 Director 排在 Actor 前会把演员显示成导演。
+        val people = LinkedHashMap<String, PersonDto>()
+        forEach { person ->
+            val key = person.castKey() ?: return@forEach
+            people[key] = people[key]?.preferredCastRecord(person) ?: person
         }
+        return people.values.mapNotNull { it.toCastMember(server, strings) }
+    }
+
+    private fun PersonDto.castKey(): String? =
+        Name?.trim()?.takeIf { it.isNotBlank() }?.let { name ->
+            Id?.takeIf { it.isNotBlank() } ?: name.lowercase(Locale.ROOT)
+        }
+
+    private fun PersonDto.preferredCastRecord(other: PersonDto): PersonDto {
+        fun PersonDto.priority(): Int = when {
+            Type.equals("Actor", ignoreCase = true) -> 0
+            Type.equals("GuestStar", ignoreCase = true) -> 1
+            else -> 2
+        }
+        val preferred = if (other.priority() < priority()) other else this
+        val fallback = if (preferred === this) other else this
+        // 不把不同姓名或不同人物的头像拼到一起；只在同一身份内补缺失的头像版本。
+        return if (Name?.trim().equals(other.Name?.trim(), ignoreCase = true)) {
+            preferred.copy(
+                PrimaryImageTag = preferred.imageTag() ?: fallback.imageTag(),
+            )
+        } else preferred
     }
 
     /**
@@ -197,14 +215,17 @@ private fun formatBitrate(bps: Long): String = when {
     internal fun List<ItemDto>.toSeasonCast(server: String, strings: MediaStrings): List<CastMember> {
         val seen = LinkedHashMap<String, Pair<PersonDto, Int>>()
         forEach { dto ->
+            val episodePeople = LinkedHashMap<String, PersonDto>()
             for (person in dto.People) {
-                val name = person.Name?.takeIf { it.isNotBlank() } ?: continue
-                val key = person.Id?.takeIf { it.isNotBlank() } ?: name.lowercase()
+                val key = person.castKey() ?: continue
+                episodePeople[key] = episodePeople[key]?.preferredCastRecord(person) ?: person
+            }
+            for ((key, person) in episodePeople) {
                 val existing = seen[key]
                 seen[key] = if (existing == null) {
                     person to 1
                 } else {
-                    existing.first to (existing.second + 1)
+                    existing.first.preferredCastRecord(person) to (existing.second + 1)
                 }
             }
         }
@@ -216,19 +237,21 @@ private fun formatBitrate(bps: Long): String = when {
 
     /** 单个人物 → 演职员模型；姓名缺失（无法上屏）返回 null。 */
     private fun PersonDto.toCastMember(server: String, strings: MediaStrings): CastMember? {
-        val name = Name?.takeIf { it.isNotBlank() } ?: return null
+        val name = Name?.trim()?.takeIf { it.isNotBlank() } ?: return null
         return CastMember(
             name = name,
             role = Role?.takeIf { it.isNotBlank() } ?: Type.personTypeLabel(strings),
-            imageUrl = Id?.let { personId ->
-                EmbyImages.primary(
-                    server = server,
-                    itemId = personId,
-                    tag = imageTag(),
-                    maxWidth = 240,
-                )
+            imageUrl = Id?.takeIf { it.isNotBlank() }?.let { personId ->
+                imageTag()?.let { tag ->
+                    EmbyImages.primary(
+                        server = server,
+                        itemId = personId,
+                        tag = tag,
+                        maxWidth = 240,
+                    )
+                }
             },
-            id = Id,
+            id = Id?.takeIf { it.isNotBlank() },
         )
     }
 
@@ -405,7 +428,8 @@ internal fun ItemDto.toEpisode(server: String, index: Int, strings: MediaStrings
         seasonIndex = ParentIndexNumber ?: 1,
         index = IndexNumber ?: (index + 1),
         played = userData?.Played ?: false,
-        progressMs = userData?.PlaybackPositionTicks?.let { it / TICKS_PER_MS } ?: 0L,
+        // PlayedItems 接口可能保留旧的 PlaybackPositionTicks，已看状态优先，避免重进页面又出现进度条。
+        progressMs = if (userData?.Played == true) 0L else userData?.PlaybackPositionTicks?.let { it / TICKS_PER_MS } ?: 0L,
         runtimeMinutes = RunTimeTicks?.let { (it / TICKS_PER_MINUTE).toInt() },
         imageUrl = ImageTags["Primary"]?.let {
             EmbyImages.primary(server = server, itemId = id, tag = it)

@@ -65,6 +65,14 @@ class ServerAddressTest {
     fun baseUrlAlwaysEndsWithSlash() {
         assertEquals("http://host:8096/", ServerAddress.toBaseUrl("http://host:8096"))
         assertEquals("http://host:8096/", ServerAddress.toBaseUrl("http://host:8096/"))
+        assertEquals(
+            "https://host:443/proxy/emby/?route=one#section",
+            ServerAddress.toBaseUrl("https://host:443/proxy/emby?route=one#section"),
+        )
+        assertEquals(
+            "https://host:443/proxy/emby/?route=one#section",
+            ServerAddress.toBaseUrl("https://host:443/proxy/emby/?route=one#section"),
+        )
     }
 
     @Test
@@ -103,16 +111,19 @@ class ServerAddressTest {
     }
 
     @Test
-    fun explicitPortIsCleartextUnlessHttpsPort() {
+    fun portAloneDoesNotGuaranteeHttps() {
         assertTrue(ServerAddress.usesCleartext("demo.example.com:8096"))
-        // 443 是 HTTPS 默认端口，按加密处理
-        assertFalse(ServerAddress.usesCleartext("demo.example.com:443"))
+        // 未指定协议时，443 端口仍有 HTTP 候选，端口号不能保证传输加密。
+        assertTrue(ServerAddress.usesCleartext("demo.example.com:443"))
+        assertFalse(ServerAddress.usesCleartext("https://demo.example.com:443"))
     }
 
     @Test
-    fun bareDomainIsNotReportedAsCleartext() {
-        // 裸域名会先试 HTTP 再兜底 HTTPS，避免每次登录都弹确认框
-        assertFalse(ServerAddress.usesCleartext("demo.example.com"))
+    fun bareDomainRequiresCleartextConfirmation() {
+        assertTrue(ServerAddress.usesCleartext("demo.example.com"))
+        assertTrue(ServerAddress.usesCleartext("demo.example.com/emby"))
+        assertTrue(ServerAddress.usesCleartext("203.0.113.8"))
         assertFalse(ServerAddress.usesCleartext(""))
+        assertFalse(ServerAddress.usesCleartext("   "))
     }
 }

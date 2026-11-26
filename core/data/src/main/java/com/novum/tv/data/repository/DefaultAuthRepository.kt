@@ -165,7 +165,7 @@ class DefaultAuthRepository @Inject constructor(
     }
 
     override suspend fun shouldRememberCredentials(): Boolean = withContext(dispatchers.io) {
-        runCatchingSuspend { sessionStore.shouldRememberCredentials() }.getOrDefault(false)
+        runCatchingSuspend { sessionStore.shouldRememberCredentials() }.getOrDefault(true)
     }
 
     override suspend fun setRememberCredentials(remember: Boolean) {

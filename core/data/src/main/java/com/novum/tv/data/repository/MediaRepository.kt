@@ -125,6 +125,10 @@ interface MediaRepository {
      */
     suspend fun setPlayed(itemId: String, played: Boolean): NovumResult<Boolean>
 
+    /** 整季标记时同时清除各集续播位置；默认实现供不维护播放进度的仓储使用。 */
+    suspend fun setPlayedAndResetProgress(itemId: String, played: Boolean): NovumResult<Boolean> =
+        setPlayed(itemId, played)
+
     /**
      * 读取首页聚合数据。
      *

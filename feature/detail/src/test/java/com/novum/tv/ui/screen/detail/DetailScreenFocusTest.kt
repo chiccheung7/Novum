@@ -1,15 +1,20 @@
 package com.novum.tv.ui.screen.detail
 
 import android.content.Context
+import androidx.activity.OnBackPressedDispatcher
+import androidx.activity.compose.LocalOnBackPressedDispatcherOwner
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.semantics.SemanticsActions
+import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.test.assertIsFocused
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performKeyInput
 import androidx.compose.ui.test.performSemanticsAction
+import androidx.compose.ui.test.pressKey
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.LifecycleRegistry
@@ -136,7 +141,95 @@ class DetailScreenFocusTest {
         }
         composeRule.waitForIdle()
 
-        composeRule.onNodeWithText("立即播放").assertIsFocused()
+        composeRule.onNodeWithText("播放 S01E01").assertIsFocused()
+    }
+
+    @Test
+    fun confirmingAnEpisodeCardImmediatelyStartsThatEpisode() {
+        val episode = Episode("episode", "第一集", 1, 1, false, 0L, 45, null, overview = "简介")
+        val repository = object : MediaRepository by NoopMediaRepository {
+            override suspend fun detail(itemId: String) = NovumResult.Success(series())
+            override suspend fun seasons(seriesId: String) = NovumResult.Success(
+                listOf(Season("season", "第一季", 1, 1)),
+            )
+            override suspend fun episodes(seriesId: String, seasonId: String?) = NovumResult.Success(listOf(episode))
+        }
+        val viewModel = DetailViewModel(
+            repository = repository,
+            toast = RecordingToastSink(),
+            settings = FakeSettingsRepository(),
+            playbackPrefs = ItemPlaybackPrefsStore(temporaryFolder.newFile(), Dispatchers.Unconfined),
+            logger = NoopNovumLogger,
+            appContext = ApplicationProvider.getApplicationContext<Context>(),
+            savedStateHandle = SavedStateHandle(mapOf("itemId" to "series")),
+        )
+        var playedId: String? = null
+        composeRule.setContent {
+            NovumTheme {
+                DetailScreen(
+                    onBack = {},
+                    onPlay = { id, _, _ -> playedId = id },
+                    onOpenPerson = { _, _ -> },
+                    viewModel = viewModel,
+                )
+            }
+        }
+        composeRule.waitForIdle()
+
+        composeRule.onNodeWithContentDescription("S01E01 · 第一集")
+            .performSemanticsAction(SemanticsActions.RequestFocus)
+            .performKeyInput { pressKey(Key.DirectionCenter) }
+        composeRule.runOnIdle { assertEquals("episode", playedId) }
+    }
+
+    @Test
+    fun backLeavesDetailOnTheFirstPressAfterSelectingAnEpisode() {
+        val episodes = listOf(
+            Episode("ep-1", "第一集", 1, 1, false, 0L, 45, null, overview = null),
+            Episode("ep-2", "第二集", 1, 2, false, 0L, 45, null, overview = null),
+        )
+        val repository = object : MediaRepository by NoopMediaRepository {
+            override suspend fun detail(itemId: String) = NovumResult.Success(series())
+            override suspend fun seasons(seriesId: String) = NovumResult.Success(
+                listOf(Season("season", "第一季", 1, episodes.size)),
+            )
+            override suspend fun episodes(seriesId: String, seasonId: String?) = NovumResult.Success(episodes)
+        }
+        val viewModel = DetailViewModel(
+            repository = repository,
+            toast = RecordingToastSink(),
+            settings = FakeSettingsRepository(),
+            playbackPrefs = ItemPlaybackPrefsStore(temporaryFolder.newFile(), Dispatchers.Unconfined),
+            logger = NoopNovumLogger,
+            appContext = ApplicationProvider.getApplicationContext<Context>(),
+            savedStateHandle = SavedStateHandle(mapOf("itemId" to "series")),
+        )
+        var backCalls = 0
+        lateinit var backDispatcher: OnBackPressedDispatcher
+        composeRule.setContent {
+            backDispatcher = checkNotNull(LocalOnBackPressedDispatcherOwner.current).onBackPressedDispatcher
+            NovumTheme {
+                DetailScreen(
+                    onBack = { backCalls++ },
+                    onPlay = { _, _, _ -> },
+                    onOpenPerson = { _, _ -> },
+                    viewModel = viewModel,
+                )
+            }
+        }
+        composeRule.waitForIdle()
+        composeRule.onNodeWithContentDescription("S01E02 · 第二集")
+            .performSemanticsAction(SemanticsActions.RequestFocus)
+        composeRule.waitForIdle()
+
+        composeRule.runOnIdle {
+            assertEquals("ep-2", viewModel.state.value.episodeContextId)
+            backDispatcher.onBackPressed()
+        }
+        composeRule.runOnIdle {
+            assertEquals("一次返回就应交给主页导航", 1, backCalls)
+            assertEquals("返回不应先重置当前集", "ep-2", viewModel.state.value.episodeContextId)
+        }
     }
 
     private fun series() = MediaDetail(

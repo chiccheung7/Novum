@@ -79,6 +79,7 @@ fun PlayerScreen(
     // 带宽计（缓冲时显示网速）：注入自建实例才能读到估计值
     // （ExoPlayer.Builder 默认内部建的不外露）；Stage 轮询 bitrateEstimate 展示
     val bandwidthMeter = remember { DefaultBandwidthMeter.Builder(context).build() }
+    val networkSpeed = remember { NetworkSpeedMeter() }
     // AudioSink 的直通能力只在构造时声明；用户切换直通也必须换成对应的新实例。
     val player = remember(state.offloadCapable, state.audioPassthrough, bandwidthMeter) {
         val okHttp = OkHttpClient.Builder()
@@ -95,6 +96,7 @@ fun PlayerScreen(
             }
             .build()
         val dataSourceFactory = DefaultDataSource.Factory(context, OkHttpDataSource.Factory(okHttp))
+            .setTransferListener(networkSpeed)
         ExoPlayer.Builder(context)
             .setBandwidthMeter(bandwidthMeter)
             // 音频 offload 适配（试验性）：直通能力非空时
@@ -145,8 +147,7 @@ fun PlayerScreen(
         player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
             .setPreferredAudioLanguage(state.preferredAudioLanguage.ifBlank { null })
             .setPreferredTextLanguage(
-                state.preferredSubtitleLanguage
-                    .takeUnless { it.isBlank() || it == DUAL_SUBTITLE_LANGUAGE },
+                subtitleLanguageTag(state.preferredSubtitleLanguage),
             )
             .clearOverridesOfType(C.TRACK_TYPE_TEXT)
             .build()
@@ -160,12 +161,16 @@ fun PlayerScreen(
             // 来源用 onVideoSizeChanged（解码器上报帧尺寸 + SAR/DAR），
             // onTracksChanged 的 format 可能还没带尺寸。
             override fun onTracksChanged(tracks: Tracks) {
+                val activePlan = player.currentMediaItem?.localConfiguration?.tag as? com.novum.tv.model.PlaybackPlan
                 // 手动切轨后的回调可能早于下一帧重组，直接读取同步更新的恢复快照。
                 val rememberedPrefs = viewModel.state.value.rememberedPrefs
+                val textEnabled = applySubtitleEnabledState(player,
+                    burnedIn = activePlan?.burnedInSubtitleLabel != null,
+                    remembered = rememberedPrefs, enabledByDefault = viewModel.state.value.subtitlesEnabled)
                 // 条目记忆优先（手动改过的字幕/音轨起播即恢复），未命中回落语言偏好
-                val subtitleRemembered = applyRememberedSubtitle(player, rememberedPrefs)
-                if (!subtitleRemembered && subtitleLanguagePref == DUAL_SUBTITLE_LANGUAGE) {
-                    applyDualSubtitlePreference(player)
+                if (textEnabled) {
+                    val subtitleRemembered = applyRememberedSubtitle(player, rememberedPrefs)
+                    if (!subtitleRemembered) applySubtitleLanguagePreference(player, subtitleLanguagePref)
                 }
                 applyRememberedAudio(player, rememberedPrefs)
                 if (!BuildConfig.DEBUG) return
@@ -233,6 +238,8 @@ fun PlayerScreen(
 
     LaunchedEffect(player, plan, subtitlesEnabled) {
         if (plan != null) {
+            applySubtitleEnabledState(player, plan.burnedInSubtitleLabel != null,
+                viewModel.state.value.rememberedPrefs, subtitlesEnabled)
             if (BuildConfig.DEBUG) {
                 android.util.Log.d(CUE_LOG_TAG, "prepare: subs=${plan.subtitles.size} method=${plan.method}")
             }
@@ -310,6 +317,7 @@ fun PlayerScreen(
                                 option.language,
                                 rawLabel = option.rawLabel,
                                 channels = option.channels,
+                                formatId = option.formatId,
                             )
                         }
                     },
@@ -317,6 +325,7 @@ fun PlayerScreen(
                     videoAspectRatio = videoAspectRatio,
                     title = state.title,
                     logoUrl = state.logoUrl,
+                    episodeTitle = state.episodeTitle,
                     overview = state.overview,
                     subtitle = state.subtitle,
                     subtitleSize = state.subtitleSize,
@@ -351,7 +360,7 @@ fun PlayerScreen(
                     onRetryNextLine = { positionMs -> viewModel.retryNextLine(positionMs) },
                     initialSpeed = state.playbackSpeed,
                     onSpeedChanged = { speed -> viewModel.setPlaybackSpeed(speed) },
-                    bandwidthEstimate = { bandwidthMeter.bitrateEstimate },
+                    bandwidthEstimate = networkSpeed::sampleBitsPerSecond,
                     displayModeText = { activity?.let(DisplayModeSwitcher::currentModeText) },
                     autoPlayNext = state.autoPlayNext,
                     danmu = state.danmu,
@@ -392,6 +401,3 @@ private const val VIDEO_LOG_TAG = "NovumVideo"
 
 /** 进度回写间隔。 */
 private const val PROGRESS_REPORT_INTERVAL_MS = 5_000L
-
-/** 中英双语偏好的内部值（无 ISO 639 对应，播放侧按轨标题匹配）。 */
-private const val DUAL_SUBTITLE_LANGUAGE = "zhdual"

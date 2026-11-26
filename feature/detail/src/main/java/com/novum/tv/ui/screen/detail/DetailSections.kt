@@ -30,9 +30,11 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.tv.material3.Text
+import androidx.tv.material3.Icon
 import com.novum.tv.core.designsystem.R
 import com.novum.tv.model.CastMember
 import com.novum.tv.model.Episode
+import com.novum.tv.model.Season
 import com.novum.tv.ui.component.LANDSCAPE_ASPECT
 import com.novum.tv.ui.component.NovumButton
 import com.novum.tv.ui.component.NovumCard
@@ -55,22 +57,23 @@ import com.novum.tv.ui.theme.NovumType
  *
  * 加载失败时显示内联重试；本季无分集时显示明确提示，焦点留在本区域。
  *
- * 首次点击卡片切换当前集，再次按 OK 起播。
+ * 分集卡保留简短简介，按一次 OK 直接起播；卡行下不重复整段分集信息。
  * 卡文显示集号与标题，以及分集简介；卡图左上角显示剧集 clearlogo。
- * 右上角以白色对勾标记已看；已看卡片压暗，当前选中态由卡片描边表达。
+ * 右上角以绿色对勾标记已看；已看卡片压暗，焦点由卡片描边表达。
  *
  * @param episodes 当前季的分集。
  * @param episodesEmpty 是否无分集（且未失败）。
  * @param episodesFailed 加载失败（内联重试）。
  * @param firstUnplayedId 「下一集」/切季首焦目标 id。
  * @param anchorEpisodeId 进场定位用的当前集 id；分集到达后滚动到该卡。null 或不在列表时不滚。
- * @param selectedEpisodeId 当前选中集 id：该卡显示「已选中」角标
- *   （非彩色，压过「下一集」角标——正在查看比下一集更重要）。
+ * @param selectedEpisodeId 当前预览集 id；用于当前集的焦点索取。
+ * @param selectedSeason 当前所选季；多季剧集在选集标题旁提供切季入口。
+ * @param onOpenSeasonMenu 打开季选择菜单。
  * @param logoUrl 剧集 clearlogo（卡图左上角；同剧所有集共用一张）；null 不渲染。
  * @param episodeFocus 切季后落到第一未看集的索取器。
- * @param contextFocus 选中集的索取器：返回键清选中时把焦点还给这张卡。
- * @param onCardClick 点击分集卡时切换当前集；已选中卡再次点击时起播。
- * @param onFocusSelect 焦点落到卡上时选择该集；页面负责压制 Back 后回焦产生的再次选择。
+ * @param contextFocus 当前选中集的焦点索取器。
+ * @param onCardClick 点击或确认分集卡时直接起播该集。
+ * @param onFocusSelect 焦点落到卡上时选择该集。
  * @param onRetry 失败重试。
  */
 @Composable
@@ -81,6 +84,8 @@ internal fun EpisodeStrip(
     firstUnplayedId: String?,
     anchorEpisodeId: String?,
     selectedEpisodeId: String?,
+    selectedSeason: Season? = null,
+    onOpenSeasonMenu: () -> Unit = {},
     logoUrl: String?,
     episodeFocus: FocusRequester,
     contextFocus: FocusRequester,
@@ -91,16 +96,51 @@ internal fun EpisodeStrip(
 ) {
     val cardWidth = rememberMediaCardWidth(LANDSCAPE_ASPECT)
     Column {
-        Text(
-            text = stringResource(R.string.detail_episodes),
-            style = NovumType.Section,
-            color = NovumPalette.Paper,
-            // 分集卡聚焦放大（1.1x）上缘逼近标题——按行标题口径留 TitleToRow
-            modifier = Modifier.padding(
-                start = NovumDimens.SafeHorizontal,
-                bottom = NovumDimens.TitleToRow,
-            ),
-        )
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(
+                    start = NovumDimens.SafeHorizontal,
+                    end = NovumDimens.SafeHorizontal,
+                    bottom = NovumDimens.TitleToRow,
+                ),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(NovumDimens.Gutter),
+        ) {
+            Text(
+                text = stringResource(R.string.detail_episodes),
+                style = NovumType.Section,
+                color = NovumPalette.Paper,
+                modifier = Modifier.weight(1f),
+            )
+            if (selectedSeason != null) {
+                NovumButton(onClick = onOpenSeasonMenu) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        Text(
+                            text = seasonDisplayName(selectedSeason),
+                            style = NovumType.ButtonLg,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                        selectedSeason.unplayedCount?.takeIf { it > 0 }?.let { count ->
+                            Text(
+                                text = stringResource(R.string.detail_season_unplayed, count),
+                                style = NovumType.Caption,
+                                maxLines = 1,
+                            )
+                        }
+                        Icon(
+                            imageVector = NovumIcons.ChevronDown,
+                            contentDescription = null,
+                            modifier = Modifier.size(16.dp),
+                        )
+                    }
+                }
+            }
+        }
         if (episodesEmpty) {
             Text(
                 text = stringResource(R.string.detail_no_episodes),
@@ -172,7 +212,6 @@ internal fun EpisodeStrip(
                     EpisodeCard(
                         episode = episode,
                         width = cardWidth,
-                        selected = selected,
                         logoUrl = logoUrl,
                         // 页面根据当前选中集决定切换语境或起播。
                         onClick = { onCardClick(episode.id) },
@@ -186,7 +225,7 @@ internal fun EpisodeStrip(
                                     Modifier
                                 },
                             )
-                            // 选中集挂回焦索取器：返回键清选中时焦点落回
+                            // 当前选中集挂焦点索取器。
                             .then(
                                 if (selected) {
                                     Modifier.focusRequester(contextFocus)
@@ -208,15 +247,14 @@ internal fun EpisodeStrip(
  * **卡文两行** = 「S01E03 · 集标题」/ 分集简介（**两行**省略）——剧集详情页
  *   信息块恒为剧集内容后，分集标题与简介只在卡下方展示
  * **卡图左上角**挂剧集 clearlogo（同剧共用），图上的文字标题不叠加
- * **卡图右上角**仅已看分集显示白色对勾。
- * **已选中**由图区 Accent 描边框表示；有进度的集显示进度条与剩余时长。
+ * **卡图右上角**眼睛表示未看，绿色实心对勾表示已看。
+ * **聚焦**由卡片标准描边表示；有进度的集显示进度条与剩余时长。
  *   已看分集仅剧照降亮度，集标题与简介保留可读性。
  */
 @Composable
 private fun EpisodeCard(
     episode: Episode,
     width: Dp,
-    selected: Boolean,
     logoUrl: String?,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
@@ -238,10 +276,13 @@ private fun EpisodeCard(
         // 分集简介（卡文行 2，两行省略）
         subtitle = episode.overview,
         width = width,
-        // 仅已看分集显示白色图标，状态文字保留给无障碍朗读。
+        // 未看眼睛、已看绿勾：形状和颜色均区分状态。
         badge = null,
-        badgeIcon = if (episode.played) NovumIcons.CheckFilled else null,
-        badgeIconContentDescription = if (episode.played) stringResource(R.string.detail_episode_played) else null,
+        badgeIcon = if (episode.played) NovumIcons.CheckFilled else NovumIcons.Eye,
+        badgeIconTint = if (episode.played) NovumPalette.Success else null,
+        badgeIconContentDescription = stringResource(
+            if (episode.played) R.string.detail_episode_played else R.string.detail_episode_unplayed,
+        ),
         // 优先使用分集自己的 Primary 图（每集不同的剧照/截图，便于区分选集）；
         // 缺失时回落到剧集级 16:9 主视觉。
         imageUrl = episode.imageUrl ?: episode.seriesWideUrl,
@@ -254,8 +295,8 @@ private fun EpisodeCard(
         subtitleStyle = NovumType.Caption,
         subtitleColor = NovumPalette.PaperFaint,
         imageAlpha = if (episode.played) 0.55f else 1f,
-        // 已选中时显示图区描边框。
-        glowing = selected,
+        // 焦点由标准卡片描边表达；选中集不再额外叠加白色竖条。
+        glowing = false,
         onClick = onClick,
         modifier = modifier,
     )

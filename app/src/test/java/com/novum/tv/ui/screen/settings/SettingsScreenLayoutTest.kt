@@ -14,6 +14,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.SemanticsActions
+import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.hasClickAction
@@ -22,12 +23,14 @@ import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performSemanticsAction
+import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.test.core.app.ApplicationProvider
 import com.novum.tv.data.line.LineProbe
+import com.novum.tv.BuildConfig
 import com.novum.tv.data.remote.emby.EmbyApi
 import com.novum.tv.data.remote.emby.EmbyApiProvider
 import com.novum.tv.data.remote.emby.SessionHolder
@@ -72,6 +75,17 @@ class SettingsScreenLayoutTest {
     }
 
     @Test
+    fun aboutShowsTheInstalledBuildVersion() {
+        showSettings()
+        selectSection("关于")
+
+        composeRule.onNodeWithText("Novum").assertIsDisplayed()
+        composeRule.onNodeWithText("版本号").assertIsDisplayed()
+        composeRule.onNodeWithText("${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})").assertIsDisplayed()
+        savePreview("settings-about.png")
+    }
+
+    @Test
     fun appearanceKeepsScaleControlAndRemovesExtraHint() {
         showSettings()
         selectSection("外观与界面")
@@ -90,7 +104,7 @@ class SettingsScreenLayoutTest {
         selectSection("播放与续播")
 
         val actionLabel = textBounds("优先视频质量")
-        listOf("播放与续播", "播放行为", "播放线路", "优先直连播放", "片头时长").forEach { text ->
+        listOf("播放与续播", "播放线路", "优先直连播放", "片头时长").forEach { text ->
             assertEquals("$text 应与动作行标签同列", actionLabel.left, textBounds(text).left, 0.5f)
         }
         assertEquals("调节行与动作行尾值同列", textBounds("默认").right, textBounds("90 秒").right, 0.5f)
@@ -100,11 +114,39 @@ class SettingsScreenLayoutTest {
             .fetchSemanticsNode().boundsInRoot
         assertEquals("开关行保持同一行尾边界", actionRow.right, switchRow.right, 0.5f)
         assertEquals("行尾值保留20dp内边距", actionRow.right - 20f, textBounds("默认").right, 0.5f)
-        composeRule.onNodeWithText("弹幕显示").assertExists()
+        assertHintAbsent("播放行为")
+        assertHintAbsent("弹幕显示")
         assertHintAbsent("这些选项影响后续播放；音频直通还取决于电视和音响支持。")
         assertHintAbsent("弹幕可用时应用这些默认样式，播放侧栏也可随时调整。")
 
         savePreview("settings-playback.png")
+    }
+
+    @Test
+    fun assBurnInStartsEnabledAndKeepsAnExplicitOptOutAcrossSections() {
+        showSettings()
+        selectSection("字幕与音轨")
+        val row = composeRule.onNode(hasText("ASS 字幕烧录保样式") and hasClickAction())
+        row.performScrollTo().assertIsDisplayed()
+        assertEquals("开", row.fetchSemanticsNode().config[SemanticsProperties.StateDescription])
+
+        row.performSemanticsAction(SemanticsActions.OnClick)
+        composeRule.waitForIdle()
+        selectSection("账号")
+        selectSection("字幕与音轨")
+
+        assertEquals("关", row.fetchSemanticsNode().config[SemanticsProperties.StateDescription])
+    }
+
+    @Test
+    fun savedAssBurnInOptOutStaysOffWhenOpeningSettings() {
+        showSettings(AppSettings(assBurnIn = false))
+        selectSection("字幕与音轨")
+        val row = composeRule.onNode(hasText("ASS 字幕烧录保样式") and hasClickAction())
+
+        row.performScrollTo().assertIsDisplayed()
+
+        assertEquals("关", row.fetchSemanticsNode().config[SemanticsProperties.StateDescription])
     }
 
     private fun showSettings(snapshot: AppSettings = AppSettings()) {

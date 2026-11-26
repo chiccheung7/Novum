@@ -140,9 +140,9 @@ class MediaVisualPreviewTest {
         assertEquals("Preview canvas height", 720, bitmap.height)
         composeRule.onNodeWithTag(scene.name).assertIsDisplayed()
         when (scene) {
-            Scene.HomeLoading -> composeRule.onAllNodesWithText("播放").assertCountEquals(0)
+            Scene.HomeLoading -> composeRule.onAllNodesWithText("立即播放").assertCountEquals(0)
             Scene.Home -> {
-                composeRule.onNodeWithText("播放").assertIsDisplayed()
+                composeRule.onNodeWithText("立即播放").assertIsDisplayed()
                 composeRule.onAllNodesWithText("星海来信").onFirst().assertIsDisplayed()
             }
             Scene.PosterLoading -> {

@@ -114,7 +114,7 @@ class DataStoreSessionStore @Inject constructor(
         .catch { throwable ->
             if (throwable is IOException) emit(emptyPreferences()) else throw throwable
         }
-        .map { preferences -> preferences[SessionKeys.RememberCredentials] ?: false }
+        .map { preferences -> preferences[SessionKeys.RememberCredentials] ?: true }
         .first()
 
     override suspend fun setRememberCredentials(remember: Boolean) {
