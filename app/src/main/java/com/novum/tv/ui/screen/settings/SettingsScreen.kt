@@ -42,6 +42,7 @@ import coil3.SingletonImageLoader
 import com.novum.tv.core.designsystem.R
 import com.novum.tv.core.state.UiState
 import com.novum.tv.data.settings.AppSettings
+import com.novum.tv.model.DanmuArea
 import com.novum.tv.ui.component.NovumInitialFocus
 import com.novum.tv.ui.component.NovumNoScrollDeadZone
 import com.novum.tv.ui.component.NovumContentScaffold
@@ -90,13 +91,13 @@ fun SettingsScreen(
     onLoggedOut: () -> Unit,
     modifier: Modifier = Modifier,
     viewModel: SettingsViewModel = hiltViewModel(),
+    linePickerViewModel: LinePickerViewModel = hiltViewModel(),
 ) {
     val state: UiState<AppSettings> by viewModel.uiState.collectAsStateWithLifecycle()
     val sessionLabel by viewModel.sessionLabel.collectAsStateWithLifecycle()
     val loggingOut by viewModel.loggingOut.collectAsStateWithLifecycle()
 
     // 播放线路选择弹窗。
-    val linePickerViewModel: LinePickerViewModel = hiltViewModel()
     var linePickerOpen by rememberSaveable { mutableStateOf(false) }
     val pickerState by linePickerViewModel.pickerState.collectAsStateWithLifecycle()
     val pinnedLine by linePickerViewModel.pinned.collectAsStateWithLifecycle()
@@ -106,9 +107,6 @@ fun SettingsScreen(
     val selectedSection = runCatching { SettingsSection.valueOf(selected) }
         .getOrDefault(SettingsSection.Account)
     val leftSelectedRowFocus = remember { FocusRequester() }
-
-    // 初始抓焦：左目录选中行——顶栏切页进入时焦点落内容区，不滞留顶栏
-    NovumInitialFocus(leftSelectedRowFocus)
 
     // Back 分层：右栏先回左栏，左栏才退出设置页。
     // 不再依赖右栏 Column 的 onFocusChanged（那会让整栏重组闪烁）——
@@ -149,6 +147,8 @@ fun SettingsScreen(
             }
 
             is UiState.Success -> {
+                // 数据可能晚于初始抓焦重试窗口到达；目标挂载后再启动一次首焦。
+                NovumInitialFocus(leftSelectedRowFocus)
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(32.dp),
@@ -186,7 +186,7 @@ fun SettingsScreen(
                             text = stringResource(selectedSection.labelRes),
                             style = NovumType.Title,
                             color = NovumPalette.Paper,
-                            modifier = Modifier.padding(bottom = 16.dp),
+                            modifier = Modifier.padding(start = 20.dp, end = 20.dp, bottom = 16.dp),
                         )
                         SectionContent(
                             section = selectedSection,
@@ -416,10 +416,10 @@ private fun SectionContent(
                         levelCount = UI_SCALE_STEPS.size,
                         onLevelChange = viewModel::setUiScaleLevel,
                     )
-                    HintText(stringResource(R.string.settings_ui_scale_hint))
                 }
 
                 SettingsSection.Playback -> {
+                    SettingsSubsectionTitle(stringResource(R.string.settings_subsection_playback))
                     // 播放线路置顶；锁定时展示线路名，未锁定时自动选取延迟最低的线路。
                     SettingRow(
                         label = stringResource(R.string.settings_playback_line),
@@ -466,6 +466,7 @@ private fun SectionContent(
                     )
                     // 弹幕（UHDNOW 原生能力）：设置页只给全局默认值，
                     // 播放抽屉可对当前会话即时微调（写回同一存储，下次播放沿用）。
+                    SettingsSubsectionTitle(stringResource(R.string.settings_subsection_danmu))
                     NovumSwitchRow(
                         text = stringResource(R.string.danmu_enabled),
                         checked = settings.danmuEnabled,
@@ -475,10 +476,14 @@ private fun SectionContent(
                         NovumStepperRow(
                             label = stringResource(R.string.danmu_area),
                             value = stringResource(
-                                if (settings.danmuAreaFull) R.string.danmu_area_full else R.string.danmu_area_half,
+                                when (settings.danmuArea) {
+                                    DanmuArea.Top -> R.string.danmu_area_top
+                                    DanmuArea.Half -> R.string.danmu_area_half
+                                    DanmuArea.Full -> R.string.danmu_area_full
+                                },
                             ),
-                            level = if (settings.danmuAreaFull) 1 else 0,
-                            levelCount = 2,
+                            level = settings.danmuArea.ordinal,
+                            levelCount = DanmuArea.entries.size,
                             onLevelChange = viewModel::setDanmuAreaLevel,
                         )
                         NovumStepperRow(
@@ -547,6 +552,19 @@ private fun SectionContent(
                         level = settings.subtitleSize - 1,
                         levelCount = 4,
                         onLevelChange = viewModel::setSubtitleSizeLevel,
+                    )
+                    NovumStepperRow(
+                        label = stringResource(R.string.settings_subtitle_weight),
+                        value = stringResource(
+                            when (settings.subtitleWeight) {
+                                0 -> R.string.subtitle_weight_thin
+                                2 -> R.string.subtitle_weight_bold
+                                else -> R.string.subtitle_weight_normal
+                            },
+                        ),
+                        level = settings.subtitleWeight,
+                        levelCount = 3,
+                        onLevelChange = viewModel::setSubtitleWeightLevel,
                     )
                     NovumSwitchRow(
                         text = stringResource(R.string.settings_subtitle_ass_burn_in),
@@ -626,13 +644,13 @@ private fun SettingRow(
     }
 }
 
-/** 只读信息行：左侧文案，右侧值不可聚焦。水平 16dp 与 SettingRow 标签左对齐。 */
+/** 只读信息行：标签与尾值均沿用设置行的 20dp 水平内边距。 */
 @Composable
 private fun InfoRow(label: String, value: String) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 6.dp),
+            .padding(horizontal = 20.dp, vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         // 只读行同样恒 100% 不透明（与可聚焦行一致）
@@ -650,14 +668,14 @@ private fun InfoRow(label: String, value: String) {
     }
 }
 
-/** 只读说明文字（不可聚焦，比可操作行低一档、不参与焦点导航）。 */
+/** 设置分组内的非交互标题，帮助在长页滚动时快速区分播放行为和弹幕样式。 */
 @Composable
-private fun HintText(text: String) {
+private fun SettingsSubsectionTitle(text: String) {
     Text(
         text = text,
-        style = NovumType.Caption,
-        color = NovumPalette.PaperMuted,
-        modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+        style = NovumType.Body,
+        color = NovumPalette.Paper,
+        modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp),
     )
 }
 

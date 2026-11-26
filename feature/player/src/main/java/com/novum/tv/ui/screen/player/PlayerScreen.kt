@@ -9,13 +9,11 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -23,6 +21,7 @@ import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalContext
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.Player
@@ -71,8 +70,7 @@ fun PlayerScreen(
     var audioDelayMs by remember { mutableLongStateOf(0L) }
     var subtitleDelayMs by remember { mutableLongStateOf(0L) }
     val context = LocalContext.current
-    val scope = rememberCoroutineScope()
-    val mainHandler = android.os.Handler(android.os.Looper.getMainLooper())
+    val lifecycleOwner = LocalLifecycleOwner.current
 
     // 播放数据与字幕都必须走和 API 相同的网络出口：
     // 网关按 UA / 来源站校验，ExoPlayer 默认栈会拿到 403，表现就是「字幕轨选中却没字」。
@@ -81,7 +79,8 @@ fun PlayerScreen(
     // 带宽计（缓冲时显示网速）：注入自建实例才能读到估计值
     // （ExoPlayer.Builder 默认内部建的不外露）；Stage 轮询 bitrateEstimate 展示
     val bandwidthMeter = remember { DefaultBandwidthMeter.Builder(context).build() }
-    val player = remember(state.offloadCapable, bandwidthMeter) {
+    // AudioSink 的直通能力只在构造时声明；用户切换直通也必须换成对应的新实例。
+    val player = remember(state.offloadCapable, state.audioPassthrough, bandwidthMeter) {
         val okHttp = OkHttpClient.Builder()
             .connectTimeout(10, TimeUnit.SECONDS)
             .readTimeout(20, TimeUnit.SECONDS)
@@ -126,6 +125,10 @@ fun PlayerScreen(
                 playWhenReady = true
             }
     }
+    DisposableEffect(player, lifecycleOwner) {
+        val removeObserver = observePlayerLifecycle(player, lifecycleOwner.lifecycle)
+        onDispose { removeObserver() }
+    }
     // release 跟随 player 身份：remember key 变化重建播放器时旧实例先释放（不泄漏 Surface）
     DisposableEffect(player) {
         onDispose { player.release() }
@@ -138,9 +141,6 @@ fun PlayerScreen(
     // 标题钉选（见 applyDualSubtitlePreference）；偏好变更时清掉旧 override
     // 防止上一档的钉选压住新语言匹配。
     val subtitleLanguagePref by rememberUpdatedState(state.preferredSubtitleLanguage)
-    // 条目级手动记忆：优先级高于语言偏好——上次手动选过
-    // 的轨道起播即恢复；rememberUpdatedState 防 listener 闭包读到旧值
-    val rememberedPrefs by rememberUpdatedState(state.rememberedPrefs)
     LaunchedEffect(player, state.preferredAudioLanguage, state.preferredSubtitleLanguage) {
         player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
             .setPreferredAudioLanguage(state.preferredAudioLanguage.ifBlank { null })
@@ -160,6 +160,8 @@ fun PlayerScreen(
             // 来源用 onVideoSizeChanged（解码器上报帧尺寸 + SAR/DAR），
             // onTracksChanged 的 format 可能还没带尺寸。
             override fun onTracksChanged(tracks: Tracks) {
+                // 手动切轨后的回调可能早于下一帧重组，直接读取同步更新的恢复快照。
+                val rememberedPrefs = viewModel.state.value.rememberedPrefs
                 // 条目记忆优先（手动改过的字幕/音轨起播即恢复），未命中回落语言偏好
                 val subtitleRemembered = applyRememberedSubtitle(player, rememberedPrefs)
                 if (!subtitleRemembered && subtitleLanguagePref == DUAL_SUBTITLE_LANGUAGE) {
@@ -229,7 +231,7 @@ fun PlayerScreen(
         displaySession = DisplayModeSwitcher.beginSession(activity, spec?.width, spec?.height, spec?.frameRate)
     }
 
-    LaunchedEffect(plan, subtitlesEnabled) {
+    LaunchedEffect(player, plan, subtitlesEnabled) {
         if (plan != null) {
             if (BuildConfig.DEBUG) {
                 android.util.Log.d(CUE_LOG_TAG, "prepare: subs=${plan.subtitles.size} method=${plan.method}")
@@ -243,7 +245,7 @@ fun PlayerScreen(
         }
     }
     // 播放中定时回写进度：5 秒一次，异常退出时最多丢 5 秒
-    LaunchedEffect(plan) {
+    LaunchedEffect(player, plan) {
         if (plan == null) return@LaunchedEffect
         while (isActive) {
             delay(PROGRESS_REPORT_INTERVAL_MS)
@@ -319,6 +321,8 @@ fun PlayerScreen(
                     subtitle = state.subtitle,
                     subtitleSize = state.subtitleSize,
                     onSubtitleSizeChanged = viewModel::setSubtitleSize,
+                    subtitleWeight = state.subtitleWeight,
+                    onSubtitleWeightChanged = viewModel::setSubtitleWeight,
                     subtitleOffsetLevel = state.subtitleOffsetLevel,
                     onSubtitleOffsetLevelChanged = viewModel::setSubtitleOffsetLevel,
                     subtitlesEnabled = subtitlesEnabled,

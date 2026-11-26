@@ -14,6 +14,9 @@ package com.novum.tv.data.text
  */
 interface MediaStrings {
 
+    /** 首页追新聚合库的内容行标题。 */
+    fun recentBroadcastsTitle(): String
+
     /** 条目类型展示名：副标题「年份 · 类型」用（[com.novum.tv.data.repository]）。 */
     fun typeMovie(): String
 

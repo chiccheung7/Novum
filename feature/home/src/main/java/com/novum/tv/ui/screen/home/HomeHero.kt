@@ -21,6 +21,7 @@ import androidx.tv.material3.Text
 import com.novum.tv.core.designsystem.R
 import com.novum.tv.model.HomeEntry
 import com.novum.tv.ui.component.NovumButton
+import com.novum.tv.ui.component.novumActionButtonWidth
 import com.novum.tv.ui.component.NovumMediaInfoBlock
 import com.novum.tv.ui.theme.NovumDimens
 import com.novum.tv.ui.theme.NovumType
@@ -31,9 +32,6 @@ import com.novum.tv.ui.theme.NovumType
 
 /** Hero 信息块宽度（字阶放大后容纳 64sp 标题与三行简介）。 */
 private val HERO_INFO_WIDTH = 720.dp
-
-/** Hero 双 CTA 按钮宽（= 全站统一文本按钮宽度 [NovumDimens.ButtonWidth]）。 */
-private val HERO_CTA_WIDTH = NovumDimens.ButtonWidth
 
 /** Hero 双 CTA 间距。 */
 private val HERO_CTA_GAP = 20.dp
@@ -154,7 +152,7 @@ private fun HeroInfoBlock(
                 onClick = onDetail,
                 centerContent = true,
                 modifier = Modifier
-                    .width(HERO_CTA_WIDTH)
+                    .width(novumActionButtonWidth())
                     .height(HERO_CTA_HEIGHT),
             ) {
                 Text(
@@ -182,7 +180,7 @@ private fun HeroPlayButton(
         onClick = onClick,
         centerContent = true,
         modifier = Modifier
-            .width(HERO_CTA_WIDTH)
+            .width(novumActionButtonWidth())
             .height(HERO_CTA_HEIGHT)
             .then(firstFocus?.let { Modifier.focusRequester(it) } ?: Modifier)
             .then(

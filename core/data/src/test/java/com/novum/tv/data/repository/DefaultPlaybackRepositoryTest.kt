@@ -19,9 +19,15 @@ import com.novum.tv.testing.EmbyApiStub
 import com.novum.tv.testing.FakeMediaStrings
 import com.novum.tv.testing.FakeSettingsRepository
 import com.novum.tv.data.settings.AppSettings
+import com.novum.tv.data.settings.SettingsRepository
+import com.novum.tv.data.remote.emby.PlaybackProgressDto
 import java.io.IOException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.runTest
@@ -377,16 +383,245 @@ class DefaultPlaybackRepositoryTest {
         assertTrue((result as NovumResult.Failure).error is NovumError.Unauthorized)
     }
 
+    @Test
+    fun resolvesRootRelativePlaybackAndSubtitleUrlsWithoutDuplicatingProxyPath() = runTest(dispatcher) {
+        listOf("/emby", "").forEach { deliveredPrefix ->
+            val api = StubPlaybackApi(
+                info = PlaybackInfoDto(
+                    MediaSources = listOf(
+                        MediaSourceDto(
+                            Id = "source",
+                            SupportsDirectPlay = true,
+                            DirectStreamUrl = "$deliveredPrefix/Videos/movie-1/stream?api_key=signed",
+                            MediaStreams = listOf(
+                                MediaStreamDto(
+                                    Type = "Subtitle",
+                                    Index = 7,
+                                    Codec = "subrip",
+                                    DeliveryUrl = "$deliveredPrefix/Videos/movie-1/Subtitles/7/Stream.srt?api_key=signed",
+                                ),
+                            ),
+                        ),
+                    ),
+                ),
+            )
+
+            val plan = (repository(api, server = "https://media.example/emby").plan("movie-1") as NovumResult.Success).value
+
+            assertEquals("https://media.example/emby/Videos/movie-1/stream?api_key=signed", plan.url)
+            assertEquals(
+                "https://media.example/emby/Videos/movie-1/Subtitles/7/Stream.srt?api_key=signed",
+                plan.subtitles.single().url,
+            )
+        }
+    }
+
+    @Test
+    fun constructedExternalSubtitleUsesStreamIndexAndEncodedSessionToken() = runTest(dispatcher) {
+        val api = StubPlaybackApi(
+            info = PlaybackInfoDto(
+                MediaSources = listOf(
+                    MediaSourceDto(
+                        Id = "source",
+                        SupportsDirectPlay = true,
+                        DirectStreamUrl = "/Videos/movie-1/stream",
+                        MediaStreams = listOf(
+                            MediaStreamDto(Type = "Video", Index = 0, Codec = "h264"),
+                            MediaStreamDto(Type = "Audio", Index = 2, Codec = "aac"),
+                            MediaStreamDto(Type = "Subtitle", Index = 7, Codec = "srt", IsExternal = true),
+                        ),
+                    ),
+                ),
+            ),
+        )
+
+        val plan = (repository(api, token = "fixture+token&value").plan("movie-1") as NovumResult.Success).value
+
+        assertEquals(7, plan.subtitleTracks.single().index)
+        assertEquals("sub-7-", plan.subtitles.single().id)
+        assertEquals(
+            "https://smart.uhdnow.com/Videos/movie-1/source/Subtitles/7/Stream.srt?api_key=fixture%2Btoken%26value",
+            plan.subtitles.single().url,
+        )
+    }
+
+    @Test
+    fun fallbackNeverAddsTheNewSessionTokenToThePreviousServerUrl() = runTest(dispatcher) {
+        val holder = SessionHolder().apply {
+            update(Session("https://old.example/emby", "old-fixture-token", "fixture-user", "Fixture", "Fixture server", "fixture-device"))
+        }
+        val api = object : EmbyApiStub() {
+            override suspend fun playbackInfo(
+                itemId: String,
+                userId: String,
+                body: PlaybackInfoRequestDto,
+            ): PlaybackInfoDto {
+                holder.update(Session("https://new.example", "new-fixture-token", "fixture-user", "Fixture", "Fixture server", "fixture-device"))
+                throw IOException("Fixture request failed after the session changed")
+            }
+        }
+
+        val result = repository(api, sessionHolder = holder).plan("movie-1")
+
+        assertTrue("A plan whose account changed must not publish any playback URL", result is NovumResult.Failure)
+        assertTrue((result as NovumResult.Failure).error is NovumError.Unauthorized)
+    }
+
+    @Test
+    fun latePlaybackInfoCannotPublishAPlanAfterSwitchingAccountsOnTheSameServer() = runTest(dispatcher) {
+        val holder = activeHolder()
+        val api = object : EmbyApiStub() {
+            override suspend fun playbackInfo(itemId: String, userId: String, body: PlaybackInfoRequestDto): PlaybackInfoDto {
+                holder.update(holderSession("second-user"))
+                return PlaybackInfoDto(MediaSources = listOf(MediaSourceDto(
+                    SupportsDirectPlay = true, DirectStreamUrl = "/play/movie?api_key=first-token",
+                )))
+            }
+        }
+
+        val result = repository(api, sessionHolder = holder).plan("movie-1")
+        assertTrue(result is NovumResult.Failure)
+        assertTrue((result as NovumResult.Failure).error is NovumError.Unauthorized)
+    }
+
+    @Test
+    fun accountSwitchWhileReadingSettingsStopsThePlanBeforePlaybackInfo() = runTest(dispatcher) {
+        val holder = activeHolder()
+        var infoCalls = 0
+        val settings = object : SettingsRepository {
+            override val settings = flow {
+                holder.update(holderSession("second-user"))
+                emit(AppSettings())
+            }
+            override suspend fun update(transform: (AppSettings) -> AppSettings) = Unit
+        }
+        val api = object : EmbyApiStub() {
+            override suspend fun playbackInfo(itemId: String, userId: String, body: PlaybackInfoRequestDto): PlaybackInfoDto {
+                infoCalls++
+                return PlaybackInfoDto()
+            }
+        }
+
+        val result = repository(api, settings, sessionHolder = holder).plan("movie-1")
+        assertTrue(result is NovumResult.Failure)
+        assertEquals(0, infoCalls)
+    }
+
+    @Test
+    fun playerBoundReporterDropsEventsAfterAnAccountSwitch() = runTest(dispatcher) {
+        val holder = activeHolder()
+        val calls = mutableListOf<String>()
+        val reporter = repository(reportingApi(calls), sessionHolder = holder).sessionReporter()
+        holder.update(holderSession("second-user"))
+
+        reporter.reportStarted("movie-1", 0, PlayMethod.DirectPlay, "old-session")
+        reporter.reportProgress("movie-1", 1_000, PlayMethod.DirectPlay, "old-session")
+        reporter.reportStopped("movie-1", 2_000, PlayMethod.DirectPlay, "old-session")
+        assertTrue("Old events must never be sent with the new account", calls.isEmpty())
+    }
+
+    @Test
+    fun playerBoundReporterStillReportsForItsActiveAccount() = runTest(dispatcher) {
+        val calls = mutableListOf<String>()
+        val reporter = repository(reportingApi(calls), sessionHolder = activeHolder()).sessionReporter()
+        reporter.reportStarted("movie-1", 0, PlayMethod.DirectPlay, "session")
+        reporter.reportProgress("movie-1", 1_000, PlayMethod.DirectPlay, "session")
+        reporter.reportStopped("movie-1", 2_000, PlayMethod.DirectPlay, "session")
+        assertEquals(listOf("started", "progress", "stopped"), calls)
+    }
+
+    @Test
+    fun directReportWaitingForIoDoesNotUseANewAccount() = runTest(dispatcher) {
+        val holder = activeHolder()
+        val calls = mutableListOf<String>()
+        val queuedIo = StandardTestDispatcher(testScheduler)
+        val queuedDispatchers = object : DispatcherProvider {
+            override val default = dispatcher
+            override val main = dispatcher
+            override val io = queuedIo
+        }
+        val repository = repository(reportingApi(calls), sessionHolder = holder, dispatcherProvider = queuedDispatchers)
+        val report = launch(start = CoroutineStart.UNDISPATCHED) {
+            repository.reportStopped("movie-1", 1_000, PlayMethod.DirectPlay, "session")
+        }
+        holder.update(holderSession("second-user"))
+        runCurrent()
+        report.join()
+        assertTrue(calls.isEmpty())
+    }
+
+    private fun activeHolder() = SessionHolder().apply { update(holderSession("first-user")) }
+
+    @Test
+    fun aPinOwnedByAnotherAccountCannotReceiveTheCurrentAccountsSignedMediaUrl() = runTest(dispatcher) {
+        val holder = activeHolder()
+        val oldOwner = SessionHolder().apply {
+            update(holderSession("other-account").copy(server = "https://old.example"))
+        }
+        val settings = FakeSettingsRepository(AppSettings(
+            pinnedLineUrl = "https://old-cdn.example",
+            pinnedLineName = "Old account line",
+            pinnedLineAccountKey = oldOwner.playbackPrefsNamespace().orEmpty(),
+        ))
+        val api = StubPlaybackApi(info = PlaybackInfoDto(MediaSources = listOf(MediaSourceDto(
+            SupportsDirectPlay = true,
+            DirectStreamUrl = "/play/movie?api_key=current-account-token",
+        ))))
+
+        val plan = (repository(api, settings, sessionHolder = holder).plan("movie-1") as NovumResult.Success).value
+        assertEquals("https://media.example/play/movie?api_key=current-account-token", plan.url)
+    }
+
+    @Test
+    fun aPinOwnedByTheCurrentAccountStillSelectsItsCdn() = runTest(dispatcher) {
+        val holder = activeHolder()
+        val settings = FakeSettingsRepository(AppSettings(
+            pinnedLineUrl = "https://current-cdn.example",
+            pinnedLineAccountKey = holder.playbackPrefsNamespace().orEmpty(),
+        ))
+        val api = StubPlaybackApi(info = PlaybackInfoDto(MediaSources = listOf(MediaSourceDto(
+            SupportsDirectPlay = true, DirectStreamUrl = "/play/movie?api_key=current-account-token",
+        ))))
+
+        val plan = (repository(api, settings, sessionHolder = holder).plan("movie-1") as NovumResult.Success).value
+        assertEquals("https://current-cdn.example/play/movie?api_key=current-account-token", plan.url)
+    }
+
+    private fun holderSession(user: String) = Session("https://media.example", "$user-token", user, user, "Fixture", "device")
+
+    private fun reportingApi(calls: MutableList<String>) = object : EmbyApiStub() {
+        override suspend fun reportPlaybackStarted(body: PlaybackProgressDto) { calls += "started" }
+        override suspend fun reportPlaybackProgress(body: PlaybackProgressDto) { calls += "progress" }
+        override suspend fun reportPlaybackStopped(body: PlaybackProgressDto) { calls += "stopped" }
+    }
+
+    @Test
+    fun fallbackEncodesItsSameOriginSessionToken() = runTest(dispatcher) {
+        val plan = (repository(
+            StubPlaybackApi(error = IOException("Fixture request failed")),
+            token = "fixture+token&value",
+        ).plan("movie-1") as NovumResult.Success).value
+
+        assertEquals(
+            "https://smart.uhdnow.com/Videos/movie-1/stream?Static=true&api_key=fixture%2Btoken%26value",
+            plan.url,
+        )
+    }
+
     private fun repository(
         api: EmbyApi,
-        settings: FakeSettingsRepository = FakeSettingsRepository(),
+        settings: SettingsRepository = FakeSettingsRepository(),
         capability: FakeCapabilityProvider = FakeCapabilityProvider(),
+        server: String = "https://smart.uhdnow.com",
+        token: String = "token",
+        sessionHolder: SessionHolder? = null,
+        dispatcherProvider: DispatcherProvider = dispatchers,
     ): DefaultPlaybackRepository {
-        val holder = SessionHolder().apply {
+        val holder = sessionHolder ?: SessionHolder().apply {
             update(
                 Session(
-                    server = "https://smart.uhdnow.com",
-                    token = "token",
+                    server = server,
+                    token = token,
                     userId = "uid-1",
                     userName = "chic",
                     serverName = "UHD",
@@ -400,7 +635,7 @@ class DefaultPlaybackRepositoryTest {
             sessionHolder = holder,
             settings = settings,
             capability = capability,
-            dispatchers = dispatchers,
+            dispatchers = dispatcherProvider,
             logger = NoopLogger,
             lineProbe = LevelProbeForTest(provider, holder),
             strings = FakeMediaStrings,

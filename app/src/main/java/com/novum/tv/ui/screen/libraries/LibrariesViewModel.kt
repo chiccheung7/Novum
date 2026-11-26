@@ -17,7 +17,7 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 
 /**
- * 媒体库页 UI 状态：库目录列表（只含影片/剧集类库，与首页口径一致）。
+ * 媒体库页 UI 状态：影片/剧集类库，追新聚合源由首页展示。
  */
 typealias LibrariesUiState = UiState<List<MediaLibrary>>
 
@@ -40,7 +40,12 @@ class LibrariesViewModel @Inject constructor(
                 when (result) {
                     is NovumResult.Success -> {
                         val libraries: List<MediaLibrary> = result.value
-                            .filter { it.kind == "movies" || it.kind == "tvshows" }
+                            .filter {
+                                it.kind == "movies" || it.kind == "tvshows"
+                            }
+                            // 聚合源的封面标记可能存在但图片返回 404，不能据此保留空卡。
+                            // 它继续供首页的近期热播和 Hero 使用，不作为独立分库入口。
+                            .filterNot { it.isRecentUpdatesSource }
                         if (libraries.isEmpty()) {
                             UiState.Empty()
                         } else {

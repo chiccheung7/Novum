@@ -24,19 +24,21 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.tv.material3.Text
 import com.novum.tv.core.designsystem.R
 import com.novum.tv.model.CastMember
 import com.novum.tv.model.Episode
+import com.novum.tv.ui.component.LANDSCAPE_ASPECT
 import com.novum.tv.ui.component.NovumButton
 import com.novum.tv.ui.component.NovumCard
 import com.novum.tv.ui.component.NovumFocusScrollScope
 import com.novum.tv.ui.component.NovumAvatar
+import com.novum.tv.ui.component.rememberMediaCardWidth
 import com.novum.tv.ui.component.tvFocusScale
 import com.novum.tv.ui.icon.NovumIcons
 import com.novum.tv.ui.theme.NovumDimens
@@ -55,7 +57,7 @@ import com.novum.tv.ui.theme.NovumType
  *
  * 首次点击卡片切换当前集，再次按 OK 起播。
  * 卡文显示集号与标题，以及分集简介；卡图左上角显示剧集 clearlogo。
- * 右上角显示已看/未看对号；已看卡片压暗，当前选中态由卡片描边表达。
+ * 右上角以白色对勾标记已看；已看卡片压暗，当前选中态由卡片描边表达。
  *
  * @param episodes 当前季的分集。
  * @param episodesEmpty 是否无分集（且未失败）。
@@ -87,6 +89,7 @@ internal fun EpisodeStrip(
     onRetry: () -> Unit,
     upFocus: FocusRequester? = null,
 ) {
+    val cardWidth = rememberMediaCardWidth(LANDSCAPE_ASPECT)
     Column {
         Text(
             text = stringResource(R.string.detail_episodes),
@@ -132,14 +135,14 @@ internal fun EpisodeStrip(
         )
         val stripListState = rememberLazyListState()
         // 进场定位「当前集」——滚到该卡；锚点为 null（切季/全部看完）不滚。
-        // 键含 episodes：分集晚到（锚点先设）时到达后补滚。
+        // 分集晚到时按位置补滚；观看进度更新不能把用户滚回进场集。
         // scrollToItem 会将锚点贴到视口物理左缘；再补回 SafeHorizontal，使其停在静止对齐线上。
         val alignPx = with(LocalDensity.current) { NovumDimens.SafeHorizontal.roundToPx() }
-        LaunchedEffect(anchorEpisodeId, episodes) {
-            val index = episodes.indexOfFirst { it.id == anchorEpisodeId }
-            if (index >= 0) {
+        val anchorIndex = episodes.indexOfFirst { it.id == anchorEpisodeId }
+        LaunchedEffect(anchorEpisodeId, anchorIndex) {
+            if (anchorIndex >= 0) {
                 runCatching {
-                    stripListState.scrollToItem(index)
+                    stripListState.scrollToItem(anchorIndex)
                     stripListState.scrollBy(-alignPx.toFloat())
                 }
             }
@@ -150,7 +153,7 @@ internal fun EpisodeStrip(
         ) {
             LazyRow(
                 state = stripListState,
-                // 选集卡使用 320dp 标准卡，行内间距与首页行相同。
+                // 选集横卡与首页续播、分类页共用视口宽度和行内间距。
                 horizontalArrangement = Arrangement.spacedBy(NovumDimens.CardGap),
                 contentPadding = stripPadding,
                 modifier = Modifier
@@ -168,6 +171,7 @@ internal fun EpisodeStrip(
                     val selected = episode.id == selectedEpisodeId
                     EpisodeCard(
                         episode = episode,
+                        width = cardWidth,
                         selected = selected,
                         logoUrl = logoUrl,
                         // 页面根据当前选中集决定切换语境或起播。
@@ -204,13 +208,14 @@ internal fun EpisodeStrip(
  * **卡文两行** = 「S01E03 · 集标题」/ 分集简介（**两行**省略）——剧集详情页
  *   信息块恒为剧集内容后，分集标题与简介只在卡下方展示
  * **卡图左上角**挂剧集 clearlogo（同剧共用），图上的文字标题不叠加
- * **卡图右上角**显示已看/未看对号（未看为空心，已看为实心绿）；状态角标恒显。
+ * **卡图右上角**仅已看分集显示白色对勾。
  * **已选中**由图区 Accent 描边框表示；有进度的集显示进度条与剩余时长。
- *   已看分集整卡降亮度。
+ *   已看分集仅剧照降亮度，集标题与简介保留可读性。
  */
 @Composable
 private fun EpisodeCard(
     episode: Episode,
+    width: Dp,
     selected: Boolean,
     logoUrl: String?,
     onClick: () -> Unit,
@@ -229,13 +234,14 @@ private fun EpisodeCard(
     }
     NovumCard(
         // 集号 + 集标题（卡文行 1）；元信息（时长/状态）改由角标与进度表达
-        title = "S%02dE%02d".format(episode.seasonIndex, episode.index % 100) + " · " + episode.title,
+        title = "S%02dE%02d".format(episode.seasonIndex, episode.index) + " · " + episode.title,
         // 分集简介（卡文行 2，两行省略）
         subtitle = episode.overview,
-        // 角标表示已看/未看状态：未看为空心对号，已看为染 Success 绿的实心对号。
+        width = width,
+        // 仅已看分集显示白色图标，状态文字保留给无障碍朗读。
         badge = null,
-        badgeIcon = if (episode.played) NovumIcons.CheckFilled else NovumIcons.Check,
-        badgeIconTint = if (episode.played) NovumPalette.Success else null,
+        badgeIcon = if (episode.played) NovumIcons.CheckFilled else null,
+        badgeIconContentDescription = if (episode.played) stringResource(R.string.detail_episode_played) else null,
         // 优先使用分集自己的 Primary 图（每集不同的剧照/截图，便于区分选集）；
         // 缺失时回落到剧集级 16:9 主视觉。
         imageUrl = episode.imageUrl ?: episode.seriesWideUrl,
@@ -244,12 +250,14 @@ private fun EpisodeCard(
         progress = progress,
         progressText = remainingText,
         subtitleMaxLines = EPISODE_OVERVIEW_LINES,
+        // 简介保持可读字号，但亮度低于集标题；已看仅压暗剧照，不压暗文字。
+        subtitleStyle = NovumType.Caption,
+        subtitleColor = NovumPalette.PaperFaint,
+        imageAlpha = if (episode.played) 0.55f else 1f,
         // 已选中时显示图区描边框。
         glowing = selected,
         onClick = onClick,
-        modifier = modifier
-            // 已看完整卡压暗（沿用原语义）；看了一部分不压暗（进度条已表达状态）
-            .graphicsLayer { if (episode.played) alpha = 0.45f },
+        modifier = modifier,
     )
 }
 

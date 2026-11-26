@@ -1,6 +1,7 @@
 package com.novum.tv.ui.screen.home
 
 import android.view.KeyEvent as NativeKeyEvent
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.input.key.KeyEvent as ComposeKeyEvent
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsProperties
@@ -11,7 +12,6 @@ import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.isFocused
-import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onFirst
 import androidx.compose.ui.test.onNodeWithText
@@ -77,6 +77,7 @@ class HomeScreenTest {
         onOpenDetail: (String) -> Unit = {},
         onPlay: (String) -> Unit = {},
         onOpenLibrary: (String, String) -> Unit = { _, _ -> },
+        heroRotateIdleMs: Long = 6_000L,
     ) {
         composeRule.setContent {
             NovumTheme {
@@ -85,6 +86,7 @@ class HomeScreenTest {
                     onOpenDetail = onOpenDetail,
                     onPlay = onPlay,
                     onOpenLibrary = onOpenLibrary,
+                    heroRotateIdleMs = heroRotateIdleMs,
                 )
             }
         }
@@ -95,8 +97,9 @@ class HomeScreenTest {
         mountWithTopBar(emptyFeed)
 
         // 左上角位置由 Hero ClearLogo 使用。
-        // 顶栏只剩右上四个玻璃黑图标
+        // 首页右上保留导航入口；各一级内页不再重复显示这组图标。
         composeRule.onNodeWithText("Novum").assertDoesNotExist()
+        composeRule.onNodeWithContentDescription("首页").assertDoesNotExist()
         composeRule.onNodeWithContentDescription("收藏").assertIsDisplayed()
         composeRule.onNodeWithContentDescription("搜索").assertIsDisplayed()
         composeRule.onNodeWithContentDescription("设置").assertIsDisplayed()
@@ -220,6 +223,106 @@ class HomeScreenTest {
     }
 
     @Test
+    fun heroAutoplayRunsAfterIdleWhenFocusIsOutsideCtas() {
+        composeRule.mainClock.autoAdvance = false
+        mountContent(
+            emptyFeed.copy(
+                hero = listOf(
+                    HomeEntry(id = "h1", title = "海报一", type = "Movie"),
+                    HomeEntry(id = "h2", title = "海报二", type = "Movie"),
+                ),
+            ),
+            heroRotateIdleMs = 1_000L,
+        )
+        // 先完成入场动画；顶栏获焦不会把 Hero 滚出视口。
+        composeRule.mainClock.advanceTimeBy(600L)
+        composeRule.waitForIdle()
+
+        composeRule.onNodeWithContentDescription("收藏")
+            .performSemanticsAction(SemanticsActions.RequestFocus)
+        composeRule.onNodeWithContentDescription("收藏").assertIsFocused()
+        composeRule.onNodeWithText("播放").assertIsNotFocused()
+        composeRule.mainClock.advanceTimeBy(500L)
+        composeRule.waitForIdle()
+        composeRule.onNodeWithText("海报二").assertIsDisplayed()
+
+        composeRule.mainClock.advanceTimeBy(1_000L)
+        composeRule.waitForIdle()
+
+        composeRule.onNodeWithText("海报一").assertIsDisplayed()
+    }
+
+    @Test
+    fun heroAutoplayRestartsIdleCountdownAfterRemoteInput() {
+        composeRule.mainClock.autoAdvance = false
+        mountContent(
+            emptyFeed.copy(
+                hero = listOf(
+                    HomeEntry(id = "h1", title = "海报一", type = "Movie"),
+                    HomeEntry(id = "h2", title = "海报二", type = "Movie"),
+                ),
+            ),
+            heroRotateIdleMs = 1_000L,
+        )
+        composeRule.mainClock.advanceTimeBy(600L)
+        composeRule.waitForIdle()
+        composeRule.onNodeWithText("播放").performKeyPress(
+            ComposeKeyEvent(
+                NativeKeyEvent(0L, 0L, NativeKeyEvent.ACTION_DOWN, NativeKeyEvent.KEYCODE_DPAD_RIGHT, 0),
+            ),
+        )
+        composeRule.mainClock.advanceTimeByFrame()
+        composeRule.mainClock.advanceTimeBy(600L)
+        composeRule.waitForIdle()
+        // 首次计时已满一秒，但按键之后尚未满一秒，不能提前换图。
+        composeRule.onNodeWithText("海报一").assertIsDisplayed()
+
+        composeRule.mainClock.advanceTimeBy(500L)
+        composeRule.waitForIdle()
+        composeRule.onNodeWithText("海报二").assertIsDisplayed()
+    }
+
+    @Test
+    fun heroAutoplayPausesOffPageAndRestartsCountdownOnReturn() {
+        composeRule.mainClock.autoAdvance = false
+        val pageVisible = mutableStateOf(true)
+        val feed = emptyFeed.copy(
+            hero = listOf(
+                HomeEntry(id = "h1", title = "海报一", type = "Movie"),
+                HomeEntry(id = "h2", title = "海报二", type = "Movie"),
+            ),
+        )
+        composeRule.setContent {
+            NovumTheme {
+                HomeContent(
+                    feed = feed,
+                    onOpenDetail = {},
+                    onPlay = {},
+                    onOpenLibrary = { _, _ -> },
+                    heroRotateIdleMs = 1_000L,
+                    isPageVisible = pageVisible.value,
+                )
+            }
+        }
+        composeRule.mainClock.advanceTimeBy(600L)
+        composeRule.waitForIdle()
+        composeRule.runOnIdle { pageVisible.value = false }
+        composeRule.mainClock.advanceTimeByFrame()
+        composeRule.mainClock.advanceTimeBy(3_000L)
+        composeRule.waitForIdle()
+        composeRule.onNodeWithText("海报一").assertIsDisplayed()
+
+        composeRule.runOnIdle { pageVisible.value = true }
+        composeRule.mainClock.advanceTimeByFrame()
+        composeRule.mainClock.advanceTimeBy(600L)
+        composeRule.waitForIdle()
+        composeRule.onNodeWithText("海报一").assertIsDisplayed()
+        composeRule.mainClock.advanceTimeBy(500L)
+        composeRule.waitForIdle()
+        composeRule.onNodeWithText("海报二").assertIsDisplayed()
+    }
+
+    @Test
     fun rendersResumeAndLatestRows() {
         mountContent(
             emptyFeed.copy(
@@ -240,8 +343,21 @@ class HomeScreenTest {
         // 分库行第二行 = 「标题 · 发行年份」，标题文本会在卡片标题与副标题
         // 各出现一次——取首个断言即可
         composeRule.onAllNodesWithText("爱情来了").onFirst().assertIsDisplayed()
-        // 分库行不显示额外的「查看全部」按钮。
-        composeRule.onNodeWithText("查看全部").assertDoesNotExist()
+        composeRule.onNodeWithText("查看全部").assertIsDisplayed()
+    }
+
+    @Test
+    fun marksNextUpItemsInTheCombinedResumeRow() {
+        mountContent(
+            emptyFeed.copy(
+                resume = HomeRow(
+                    HOME_ROW_RESUME,
+                    listOf(HomeEntry(id = "next-1", title = "庆余年", isNextUp = true)),
+                ),
+            ),
+        )
+
+        composeRule.onNodeWithText("下一集").assertIsDisplayed()
     }
 
     @Test
@@ -286,5 +402,46 @@ class HomeScreenTest {
         composeRule.waitForIdle()
 
         assertEquals("分类库行应打开详情页", "l1", detailId)
+    }
+
+    @Test
+    fun latestViewAllOpensItsLibraryAndDpadLinksActionWithFirstCard() {
+        val opened = mutableListOf<Pair<String, String>>()
+        mountContent(
+            emptyFeed.copy(
+                latest = listOf(
+                    HomeLatestRow(
+                        libraryId = "lib-1",
+                        libraryName = "华语电影",
+                        items = listOf(HomeEntry(id = "l1", title = "爱情来了")),
+                    ),
+                ),
+            ),
+            onOpenLibrary = { id, name -> opened += id to name },
+        )
+
+        val viewAll = composeRule.onNodeWithText("查看全部")
+        viewAll.assertIsDisplayed()
+        viewAll.performSemanticsAction(SemanticsActions.RequestFocus)
+        viewAll.assertIsFocused()
+        viewAll.performKeyPress(
+            ComposeKeyEvent(
+                NativeKeyEvent(0L, 0L, NativeKeyEvent.ACTION_DOWN, NativeKeyEvent.KEYCODE_DPAD_DOWN, 0),
+            ),
+        )
+        composeRule.waitForIdle()
+
+        composeRule.onNodeWithContentDescription("爱情来了").assertIsFocused()
+        composeRule.onNodeWithContentDescription("爱情来了").performKeyPress(
+            ComposeKeyEvent(
+                NativeKeyEvent(0L, 0L, NativeKeyEvent.ACTION_DOWN, NativeKeyEvent.KEYCODE_DPAD_UP, 0),
+            ),
+        )
+        composeRule.waitForIdle()
+        viewAll.assertIsFocused()
+
+        viewAll.performSemanticsAction(SemanticsActions.OnClick)
+        composeRule.waitForIdle()
+        assertEquals(listOf("lib-1" to "华语电影"), opened)
     }
 }

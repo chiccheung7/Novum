@@ -30,9 +30,14 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.tv.material3.Text
+import androidx.tv.material3.Icon
+import com.novum.tv.core.designsystem.R
+import com.novum.tv.ui.icon.NovumIcons
 import com.novum.tv.ui.theme.NovumPalette
 import com.novum.tv.ui.theme.NovumShapes
 import com.novum.tv.ui.theme.NovumType
@@ -45,8 +50,7 @@ import com.novum.tv.ui.theme.NovumType
  *   靠形状而不只是明度，三米外可辨（不再叠加对勾：竖条已足够，
  *   两个形状标记只会互相削弱）；
  * - **调节行**（延迟/字号/高度，传 [adjustable]）：**不显示选中态**——它不是"选项"，
- *   而是"当前值"；值的左右各有一个固定宽度的 `‹ ›` 槽位，获焦时淡入，
- *   非默认值在行尾点一个小圆点。槽位恒占位，聚焦时文字不会左右跳。
+ *   而是"当前值"；传 [adjustmentFraction] 时显示统一控制条，未传时保留档位条或箭头。
  * - **普通行**：无选中态。
  *
  * 聚焦态全站统一白底黑字（TV 焦点规范里对比最强的一档）。
@@ -79,6 +83,12 @@ fun NovumOptionRow(
     /** 档位条当前档（0 起）。 */
     segmentLevel: Int = 0,
     enabled: Boolean = true,
+    /** 控制条当前归一值（0..1）；外层处理按键及实际值写回。 */
+    adjustmentFraction: Float? = null,
+    /** 有正负方向的调节值在控制条上的零位。 */
+    adjustmentCenterFraction: Float? = null,
+    /** 已看分集以对勾标记，状态文字仅用于无障碍朗读。 */
+    played: Boolean = false,
 ) {
     var focused by remember { mutableStateOf(false) }
     // 调节行没有"选中"语义：值本身就是状态，选中标记只会让人以为还能 OK 切换
@@ -137,18 +147,24 @@ fun NovumOptionRow(
             modifier = Modifier.weight(1f),
         )
         if (value != null) {
-            // 有限档位：先画档位条（"第几档/共几档"一眼可见），再显示数值。
-            // 连续值（延迟/偏移）不传 segmentCount，只显示数值。
-            if (segmentCount != null) {
+            // 播放抽屉使用统一控制条；其他调用继续使用原档位条。
+            if (adjustmentFraction != null) {
+                NovumAdjustmentBar(
+                    fraction = adjustmentFraction,
+                    stepCount = segmentCount ?: 0,
+                    centerFraction = adjustmentCenterFraction,
+                    enabled = enabled,
+                    modifier = Modifier.padding(end = 14.dp),
+                )
+            } else if (segmentCount != null) {
                 NovumSegmentBar(
                     count = segmentCount,
                     level = segmentLevel,
                     modifier = Modifier.padding(end = 14.dp),
                 )
             }
-            // 只有「连续值」调节行（延迟/偏移）才需要 ‹ › 提示：
-            // 已经有档位条的行，条本身就在说「可以左右拨」，再叠箭头是重复噪音。
-            val showChevrons = adjustable && segmentCount == null
+            // 没有控制条的旧调用保留方向提示。
+            val showChevrons = adjustable && segmentCount == null && adjustmentFraction == null
             if (showChevrons) {
                 AdjustChevron(direction = -1, visible = focused, color = textColor)
                 Spacer(modifier = Modifier.width(6.dp))
@@ -158,11 +174,24 @@ fun NovumOptionRow(
                 // 行尾次要值（时间码、剩余时长或开关）比行文案小一档。
                 style = NovumType.Caption,
                 color = textColor,
+                modifier = if (adjustmentFraction != null) Modifier.width(112.dp) else Modifier,
+                textAlign = if (adjustmentFraction != null) TextAlign.End else TextAlign.Unspecified,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
             )
             if (showChevrons) {
                 Spacer(modifier = Modifier.width(6.dp))
                 AdjustChevron(direction = 1, visible = focused, color = textColor)
             }
+        }
+        if (played) {
+            Spacer(modifier = Modifier.width(12.dp))
+            Icon(
+                imageVector = NovumIcons.CheckFilled,
+                contentDescription = stringResource(R.string.detail_episode_played),
+                tint = if (focused && !adjustable) NovumPalette.Ink else NovumPalette.Paper,
+                modifier = Modifier.size(24.dp),
+            )
         }
     }
 }

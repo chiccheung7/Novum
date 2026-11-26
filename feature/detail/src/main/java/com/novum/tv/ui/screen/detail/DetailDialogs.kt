@@ -1,6 +1,8 @@
 package com.novum.tv.ui.screen.detail
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
@@ -96,11 +98,13 @@ internal fun SeasonMenuDialog(
     onDismiss: () -> Unit,
 ) {
     val selectedRowFocus = remember { FocusRequester() }
+    val focusSeasonId = selectedSeasonId?.takeIf { id -> seasons.any { it.id == id } }
+        ?: seasons.firstOrNull()?.id
     Dialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false),
     ) {
-        LaunchedEffect(Unit) {
+        LaunchedEffect(focusSeasonId) {
             // 等一帧确保行挂进焦点树，再把焦点交给当前季所在行
             withFrameNanos { }
             runCatching { selectedRowFocus.requestFocus() }
@@ -108,7 +112,8 @@ internal fun SeasonMenuDialog(
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .background(NovumPalette.Scrim.copy(alpha = MENU_SCRIM_ALPHA)),
+                .background(NovumPalette.Scrim.copy(alpha = MENU_SCRIM_ALPHA))
+                .padding(vertical = NovumDimens.SafeVertical),
             contentAlignment = Alignment.Center,
         ) {
             Column(
@@ -116,7 +121,8 @@ internal fun SeasonMenuDialog(
                     .width(SEASON_MENU_WIDTH)
                     .clip(NovumShapes.Large)
                     .background(NovumPalette.Surface)
-                    .padding(vertical = 12.dp),
+                    .padding(vertical = 12.dp)
+                    .verticalScroll(rememberScrollState()),
             ) {
                 Text(
                     text = stringResource(R.string.detail_select_season),
@@ -131,7 +137,7 @@ internal fun SeasonMenuDialog(
                     SeasonMenuRow(
                         season = season,
                         selected = season.id == selectedSeasonId,
-                        focusRequester = selectedRowFocus.takeIf { season.id == selectedSeasonId },
+                        focusRequester = selectedRowFocus.takeIf { season.id == focusSeasonId },
                         onClick = { onSelect(season.id) },
                     )
                 }

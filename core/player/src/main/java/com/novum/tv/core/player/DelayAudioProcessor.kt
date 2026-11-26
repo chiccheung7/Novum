@@ -25,9 +25,7 @@ class DelayAudioProcessor(
     private val delayMsProvider: () -> Long,
 ) : AudioProcessor {
 
-    private var inputFormat: AudioProcessor.AudioFormat? = null
-    private var outputFormat: AudioProcessor.AudioFormat =
-        AudioProcessor.AudioFormat(48_000, 2, C.ENCODING_PCM_16BIT)
+    private var pendingInputFormat = AudioProcessor.AudioFormat.NOT_SET
 
     private var configuredPcm = false
     private var sampleRate = 0
@@ -56,27 +54,18 @@ class DelayAudioProcessor(
     private var writePos = 0
     private var buffered = 0
 
+    private var outputStorage: ByteBuffer = EMPTY
     private var outputBuffer: ByteBuffer = EMPTY
     private var inputEnded = false
 
     override fun configure(
         inputAudioFormat: AudioProcessor.AudioFormat,
     ): AudioProcessor.AudioFormat {
-        val pcm16 = inputAudioFormat.encoding == C.ENCODING_PCM_16BIT
-        val channels = inputAudioFormat.channelCount
-        val rate = inputAudioFormat.sampleRate
-        configuredPcm = pcm16 && channels > 0 && rate > 0
-        outputFormat = inputAudioFormat
-        if (!configuredPcm) {
-            active = false
-            return outputFormat
-        }
-        sampleRate = rate
-        frameBytes = channels * 2
-        negativeDropApplied = 0
-        currentDelayMs = delayMsProvider().coerceIn(MIN_DELAY_MS, MAX_DELAY_MS)
-        applyDelay(currentDelayMs, preserveBuffered = false)
-        return outputFormat
+        // Media3 先 configure 新格式，再排空旧格式，直到 flush 才切换。
+        pendingInputFormat = inputAudioFormat.takeIf {
+            it.encoding == C.ENCODING_PCM_16BIT && it.channelCount > 0 && it.sampleRate > 0
+        } ?: AudioProcessor.AudioFormat.NOT_SET
+        return pendingInputFormat
     }
 
     /** 按给定延迟重建环形缓冲；正延迟调整时保留尚未吐出的样本，切负延迟一律丢弃。 */
@@ -122,7 +111,8 @@ class DelayAudioProcessor(
         applyDelay(next, preserveBuffered = true)
     }
 
-    override fun isActive(): Boolean = active
+    // 0ms 也要留在 PCM 链中，否则 AudioSink 会移除处理器，后续调档收不到输入。
+    override fun isActive(): Boolean = pendingInputFormat != AudioProcessor.AudioFormat.NOT_SET
 
     override fun queueInput(inputBuffer: ByteBuffer) {
         refreshDelay()
@@ -197,11 +187,7 @@ class DelayAudioProcessor(
             outputBuffer = EMPTY
             return
         }
-        if (outputBuffer.capacity() < bytes.size) {
-            outputBuffer = ByteBuffer.allocateDirect(bytes.size).order(ByteOrder.nativeOrder())
-        } else {
-            outputBuffer.clear()
-        }
+        replaceOutputBuffer(bytes.size)
         outputBuffer.put(bytes)
         outputBuffer.flip()
     }
@@ -212,13 +198,19 @@ class DelayAudioProcessor(
             outputBuffer = EMPTY
             return
         }
-        if (outputBuffer.capacity() < size) {
-            outputBuffer = ByteBuffer.allocateDirect(size).order(ByteOrder.nativeOrder())
-        } else {
-            outputBuffer.clear()
-        }
-        outputBuffer.put(inputBuffer.duplicate())
+        replaceOutputBuffer(size)
+        // 输入归调用方所有；复制到可复用 direct buffer，并推进原输入 position。
+        outputBuffer.put(inputBuffer)
         outputBuffer.flip()
+    }
+
+    private fun replaceOutputBuffer(size: Int) {
+        if (outputStorage.capacity() < size) {
+            outputStorage = ByteBuffer.allocateDirect(size).order(ByteOrder.nativeOrder())
+        } else {
+            outputStorage.clear()
+        }
+        outputBuffer = outputStorage
     }
 
     override fun queueEndOfStream() {
@@ -229,24 +221,33 @@ class DelayAudioProcessor(
         writePos = 0
     }
 
-    override fun getOutput(): ByteBuffer = outputBuffer
+    override fun getOutput(): ByteBuffer = outputBuffer.also { outputBuffer = EMPTY }
 
-    override fun isEnded(): Boolean = buffered == 0 && inputEnded
+    override fun isEnded(): Boolean = buffered == 0 && inputEnded && !outputBuffer.hasRemaining()
 
     override fun flush() {
         buffered = 0
         readPos = 0
         writePos = 0
-        negativeDropApplied = 0
-        dropBytes = if (negate) targetBytes else 0
+        inputEnded = false
         outputBuffer = EMPTY
+        configuredPcm = isActive()
+        negativeDropApplied = 0
+        if (configuredPcm) {
+            sampleRate = pendingInputFormat.sampleRate
+            frameBytes = pendingInputFormat.channelCount * 2
+            currentDelayMs = delayMsProvider().coerceIn(MIN_DELAY_MS, MAX_DELAY_MS)
+            applyDelay(currentDelayMs, preserveBuffered = false)
+        } else {
+            active = false
+            pending = ByteArray(0)
+        }
     }
 
     override fun reset() {
+        pendingInputFormat = AudioProcessor.AudioFormat.NOT_SET
         flush()
-        inputFormat = null
-        configuredPcm = false
-        active = false
+        outputStorage = EMPTY
     }
 
     private companion object {

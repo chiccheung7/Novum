@@ -1,6 +1,8 @@
 package com.novum.tv.ui.component
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
@@ -90,7 +92,8 @@ fun NovumOptionListDialog(
                     } else {
                         false
                     }
-                },
+                }
+                .padding(vertical = NovumDimens.SafeVertical),
             contentAlignment = Alignment.Center,
         ) {
             Column(
@@ -98,7 +101,8 @@ fun NovumOptionListDialog(
                     .width(width)
                     .clip(NovumShapes.Large)
                     .background(NovumPalette.Surface)
-                    .padding(vertical = 12.dp),
+                    .padding(vertical = 12.dp)
+                    .verticalScroll(rememberScrollState()),
             ) {
                 Text(
                     text = title,

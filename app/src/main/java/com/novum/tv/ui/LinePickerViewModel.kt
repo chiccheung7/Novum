@@ -3,7 +3,9 @@ package com.novum.tv.ui
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.novum.tv.data.line.LineProbe
+import com.novum.tv.data.remote.emby.SessionHolder
 import com.novum.tv.data.settings.SettingsRepository
+import com.novum.tv.data.settings.pinnedLineUrlFor
 import com.novum.tv.ui.component.LineOption
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
@@ -27,6 +29,7 @@ import kotlinx.coroutines.launch
 class LinePickerViewModel @Inject constructor(
     private val lineProbe: LineProbe,
     private val settings: SettingsRepository,
+    private val sessionHolder: SessionHolder,
 ) : ViewModel() {
 
     /** 弹窗打开即拉列表；null = 未打开。 */
@@ -43,7 +46,10 @@ class LinePickerViewModel @Inject constructor(
 
     /** 当前锁定的线路（url/name 成对；url 空 = 自动测速模式）。 */
     val pinned: StateFlow<PinnedLine> = settings.settings
-        .map { PinnedLine(url = it.pinnedLineUrl, name = it.pinnedLineName) }
+        .map {
+            val url = it.pinnedLineUrlFor(sessionHolder.playbackPrefsNamespace())
+            if (url == null) PinnedLine() else PinnedLine(url = url, name = it.pinnedLineName)
+        }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), PinnedLine())
 
     /** 在途测速任务：快速反复开关弹窗时只保留最后一次结果。 */
@@ -97,11 +103,14 @@ class LinePickerViewModel @Inject constructor(
      * 写设置 + 失效 LineProbe 缓存——下一次起播立即按新策略出流。
      */
     fun select(option: LineOption?) {
+        // 在入队前绑定用户操作所属账号；异步写入不能把 A 的线路保存成 B 的偏好。
+        val accountKey = sessionHolder.playbackPrefsNamespace() ?: return
         viewModelScope.launch {
             settings.update {
                 it.copy(
                     pinnedLineUrl = option?.baseUrl.orEmpty(),
                     pinnedLineName = option?.displayName.orEmpty(),
+                    pinnedLineAccountKey = if (option == null) "" else accountKey,
                 )
             }
             lineProbe.invalidate()

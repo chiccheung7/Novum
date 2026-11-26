@@ -8,6 +8,7 @@ import com.novum.tv.data.repository.MediaRepository
 import com.novum.tv.model.HomeFeed
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -39,25 +40,16 @@ class HomeViewModel @Inject constructor(
     private val _focusEpoch = MutableStateFlow(0)
     val focusEpoch: StateFlow<Int> = _focusEpoch.asStateFlow()
 
+    private var feedJob: Job? = null
+    private var feedRequest = 0
+
     init {
         load()
     }
 
     /** 首次加载或错误态重试。 */
     fun load() {
-        viewModelScope.launch {
-            _feed.update { UiState.Loading }
-            when (val result = repository.feed()) {
-                is NovumResult.Success -> {
-                    _feed.update {
-                        if (result.value.isEmpty) UiState.Empty() else UiState.Success(result.value)
-                    }
-                    _focusEpoch.value += 1
-                }
-
-                is NovumResult.Failure -> _feed.update { UiState.Error(result.error) }
-            }
-        }
+        requestFeed(silent = false)
     }
 
     /**
@@ -72,15 +64,26 @@ class HomeViewModel @Inject constructor(
      */
     fun refresh() {
         if (_feed.value !is UiState.Success) return
-        viewModelScope.launch {
-            when (val result = repository.feed()) {
+        requestFeed(silent = true)
+    }
+
+    /** 页面反复恢复或重试时，仅最新请求可以提交状态。 */
+    private fun requestFeed(silent: Boolean) {
+        val request = ++feedRequest
+        feedJob?.cancel()
+        if (!silent) _feed.update { UiState.Loading }
+        feedJob = viewModelScope.launch {
+            val result = repository.feed()
+            if (request != feedRequest) return@launch
+            when (result) {
                 is NovumResult.Success -> {
                     _feed.update {
                         if (result.value.isEmpty) UiState.Empty() else UiState.Success(result.value)
                     }
+                    if (!silent) _focusEpoch.value += 1
                 }
 
-                is NovumResult.Failure -> Unit
+                is NovumResult.Failure -> if (!silent) _feed.update { UiState.Error(result.error) }
             }
         }
     }

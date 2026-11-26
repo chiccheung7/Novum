@@ -23,12 +23,15 @@ import com.novum.tv.testing.RecordingToastSink
 import com.novum.tv.testing.NoopNovumLogger
 import com.novum.tv.testing.FakeSettingsRepository
 import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.withContext
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -71,6 +74,274 @@ class DetailViewModelTest {
         assertEquals("m1", data.id)
         assertTrue("电影不应有季", state.seasons.isEmpty())
         assertEquals("电影直接播自身", "m1", state.playTargetId)
+    }
+
+    @Test
+    fun returningToMovieRefreshesResumeWithoutLoadingOrUndoingFavorite() = runTest {
+        val fresh = CompletableDeferred<NovumResult<MediaDetail>>()
+        var calls = 0
+        val repository = object : FakeDetailRepository(detail = movieDetail()) {
+            override suspend fun detail(itemId: String): NovumResult<MediaDetail> =
+                if (++calls == 1) NovumResult.Success(movieDetail()) else fresh.await()
+        }
+        val (vm, _) = viewModel(repository, itemId = "m1")
+        advanceUntilIdle()
+        vm.onResume()
+        advanceUntilIdle()
+        assertEquals("首入复用 init 请求", 1, calls)
+
+        vm.onResume()
+        advanceUntilIdle()
+        assertEquals(2, calls)
+        assertTrue("静默刷新期间不显示整页骨架", vm.state.value.detail is UiState.Success)
+        vm.toggleFavorite()
+        advanceUntilIdle()
+        fresh.complete(NovumResult.Success(movieDetail().copy(resumePositionMs = 90_000L)))
+        advanceUntilIdle()
+
+        assertEquals(90_000L, detailData(vm).resumePositionMs)
+        assertTrue("旧详情快照不能撤销刚完成的收藏", detailData(vm).isFavorite)
+    }
+
+    @Test
+    fun returningToSeriesUpdatesProgressAndKeepsChosenSeasonAndEpisode() = runTest {
+        var refreshed = false
+        val initialSeasons = listOf(season("s1", 1, 8), season("s2", 2, 8))
+        val repository = object : FakeDetailRepository(
+            detail = seriesDetail(),
+            seasons = initialSeasons,
+            episodesFor = mapOf("s1" to listOf(episode("e1"))),
+        ) {
+            override suspend fun detail(itemId: String) = NovumResult.Success(
+                seriesDetail().copy(unplayedCount = if (refreshed) 14 else 16),
+            )
+            override suspend fun seasons(seriesId: String) = NovumResult.Success(
+                if (refreshed) initialSeasons.map { it.copy(unplayedCount = 7) } else initialSeasons,
+            )
+            override suspend fun episodes(seriesId: String, seasonId: String?): NovumResult<List<Episode>> =
+                if (seasonId == "s2") {
+                    NovumResult.Success(
+                        listOf(
+                            episode("e2", seasonIndex = 2).copy(played = refreshed),
+                            episode("e3", seasonIndex = 2).copy(progressMs = if (refreshed) 120_000L else 0L),
+                        ),
+                    )
+                } else {
+                    super.episodes(seriesId, seasonId)
+                }
+        }
+        val (vm, _) = viewModel(repository, itemId = "se1")
+        advanceUntilIdle()
+        vm.selectSeason("s2")
+        advanceUntilIdle()
+        vm.selectEpisode("e3")
+        advanceUntilIdle()
+        val before = vm.state.value
+
+        refreshed = true
+        vm.refreshWatchState()
+        advanceUntilIdle()
+
+        val after = vm.state.value
+        assertEquals("s2", after.selectedSeasonId)
+        assertEquals("e3", after.episodeContextId)
+        assertEquals(before.currentEpisodeId, after.currentEpisodeId)
+        assertEquals(before.episodeContextFromEntry, after.episodeContextFromEntry)
+        assertTrue(after.episodes.first().played)
+        assertEquals(120_000L, after.currentEpisode?.progressMs)
+        assertEquals(2, after.watchedEpisodeCount)
+        assertEquals(14, after.data?.unplayedCount)
+    }
+
+    @Test
+    fun failedWatchRefreshKeepsExistingSeriesContentAndSelection() = runTest {
+        var fail = false
+        val failure = NovumResult.Failure(NovumError.NotFound())
+        val repository = object : FakeDetailRepository(
+            detail = seriesDetail(),
+            seasons = listOf(season("s1", 1, 8)),
+            episodesFor = mapOf("s1" to listOf(episode("e1"))),
+            nextUpHint = episode("e1"),
+        ) {
+            override suspend fun detail(itemId: String) = if (fail) failure else super.detail(itemId)
+            override suspend fun seasons(seriesId: String) = if (fail) failure else super.seasons(seriesId)
+            override suspend fun episodes(seriesId: String, seasonId: String?) =
+                if (fail) failure else super.episodes(seriesId, seasonId)
+        }
+        val (vm, _) = viewModel(repository, itemId = "se1", focusCurrentEpisode = true)
+        advanceUntilIdle()
+        val before = vm.state.value
+
+        fail = true
+        vm.refreshWatchState()
+        advanceUntilIdle()
+
+        assertEquals("失败时不得清空内容或重置进场语境", before, vm.state.value)
+    }
+
+    @Test
+    fun successfulEpisodeWatchRefreshClearsPreviousFailureButFailedRefreshKeepsIt() = runTest {
+        var failEpisodes = true
+        val repository = object : FakeDetailRepository(
+            detail = seriesDetail(),
+            seasons = listOf(season("s1", 1, 8), season("s2", 2, 8)),
+        ) {
+            override suspend fun episodes(seriesId: String, seasonId: String?): NovumResult<List<Episode>> =
+                if (failEpisodes) NovumResult.Failure(NovumError.NotFound())
+                else NovumResult.Success(listOf(episode("e1")))
+        }
+        val (vm, _) = viewModel(repository, itemId = "se1")
+        advanceUntilIdle()
+        assertTrue(vm.state.value.episodesFailed)
+
+        failEpisodes = false
+        vm.refreshWatchState()
+        advanceUntilIdle()
+        assertEquals(listOf("e1"), vm.state.value.episodes.map { it.id })
+        assertFalse("成功刷新分集后不应继续显示错误重试提示", vm.state.value.episodesFailed)
+
+        failEpisodes = true
+        vm.selectSeason("s2")
+        advanceUntilIdle()
+        vm.refreshWatchState()
+        advanceUntilIdle()
+        assertTrue("失败的刷新不能移除当前季的重试入口", vm.state.value.episodesFailed)
+    }
+
+    @Test
+    fun newerFullLoadCannotBeOverwrittenByAnOlderCancelledRequest() = runTest {
+        val stale = CompletableDeferred<NovumResult<MediaDetail>>()
+        var calls = 0
+        val repository = object : FakeDetailRepository(detail = movieDetail()) {
+            override suspend fun detail(itemId: String): NovumResult<MediaDetail> =
+                if (++calls == 1) {
+                    withContext(NonCancellable) { stale.await() }
+                } else {
+                    NovumResult.Success(movieDetail().copy(resumePositionMs = 80_000L))
+                }
+        }
+        val (vm, _) = viewModel(repository, itemId = "m1")
+        advanceUntilIdle()
+        vm.load()
+        advanceUntilIdle()
+        assertEquals(80_000L, detailData(vm).resumePositionMs)
+
+        stale.complete(NovumResult.Success(movieDetail()))
+        advanceUntilIdle()
+        assertEquals("迟到的旧 load 不能覆盖新 load", 80_000L, detailData(vm).resumePositionMs)
+    }
+
+    @Test
+    fun fullReloadCancelsThePreviousSeasonSelectionRequest() = runTest {
+        val stale = CompletableDeferred<NovumResult<List<Season>>>()
+        var calls = 0
+        val repository = object : FakeDetailRepository(detail = seriesDetail()) {
+            override suspend fun seasons(seriesId: String): NovumResult<List<Season>> =
+                if (++calls == 1) {
+                    withContext(NonCancellable) { stale.await() }
+                } else {
+                    NovumResult.Success(listOf(season("s2", 2, 8)))
+                }
+        }
+        val (vm, _) = viewModel(repository, itemId = "se1")
+        advanceUntilIdle()
+        vm.load()
+        advanceUntilIdle()
+        assertEquals("s2", vm.state.value.selectedSeasonId)
+
+        stale.complete(NovumResult.Success(listOf(season("s1", 1, 8))))
+        advanceUntilIdle()
+        assertEquals("旧季列表到达不能重置默认季", "s2", vm.state.value.selectedSeasonId)
+    }
+
+    @Test
+    fun cancelledEpisodeAndCastRequestsCannotOverwriteReturningToTheSameSeason() = runTest {
+        val staleEpisodes = CompletableDeferred<NovumResult<List<Episode>>>()
+        val staleCast = CompletableDeferred<NovumResult<List<CastMember>>>()
+        var episodeCalls = 0
+        var castCalls = 0
+        val freshCast = CastMember("新演员", null, null)
+        val repository = object : FakeDetailRepository(
+            detail = seriesDetail(),
+            seasons = listOf(season("s1", 1, 8), season("s2", 2, 8)),
+        ) {
+            override suspend fun episodes(seriesId: String, seasonId: String?): NovumResult<List<Episode>> =
+                if (seasonId == "s1" && ++episodeCalls == 1) {
+                    withContext(NonCancellable) { staleEpisodes.await() }
+                } else {
+                    NovumResult.Success(listOf(episode("fresh-$seasonId")))
+                }
+            override suspend fun seasonCast(seriesId: String, seasonId: String): NovumResult<List<CastMember>> =
+                if (seasonId == "s1" && ++castCalls == 1) {
+                    withContext(NonCancellable) { staleCast.await() }
+                } else {
+                    NovumResult.Success(listOf(freshCast))
+                }
+        }
+        val (vm, _) = viewModel(repository, itemId = "se1")
+        advanceUntilIdle()
+        vm.selectSeason("s2")
+        advanceUntilIdle()
+        vm.selectSeason("s1")
+        advanceUntilIdle()
+
+        staleEpisodes.complete(NovumResult.Success(listOf(episode("stale"))))
+        staleCast.complete(NovumResult.Success(listOf(CastMember("旧演员", null, null))))
+        advanceUntilIdle()
+        assertEquals(listOf("fresh-s1"), vm.state.value.episodes.map { it.id })
+        assertEquals(listOf(freshCast), vm.state.value.seasonCast)
+    }
+
+    @Test
+    fun lateWatchRefreshCannotOverwriteEpisodesReloadedBySwitchingSeason() = runTest {
+        val stale = CompletableDeferred<NovumResult<List<Episode>>>()
+        var s1Calls = 0
+        val repository = object : FakeDetailRepository(
+            detail = seriesDetail(),
+            seasons = listOf(season("s1", 1, 8), season("s2", 2, 8)),
+        ) {
+            override suspend fun episodes(seriesId: String, seasonId: String?): NovumResult<List<Episode>> =
+                if (seasonId == "s1" && ++s1Calls == 2) {
+                    stale.await()
+                } else {
+                    NovumResult.Success(listOf(episode("fresh-$seasonId")))
+                }
+        }
+        val (vm, _) = viewModel(repository, itemId = "se1")
+        advanceUntilIdle()
+        vm.refreshWatchState()
+        advanceUntilIdle()
+        vm.selectSeason("s2")
+        advanceUntilIdle()
+        vm.selectSeason("s1")
+        advanceUntilIdle()
+
+        stale.complete(NovumResult.Success(listOf(episode("stale"))))
+        advanceUntilIdle()
+        assertEquals(listOf("fresh-s1"), vm.state.value.episodes.map { it.id })
+    }
+
+    @Test
+    fun cancelledWatchRefreshCannotUndoManualPlayedMark() = runTest {
+        val stale = CompletableDeferred<NovumResult<MediaDetail>>()
+        var calls = 0
+        val repository = object : FakeDetailRepository(detail = movieDetail()) {
+            override suspend fun detail(itemId: String): NovumResult<MediaDetail> =
+                if (++calls == 1) NovumResult.Success(movieDetail()) else {
+                    withContext(NonCancellable) { stale.await() }
+                }
+        }
+        val (vm, _) = viewModel(repository, itemId = "m1")
+        advanceUntilIdle()
+        vm.refreshWatchState()
+        advanceUntilIdle()
+        vm.togglePlayed()
+        advanceUntilIdle()
+        assertTrue(detailData(vm).played)
+
+        stale.complete(NovumResult.Success(movieDetail()))
+        advanceUntilIdle()
+        assertTrue("刷新旧观看状态不能覆盖用户刚完成的标记", detailData(vm).played)
     }
 
     @Test
@@ -549,6 +820,36 @@ class DetailViewModelTest {
     }
 
     @Test
+    fun seasonPlayedRefreshDoesNotUndoFavoriteChangedWhileItWasLoading() = runTest {
+        val refresh = CompletableDeferred<NovumResult<MediaDetail>>()
+        val repository = object : FakeDetailRepository(
+            detail = seriesDetail(),
+            seasons = listOf(season("s1", index = 1, unplayed = 1)),
+            episodesFor = mapOf("s1" to listOf(episode("e1"))),
+        ) {
+            private var calls = 0
+
+            override suspend fun detail(itemId: String): NovumResult<MediaDetail> =
+                if (++calls == 1) super.detail(itemId) else refresh.await()
+        }
+        val (viewModel, _) = viewModel(repository, itemId = "se1")
+        advanceUntilIdle()
+
+        viewModel.markSeasonPlayed(played = true)
+        advanceUntilIdle()
+        viewModel.toggleFavorite()
+        advanceUntilIdle()
+        assertTrue("收藏请求应已成功", detailData(viewModel).isFavorite)
+
+        // 观看聚合请求先发出，返回的收藏字段仍是旧值。
+        refresh.complete(NovumResult.Success(seriesDetail().copy(played = true)))
+        advanceUntilIdle()
+
+        assertTrue("观看聚合刷新不得撤销期间完成的收藏", detailData(viewModel).isFavorite)
+        assertTrue("观看字段仍应取服务端聚合值", detailData(viewModel).played)
+    }
+
+    @Test
     fun togglePlayedOnSeriesWithoutEpisodeDoesNothing() = runTest {
         // 剧集没有「整个条目」级标记：选集未加载完（episodeId 为 null）时对
         // series 打 PlayedItems 同样会级联全部季——防御性不动作
@@ -601,6 +902,30 @@ class DetailViewModelTest {
     }
 
     @Test
+    fun singleEpisodePlayedRefreshesSeriesUnplayedFallback() = runTest {
+        val initial = seriesDetail().copy(childCount = 20, unplayedCount = 6)
+        val repository = object : FakeDetailRepository(
+            detail = initial,
+            seasons = listOf(season("s1", index = 1, unplayed = null)),
+            episodesFor = mapOf("s1" to listOf(episode("e1"))),
+        ) {
+            private var calls = 0
+
+            override suspend fun detail(itemId: String): NovumResult<MediaDetail> =
+                NovumResult.Success(if (++calls == 1) initial else initial.copy(unplayedCount = 5))
+        }
+        val (viewModel, _) = viewModel(repository, itemId = "se1")
+        advanceUntilIdle()
+        assertEquals(14, viewModel.state.value.watchedEpisodeCount)
+
+        viewModel.togglePlayed("e1")
+        advanceUntilIdle()
+
+        assertEquals("季缺计数时，单集标记后应同步全剧未看数", 15, viewModel.state.value.watchedEpisodeCount)
+        assertEquals(20, viewModel.state.value.totalEpisodeCount)
+    }
+
+    @Test
     fun aggregateUsesOnlySeasonsWithCompleteCounts() = runTest {
         // 部分季有完整计数、部分季缺字段：只按有数据的季聚合，不因个别季缺字段整行消失。
         val seasons = listOf(
@@ -634,6 +959,65 @@ class DetailViewModelTest {
 
         assertTrue("标记后应重拉详情", repository.detailCallCount > callsBefore)
         assertTrue("剧集级 Played 应取服务端聚合值", detailData(viewModel).played)
+    }
+
+    @Test
+    fun singleEpisodePlayedStaysBusyUntilSeriesAggregationCompletes() = runTest {
+        val refresh = CompletableDeferred<NovumResult<MediaDetail>>()
+        val repository = object : FakeDetailRepository(
+            detail = seriesDetail(),
+            seasons = listOf(season("s1", index = 1, unplayed = 1)),
+            episodesFor = mapOf("s1" to listOf(episode("e1"))),
+        ) {
+            private var calls = 0
+
+            override suspend fun detail(itemId: String): NovumResult<MediaDetail> =
+                if (++calls == 2) refresh.await() else super.detail(itemId)
+        }
+        val (viewModel, _) = viewModel(repository, itemId = "se1")
+        advanceUntilIdle()
+
+        viewModel.togglePlayed("e1")
+        advanceUntilIdle()
+        assertTrue("服务端聚合仍在请求中时，应保持忙碌", viewModel.state.value.playedBusy)
+
+        viewModel.togglePlayed("e1")
+        viewModel.markSeasonPlayed(played = false)
+        advanceUntilIdle()
+        assertEquals("聚合完成前，单集与整季标记都应被拦截", listOf("e1" to true), repository.playedCalls)
+
+        refresh.complete(NovumResult.Success(seriesDetail().copy(played = true)))
+        advanceUntilIdle()
+        assertFalse("聚合完成后应释放忙碌状态", viewModel.state.value.playedBusy)
+        assertTrue(detailData(viewModel).played)
+
+        viewModel.togglePlayed("e1")
+        advanceUntilIdle()
+        assertEquals("聚合完成后应允许新的标记", listOf("e1" to true, "e1" to false), repository.playedCalls)
+        assertFalse(viewModel.state.value.playedBusy)
+        assertFalse("最终聚合状态应对应后一次标记", detailData(viewModel).played)
+    }
+
+    @Test
+    fun singleEpisodePlayedReleasesBusyWhenSeriesAggregationFails() = runTest {
+        val repository = object : FakeDetailRepository(
+            detail = seriesDetail(),
+            seasons = listOf(season("s1", index = 1, unplayed = 1)),
+            episodesFor = mapOf("s1" to listOf(episode("e1"))),
+        ) {
+            private var calls = 0
+
+            override suspend fun detail(itemId: String): NovumResult<MediaDetail> =
+                if (++calls == 1) super.detail(itemId) else NovumResult.Failure(NovumError.Network())
+        }
+        val (viewModel, _) = viewModel(repository, itemId = "se1")
+        advanceUntilIdle()
+
+        viewModel.togglePlayed("e1")
+        advanceUntilIdle()
+
+        assertTrue("聚合失败不应撤销成功的单集标记", viewModel.state.value.episodes.single().played)
+        assertFalse("聚合失败也应允许后续标记", viewModel.state.value.playedBusy)
     }
 
     @Test

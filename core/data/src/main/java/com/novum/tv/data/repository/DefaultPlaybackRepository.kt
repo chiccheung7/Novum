@@ -6,6 +6,7 @@ import com.novum.tv.core.dispatcher.DispatcherProvider
 import com.novum.tv.core.error.NovumError
 import com.novum.tv.core.log.NovumLogger
 import com.novum.tv.core.network.toNovumError
+import com.novum.tv.core.network.ServerAddress
 import com.novum.tv.core.result.NovumResult
 import com.novum.tv.core.result.failureOf
 import com.novum.tv.core.result.runCatchingSuspend
@@ -19,8 +20,10 @@ import com.novum.tv.data.remote.emby.PlaybackInfoRequestDto
 import com.novum.tv.data.remote.emby.PlaybackProgressDto
 import com.novum.tv.data.line.LineProbe
 import com.novum.tv.data.remote.emby.SessionHolder
+import com.novum.tv.data.remote.emby.SessionSnapshot
 import com.novum.tv.data.text.MediaStrings
 import com.novum.tv.data.settings.SettingsRepository
+import com.novum.tv.data.settings.pinnedLineUrlFor
 import com.novum.tv.model.PlayMethod
 import com.novum.tv.model.PlaybackPlan
 import com.novum.tv.model.SubtitleSource
@@ -67,14 +70,15 @@ class DefaultPlaybackRepository @Inject constructor(
         forceTranscode: Boolean,
         excludeLine: String?,
         mediaSourceId: String?,
-    ): NovumResult<PlaybackPlan> =
-        withContext(dispatchers.io) {
-            val server = sessionHolder.server
-            val userId = sessionHolder.userId
-            if (server.isBlank() || userId.isBlank()) {
+    ): NovumResult<PlaybackPlan> {
+        val owner = sessionHolder.capture()
+        return withContext(dispatchers.io) {
+            val server = owner.server
+            if (!isCurrent(owner)) {
                 return@withContext failureOf(NovumError.Unauthorized())
             }
             val snapshot = runCatchingSuspend { settings.settings.first() }.getOrNull()
+            if (!isCurrent(owner)) return@withContext failureOf(NovumError.Unauthorized())
             val preferDirect = snapshot?.preferDirect ?: true
             // 媒体流域名选择（优先级）：手动锁定线路 > 测速最快线路 > 当前服务器；
             // API 调用仍用原服务器地址（鉴权域一致）——官方文档明确客户端内切线
@@ -82,16 +86,16 @@ class DefaultPlaybackRepository @Inject constructor(
             val bestLine = runCatchingSuspend {
                 lineProbe.lines(
                     excludeBaseUrl = excludeLine,
-                    pinnedLine = snapshot?.pinnedLineUrl,
+                    pinnedLine = snapshot?.pinnedLineUrlFor(owner.playbackPrefsNamespace()),
                 ).firstOrNull()
             }.getOrNull()
+            if (!isCurrent(owner)) return@withContext failureOf(NovumError.Unauthorized())
             val mediaServer = bestLine?.baseUrl ?: server
             val lineLabel = bestLine?.let { "${it.displayName} · ${it.latencyMs}ms" }
             val audioPassthrough = snapshot?.audioPassthrough ?: true
             try {
                 val info = requestPlan(
-                    server = server,
-                    userId = userId,
+                    owner = owner,
                     itemId = itemId,
                     audioPassthrough = audioPassthrough,
                     forceTranscode = forceTranscode,
@@ -99,12 +103,13 @@ class DefaultPlaybackRepository @Inject constructor(
                     failedVideoCodecs = snapshot?.failedVideoCodecs
                         ?.split(",")?.filter { it.isNotBlank() }?.toSet() ?: emptySet(),
                 )
+                if (!isCurrent(owner)) return@withContext failureOf(NovumError.Unauthorized())
                 // 版本定位：显式 sourceId（详情页选择）> 画质策略（设置）> 服务端默认
                 val source = mediaSourceId?.let { id ->
                     info.MediaSources.firstOrNull { it.Id == id }
                 } ?: pickVersionByStrategy(info.MediaSources, snapshot?.versionStrategy)
                 if (source == null) {
-                    successOf(fallbackPlan(server, itemId, startPositionMs))
+                    successOf(fallbackPlan(server, itemId, startPositionMs, owner.tokenForUrl(server)))
                 } else {
                     // 服务端按我们声明的能力判断，但它不知道「双层 DV 解不了」这类细节；
                     // 一旦片源超出本机能力，立刻换成「只声明转码」的请求，让服务端给转码流。
@@ -124,6 +129,7 @@ class DefaultPlaybackRepository @Inject constructor(
                         }
                         // 递归必须透传 excludeLine：换线重试进到这里时若丢掉参数，
                         // 会绕回刚失败的线路再失败一次
+                        if (!isCurrent(owner)) return@withContext failureOf(NovumError.Unauthorized())
                         return@withContext plan(
                             itemId,
                             startPositionMs,
@@ -132,14 +138,14 @@ class DefaultPlaybackRepository @Inject constructor(
                             mediaSourceId = mediaSourceId,
                         )
                     }
-                    val urls = resolveUrls(mediaServer, source, itemId, preferDirect, forceTranscode)
+                    val urls = resolveUrls(mediaServer, source, itemId, preferDirect, forceTranscode, owner.tokenForUrl(mediaServer))
                     successOf(
                         PlaybackPlan(
                             url = urls.primaryUrl,
                             method = urls.primaryMethod,
                             audioTracks = source.tracksOfType("Audio", strings),
                             subtitleTracks = source.tracksOfType("Subtitle", strings),
-                            subtitles = source.externalSubtitles(server, itemId),
+                            subtitles = source.externalSubtitles(server, itemId, owner.tokenForUrl(server)),
                             durationMs = source.RunTimeTicks?.let { it / TICKS_PER_MS },
                             startPositionMs = startPositionMs,
                             lineLabel = lineLabel,
@@ -155,6 +161,7 @@ class DefaultPlaybackRepository @Inject constructor(
             } catch (cancellation: CancellationException) {
                 throw cancellation
             } catch (throwable: Throwable) {
+                if (!isCurrent(owner)) return@withContext failureOf(NovumError.Unauthorized())
                 // 播放信息接口失败不等于不能播：仍尝试静态直连兜底，
                 // 但鉴权失败必须显式返回，避免用户对着黑屏猜问题。
                 val error = throwable.toNovumError()
@@ -162,10 +169,11 @@ class DefaultPlaybackRepository @Inject constructor(
                     failureOf(error)
                 } else {
                     logger.w(TAG, "PlaybackInfo 失败，回落到静态流", throwable)
-                    successOf(fallbackPlan(server, itemId, startPositionMs))
+                    successOf(fallbackPlan(server, itemId, startPositionMs, owner.tokenForUrl(server)))
                 }
             }
         }
+    }
 
     /**
      * 请求一次播放信息。
@@ -173,16 +181,15 @@ class DefaultPlaybackRepository @Inject constructor(
      * @param forceTranscode 为 true 时不声明任何直连能力，服务端只能返回转码地址。
      */
     private suspend fun requestPlan(
-        server: String,
-        userId: String,
+        owner: SessionSnapshot,
         itemId: String,
         audioPassthrough: Boolean,
         forceTranscode: Boolean,
         assBurnIn: Boolean,
         failedVideoCodecs: Set<String> = emptySet(),
-    ) = clients.api(server).playbackInfo(
+    ) = clients.api(owner.server, owner).playbackInfo(
         itemId = itemId,
-        userId = userId,
+        userId = owner.userId,
         // 能力来自实际探测：只声明这台机器真的能解的编码，
         // 直通开关再收敛一层（关掉时不给杜比 / DTS，服务端转 AAC）
         body = PlaybackInfoRequestDto(
@@ -241,7 +248,7 @@ class DefaultPlaybackRepository @Inject constructor(
         method: PlayMethod,
         playSessionId: String?,
     ) {
-        report(itemId, positionMs, method, playSessionId, started = true)
+        report(sessionHolder.capture(), itemId, positionMs, method, playSessionId, ReportEvent.Started)
     }
 
     override suspend fun reportProgress(
@@ -250,7 +257,7 @@ class DefaultPlaybackRepository @Inject constructor(
         method: PlayMethod,
         playSessionId: String?,
     ) {
-        report(itemId, positionMs, method, playSessionId, started = false)
+        report(sessionHolder.capture(), itemId, positionMs, method, playSessionId, ReportEvent.Progress)
     }
 
     override suspend fun reportStopped(
@@ -259,34 +266,54 @@ class DefaultPlaybackRepository @Inject constructor(
         method: PlayMethod,
         playSessionId: String?,
     ) {
-        withContext(dispatchers.io) {
-            val api = apiOrNull() ?: return@withContext
-            runCatchingSuspend {
-                api.reportPlaybackStopped(
-                    body = progressBody(itemId, positionMs, method, playSessionId),
-                )
-            }.onFailure { logger.w(TAG, "停止播放上报失败", it) }
+        report(sessionHolder.capture(), itemId, positionMs, method, playSessionId, ReportEvent.Stopped)
+    }
+
+    override fun sessionReporter(): PlaybackReporter {
+        val owner = sessionHolder.capture()
+        return object : PlaybackReporter {
+            override suspend fun reportStarted(itemId: String, positionMs: Long, method: PlayMethod, playSessionId: String?) {
+                report(owner, itemId, positionMs, method, playSessionId, ReportEvent.Started)
+            }
+
+            override suspend fun reportProgress(itemId: String, positionMs: Long, method: PlayMethod, playSessionId: String?) {
+                report(owner, itemId, positionMs, method, playSessionId, ReportEvent.Progress)
+            }
+
+            override suspend fun reportStopped(itemId: String, positionMs: Long, method: PlayMethod, playSessionId: String?) {
+                report(owner, itemId, positionMs, method, playSessionId, ReportEvent.Stopped)
+            }
         }
     }
 
-    /** 开始 / 进度上报共用同一套容错：失败只记日志，不打断播放。 */
+    private enum class ReportEvent { Started, Progress, Stopped }
+
+    private fun isCurrent(owner: SessionSnapshot): Boolean =
+        sessionHolder.capture() === owner && owner.server.isNotBlank() &&
+            owner.userId.isNotBlank() && owner.token.isNotBlank()
+
+    /** 排队的收尾请求不能在换账号后借用新身份。失败只记日志，不打断播放。 */
     private suspend fun report(
+        owner: SessionSnapshot,
         itemId: String,
         positionMs: Long,
         method: PlayMethod,
         playSessionId: String?,
-        started: Boolean,
+        event: ReportEvent,
     ) {
         withContext(dispatchers.io) {
-            val api = apiOrNull() ?: return@withContext
+            if (!isCurrent(owner)) return@withContext
+            val api = runCatching { clients.api(owner.server, owner) }.getOrNull() ?: return@withContext
             runCatchingSuspend {
                 val body = progressBody(itemId, positionMs, method, playSessionId)
-                if (started) api.reportPlaybackStarted(body) else api.reportPlaybackProgress(body)
+                when (event) {
+                    ReportEvent.Started -> api.reportPlaybackStarted(body)
+                    ReportEvent.Progress -> api.reportPlaybackProgress(body)
+                    ReportEvent.Stopped -> api.reportPlaybackStopped(body)
+                }
             }.onFailure { logger.w(TAG, "播放进度上报失败", it) }
         }
     }
-
-    private fun apiOrNull() = runCatching { clients.api(sessionHolder.server) }.getOrNull()
 
     private fun progressBody(
         itemId: String,
@@ -305,12 +332,13 @@ class DefaultPlaybackRepository @Inject constructor(
     )
 
     /** 无播放信息时的兜底：Emby 标准静态流。 */
-    private fun fallbackPlan(server: String, itemId: String, startPositionMs: Long): PlaybackPlan {
-        val token = sessionHolder.token
+    private fun fallbackPlan(server: String, itemId: String, startPositionMs: Long, token: String?): PlaybackPlan {
         val url = buildString {
             append(server.trimEnd('/'))
             append("/Videos/").append(itemId).append("/stream?Static=true")
-            if (token.isNotBlank()) append("&api_key=").append(token)
+            if (!token.isNullOrBlank()) {
+                append("&api_key=").append(java.net.URLEncoder.encode(token, "UTF-8"))
+            }
         }
         return PlaybackPlan(
             url = url,
@@ -336,6 +364,7 @@ class DefaultPlaybackRepository @Inject constructor(
         itemId: String,
         preferDirect: Boolean,
         forceTranscode: Boolean,
+        token: String?,
     ): ResolvedUrls {
         val directPath = source.DirectStreamUrl?.takeIf { source.SupportsDirectPlay || source.SupportsDirectStream }
         val transcodePath = source.TranscodingUrl
@@ -343,7 +372,7 @@ class DefaultPlaybackRepository @Inject constructor(
         if (forceTranscode) {
             val absolute = (transcodePath ?: directPath).toAbsoluteUrl(server)
             return ResolvedUrls(
-                primaryUrl = absolute ?: fallbackPlan(server, itemId, 0L).url,
+                primaryUrl = absolute ?: fallbackPlan(server, itemId, 0L, token).url,
                 // 没有任何可用地址时实际播的是静态流（DirectPlay），不能上报 DirectStream
                 primaryMethod = when {
                     absolute == null -> PlayMethod.DirectPlay
@@ -358,7 +387,7 @@ class DefaultPlaybackRepository @Inject constructor(
         if (!preferDirect) {
             val absolute = (transcodePath ?: directPath).toAbsoluteUrl(server)
             return ResolvedUrls(
-                primaryUrl = absolute ?: fallbackPlan(server, itemId, 0L).url,
+                primaryUrl = absolute ?: fallbackPlan(server, itemId, 0L, token).url,
                 primaryMethod = when {
                     absolute == null -> PlayMethod.DirectPlay
                     transcodePath != null -> PlayMethod.Transcode
@@ -380,7 +409,7 @@ class DefaultPlaybackRepository @Inject constructor(
         // 兜底只在「主地址不是转码」且转码地址确实存在时才有意义
         val fallback = transcodePath?.takeIf { primaryMethod != PlayMethod.Transcode && it != primary }
         return ResolvedUrls(
-            primaryUrl = primary.toAbsoluteUrl(server) ?: fallbackPlan(server, itemId, 0L).url,
+            primaryUrl = primary.toAbsoluteUrl(server) ?: fallbackPlan(server, itemId, 0L, token).url,
             primaryMethod = primaryMethod,
             fallbackUrl = fallback.toAbsoluteUrl(server),
             fallbackMethod = fallback?.let { PlayMethod.Transcode },
@@ -456,11 +485,7 @@ private data class ResolvedUrls(
 /** 相对地址补全为绝对地址；空值原样返回 null。 */
 private fun String?.toAbsoluteUrl(server: String): String? {
     val path = this?.takeIf { it.isNotBlank() } ?: return null
-    return if (path.startsWith("http://") || path.startsWith("https://")) {
-        path
-    } else {
-        server.trimEnd('/') + "/" + path.trimStart('/')
-    }
+    return ServerAddress.resolveUrl(server, path)
 }
 
 /**
@@ -468,7 +493,8 @@ private fun String?.toAbsoluteUrl(server: String): String? {
  * 缺 Path 时回落 `Name`；两者都空返回 null（弹幕只能手动搜索匹配）。
  */
 internal fun MediaSourceDto.danmuFileName(): String? {
-    val fromPath = Path?.substringAfterLast('/')?.substringBefore('?')?.takeIf { it.isNotBlank() }
+    val fromPath = Path?.substringBefore('?')?.substringAfterLast('/')?.substringAfterLast('\\')
+        ?.takeIf { it.isNotBlank() }
     return fromPath ?: Name?.takeIf { it.isNotBlank() }
 }
 
@@ -504,26 +530,27 @@ private fun MediaSourceDto.videoSpec(): VideoSpec? {
 private fun MediaSourceDto.externalSubtitles(
     server: String,
     itemId: String,
+    token: String?,
 ): List<SubtitleSource> =
     MediaStreams
         .mapIndexed { index, stream ->
             if (stream.Type != "Subtitle") return@mapIndexed null
+            val streamIndex = stream.Index ?: index
             // 优先使用服务端地址；外部字幕缺少该地址时按 Emby 标准端点构造。
-            val delivered = stream.DeliveryUrl?.takeIf { it.isNotBlank() }?.let { path ->
-                if (path.startsWith("http://") || path.startsWith("https://")) {
-                    path
-                } else {
-                    server.trimEnd('/') + "/" + path.trimStart('/')
-                }
-            }
+            val delivered = stream.DeliveryUrl.toAbsoluteUrl(server)
             val constructed = if (stream.IsExternal && !stream.Codec.isNullOrBlank()) {
-                "${server.trimEnd('/')}/Videos/$itemId/${Id.orEmpty()}/Subtitles/$index/Stream.${stream.Codec?.lowercase()}"
+                buildString {
+                    append("${server.trimEnd('/')}/Videos/$itemId/${Id.orEmpty()}/Subtitles/$streamIndex/Stream.${stream.Codec?.lowercase()}")
+                    if (!token.isNullOrBlank()) {
+                        append("?api_key=").append(java.net.URLEncoder.encode(token, "UTF-8"))
+                    }
+                }
             } else {
                 null
             }
             val url = delivered ?: constructed ?: return@mapIndexed null
             SubtitleSource(
-                id = "sub-$index-${stream.Language.orEmpty()}",
+                id = "sub-$streamIndex-${stream.Language.orEmpty()}",
                 url = url,
                 language = stream.Language.normalizeLanguage(),
                 label = stream.DisplayTitle ?: stream.Title,

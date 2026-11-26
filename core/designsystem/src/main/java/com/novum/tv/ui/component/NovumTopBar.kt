@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.Dp
@@ -25,7 +26,7 @@ import com.novum.tv.ui.theme.NovumDimens
 import com.novum.tv.ui.theme.NovumPalette
 
 /**
- * 顶部导航条：右上四个玻璃黑图标（收藏、分类、搜索、设置），左上角可经 [leading] 槽位注入 Hero ClearLogo。
+ * 顶部导航条：首页右上四个入口（收藏、分类、搜索、设置），左上角可注入 Hero ClearLogo。
  * 点当前页图标为 no-op；退出登录仅在设置页提供。
  *
  * @param current 当前所在页签。
@@ -84,7 +85,7 @@ fun NovumTopBar(
     }
 }
 
-/** 顶栏入口图标：玻璃黑胶囊图标钮，点当前页 no-op（语义与旧页签一致）。 */
+/** 顶栏入口图标：海报上的轻量白色图标，点当前页 no-op。 */
 @Composable
 private fun NovumTopIcon(
     icon: ImageVector,
@@ -97,6 +98,8 @@ private fun NovumTopIcon(
         icon = icon,
         contentDescription = label,
         size = TOP_ICON_SIZE,
+        // 首页顶栏叠在全屏海报上，常态只留白色图标；焦点时再出现清晰底片。
+        idleContainerColor = Color.Transparent,
         onClick = { if (current != target) onNavigateTab(target) },
     )
 }

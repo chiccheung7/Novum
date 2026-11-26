@@ -136,6 +136,9 @@ internal fun PlayerStage(
     subtitleSize: Int,
     /** 字幕字号切换回调（抽屉字幕 tab 的调节入口）。 */
     onSubtitleSizeChanged: (Int) -> Unit = {},
+    /** 字幕粗细：0 细、1 标准、2 粗。 */
+    subtitleWeight: Int = 1,
+    onSubtitleWeightChanged: (Int) -> Unit = {},
     /** 字幕抬升切换回调（抽屉字幕 tab）。 */
     onSubtitleOffsetLevelChanged: (Int) -> Unit = {},
     subtitleOffsetLevel: Int = 0,
@@ -196,6 +199,7 @@ internal fun PlayerStage(
     }
     // 画面缩放模式：按片源重置——切集/换片回到默认「适应」
     var scaleMode by remember(plan.url) { mutableStateOf(VideoScaleMode.Fit) }
+    var speedPickerVisible by remember { mutableStateOf(false) }
     var notice by remember { mutableStateOf<String?>(null) }
 
     // 控制层状态
@@ -296,6 +300,7 @@ internal fun PlayerStage(
         derivedStateOf { computeSkipTarget(chapters, position.longValue, duration.longValue) }
     }
     var skipDismissed by remember(chapters) { mutableStateOf(false) }
+    var skipFocused by remember { mutableStateOf(false) }
     val skipRequester = remember { FocusRequester() }
     val showSkip by remember(chapters) {
         derivedStateOf { skipTarget.value != null && !skipDismissed }
@@ -311,28 +316,12 @@ internal fun PlayerStage(
     DisposableEffect(player) {
         val listener = object : Player.Listener {
             override fun onTracksChanged(tracks: Tracks) {
-                val audio = mutableListOf<TrackOption>()
-                val text = mutableListOf<TrackOption>()
-                tracks.groups.forEachIndexed { groupIndex, group ->
-                    val type = group.type
-                    if (type != C.TRACK_TYPE_AUDIO && type != C.TRACK_TYPE_TEXT) return@forEachIndexed
-                    val format = runCatching { group.getTrackFormat(0) }.getOrNull() ?: return@forEachIndexed
-                    val label = buildTrackLabel(format, type, audioTrackFallback, textTrackFallback, channelsTemplate)
-                    for (trackIndex in 0 until group.length) {
-                        val option = TrackOption(
-                            id = "$groupIndex:$trackIndex",
-                            label = label,
-                            selected = group.isTrackSelected(trackIndex),
-                            // 条目记忆按「标题+语言」定位轨道，构造选项时带上
-                            language = format.language,
-                            rawLabel = format.label.orEmpty(),
-                            channels = if (type == C.TRACK_TYPE_AUDIO) format.channelCount.takeIf { it > 0 } else null,
-                            // 音轨带编码标注（音轨 tab 行尾展示），字幕轨不带
-                            codec = if (type == C.TRACK_TYPE_AUDIO) audioCodecLabel(format) else null,
-                        )
-                        if (type == C.TRACK_TYPE_AUDIO) audio += option else text += option
-                    }
-                }
+                val audio = buildTrackOptions(
+                    tracks, C.TRACK_TYPE_AUDIO, audioTrackFallback, textTrackFallback, channelsTemplate,
+                )
+                val text = buildTrackOptions(
+                    tracks, C.TRACK_TYPE_TEXT, audioTrackFallback, textTrackFallback, channelsTemplate,
+                )
                 // 字幕列表首位是「关闭字幕」：没有任何字幕轨道被选中时它高亮
                 val textOffSelected = text.none { it.selected }
                 textTracks = listOf(
@@ -351,28 +340,29 @@ internal fun PlayerStage(
      * @param positionMs 切换瞬间的播放位置。
      */
     fun switchToFallback(positionMs: Long) {
-        val url = plan.fallbackUrl
-        if (url == null || fallbackUsed) {
-            // 没有现成兜底地址：强制请求一次转码；已经请求过仍失败就进入错误态，
-            // 不再让用户对着黑屏。
-            if (!transcodeRequested) {
+        when (resolvePlaybackRecovery(plan, fallbackUsed, transcodeRequested)) {
+            PlaybackRecoveryAction.RequestTranscode -> {
                 transcodeRequested = true
                 onRequestTranscode(positionMs)
-            } else {
+            }
+
+            PlaybackRecoveryAction.ShowFailure -> {
                 playbackFailed = true
                 controlsVisible = false
             }
-            return
+
+            PlaybackRecoveryAction.UseFallback -> {
+                fallbackUsed = true
+                player.setMediaItem(
+                    buildMediaItem(plan.copy(url = requireNotNull(plan.fallbackUrl)), subtitlesEnabled),
+                    positionMs.coerceAtLeast(0L),
+                )
+                player.prepare()
+                // setMediaItem/prepare 保留播放意图，错误恢复不能解除用户主动暂停。
+                onMethodChanged(plan.fallbackMethod ?: PlayMethod.Transcode)
+                notice = fallbackNotice
+            }
         }
-        fallbackUsed = true
-        player.setMediaItem(
-            buildMediaItem(plan.copy(url = url), subtitlesEnabled),
-            positionMs.coerceAtLeast(0L),
-        )
-        player.prepare()
-        player.play()
-        onMethodChanged(plan.fallbackMethod ?: PlayMethod.Transcode)
-        notice = fallbackNotice
     }
 
     // 自动退出回调用 rememberUpdatedState 兜底：listener 闭包捕获首帧实例，
@@ -477,15 +467,13 @@ internal fun PlayerStage(
     }
 
     // 起播超时：直连地址不动声色地卡住时，等满 8 秒主动切转码，比让用户盯着黑屏好
-    LaunchedEffect(plan.url) {
-        delay(PLAYBACK_START_TIMEOUT_MS)
-        val ready = player.playbackState == Player.STATE_READY
-        // 已经切过兜底/转码/失败时不再重复触发：fallback 流自身缓冲慢是正常现象，
-        // 旧定时器到点误判会把正在加载的 fallback 顶掉，无谓再走一次转码。
-        if (!ready && player.playbackState != Player.STATE_ENDED &&
-            !fallbackUsed && !transcodeRequested && !playbackFailed
-        ) {
-            switchToFallback(player.currentPosition)
+    LaunchedEffect(player, plan.url) {
+        observePlaybackStartupTimeout(player, PLAYBACK_START_TIMEOUT_MS) {
+            // 已经切过兜底/转码/失败时不再重复触发：fallback 流自身缓冲慢是正常现象，
+            // 旧定时器到点误判会把正在加载的 fallback 顶掉，无谓再走一次转码。
+            if (!fallbackUsed && !transcodeRequested && !playbackFailed) {
+                switchToFallback(player.currentPosition)
+            }
         }
     }
 
@@ -590,6 +578,7 @@ internal fun PlayerStage(
         // 抽屉打开期间焦点由抽屉自管（tab 芯片），这里绝不接管——否则自动隐藏
         // 计时一到就会把焦点从抽屉拽到根节点（「弹出后焦点被抢走」）
         if (drawerVisible) return@LaunchedEffect
+        if (playbackFailed) return@LaunchedEffect
         // 确认框打开时不抢焦点：确认框自己的初始焦点机制负责
         if (confirmExit) return@LaunchedEffect
         // 等一帧，确保 focusProperties 的 canFocus 已生效
@@ -707,14 +696,7 @@ internal fun PlayerStage(
             ControlItem.SeekBack -> seekBy(-SEEK_BUTTON_MS)
             ControlItem.SeekFwd -> seekBy(SEEK_BUTTON_MS)
 
-            // 倍速（上控制条）：OK 循环切换档位，抽屉里不再重复
-            ControlItem.Speed -> {
-                val index = PLAYBACK_SPEEDS.indexOfFirst { it == speed }.coerceAtLeast(0)
-                speed = PLAYBACK_SPEEDS[(index + 1) % PLAYBACK_SPEEDS.size]
-                player.setPlaybackSpeed(speed)
-                // 跨片记忆：切档立即持久化
-                onSpeedChanged(speed)
-            }
+            ControlItem.Speed -> speedPickerVisible = true
 
             // 画面比例：OK 循环 适应 → 拉伸 → 裁剪
             ControlItem.Scale -> {
@@ -752,6 +734,11 @@ internal fun PlayerStage(
     // 由 backFocusTick 副作用等一帧后落焦点（见下方 LaunchedEffect）。
     fun handleBackKey(): Boolean {
         when {
+            skipFocused -> {
+                skipDismissed = true
+                runCatching { rootRequester.requestFocus() }
+            }
+
             // 浮钮聚焦时 Back = 收起浮钮（本集不再弹出；片尾仍有自动退出兜底），
             // 不弹退出确认
             nextEpisodeFocused -> {
@@ -842,6 +829,7 @@ internal fun PlayerStage(
                     controlsVisible = controlsVisible,
                     progressFocused = focusedItem == ControlItem.Progress,
                     confirmVisible = confirmExit,
+                    overlayActionFocused = skipFocused || playbackFailed,
                 )
 
                 // 可见态下任何按键都重置自动隐藏计时（包括交给焦点系统处理的那些）
@@ -936,6 +924,7 @@ internal fun PlayerStage(
             SubtitleLayer(
                 text = cueText,
                 sizeLevel = subtitleSize,
+                weightLevel = subtitleWeight,
                 offsetLevel = subtitleOffsetLevel,
                 controlsShown = controlsVisible || peeked,
                 bottomBarHeight = bottomBarHeight,
@@ -1022,13 +1011,15 @@ internal fun PlayerStage(
                 onClick = {
                     target?.let { player.seekTo(it.seekToMs) }
                     skipDismissed = true
+                    runCatching { rootRequester.requestFocus() }
                 },
                 modifier = Modifier
                     .padding(
                         end = NovumDimens.SafeHorizontal,
                         bottom = SKIP_BUTTON_BOTTOM_PAD,
                     )
-                    .focusRequester(skipRequester),
+                    .focusRequester(skipRequester)
+                    .onFocusChanged { skipFocused = it.isFocused },
             ) {
                 Text(
                     text = stringResource(
@@ -1113,18 +1104,20 @@ internal fun PlayerStage(
                 onSubtitleDelayChanged = onSubtitleDelayChanged,
                 subtitleSize = subtitleSize,
                 onSubtitleSizeChanged = onSubtitleSizeChanged,
+                subtitleWeight = subtitleWeight,
+                onSubtitleWeightChanged = onSubtitleWeightChanged,
                 subtitleOffsetLevel = subtitleOffsetLevel,
                 onSubtitleOffsetLevelChanged = onSubtitleOffsetLevelChanged,
                 danmu = danmu,
                 danmuActions = danmuActions,
                 danmuSearchPrefill = danmuSearchPrefill,
                 onSelectAudio = { option ->
-                    selectTrack(player, option, isText = false)
                     onRememberTrack(option, false)
+                    selectTrack(player, option, isText = false)
                 },
                 onSelectText = { option ->
-                    selectTrack(player, option, isText = true)
                     onRememberTrack(option, true)
+                    selectTrack(player, option, isText = true)
                 },
                 onTogglePassthrough = {
                     drawerVisible = false
@@ -1178,6 +1171,24 @@ internal fun PlayerStage(
             )
         }
 
+        if (speedPickerVisible) {
+            NovumOptionListDialog(
+                title = stringResource(R.string.player_info_speed),
+                options = PLAYBACK_SPEEDS.map(::speedLabel),
+                selectedIndex = PLAYBACK_SPEEDS.indexOf(speed).takeIf { it >= 0 },
+                awaitKeyRelease = true,
+                onSelect = { index ->
+                    PLAYBACK_SPEEDS.getOrNull(index)?.let { selectedSpeed ->
+                        speed = selectedSpeed
+                        player.setPlaybackSpeed(selectedSpeed)
+                        onSpeedChanged(selectedSpeed)
+                    }
+                    speedPickerVisible = false
+                },
+                onDismiss = { speedPickerVisible = false },
+            )
+        }
+
         if (confirmExit) {
             NovumConfirmDialog(
                 title = stringResource(R.string.player_exit_title),
@@ -1212,7 +1223,10 @@ internal fun PlayerStage(
                     )
                     Spacer(modifier = Modifier.height(20.dp))
                     val retryFocus = remember { FocusRequester() }
-                    LaunchedEffect(plan.url) { runCatching { retryFocus.requestFocus() } }
+                    LaunchedEffect(plan.url) {
+                        withFrameNanos { }
+                        runCatching { retryFocus.requestFocus() }
+                    }
                     NovumButton(
                         onClick = {
                             playbackFailed = false

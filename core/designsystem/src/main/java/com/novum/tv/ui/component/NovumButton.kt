@@ -19,6 +19,8 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.Dp
 import androidx.tv.material3.LocalContentColor
 import com.novum.tv.ui.theme.NovumDimens
 import com.novum.tv.ui.theme.NovumFocusTokens
@@ -28,7 +30,7 @@ import com.novum.tv.ui.theme.NovumShapes
 /**
  * 品牌按钮：统一 TV 按钮的四态配色。
  *
- * 文本按钮使用 [NovumType.ButtonLg]、[NovumDimens.ButtonHeight] 和 [NovumDimens.ButtonWidth]；首页双 CTA 与详情页操作按钮共享规格。
+ * 首页与详情文本按钮使用 [NovumType.ButtonLg]、[NovumDimens.ButtonHeight] 和 [novumActionButtonWidth]，跨页面保持同宽。
  * 按钮常态使用 [NovumPalette.Glass]，聚焦白底黑字，按压态浅灰，禁用态降低亮度。
  *
  * 定宽按钮必须传 [centerContent]=true；不定宽按钮不能启用，否则会撑满整行。
@@ -117,3 +119,8 @@ private fun RowScope.InnerContent(
 
 /** 胶囊形按钮与全站按钮保持一致。 */
 private val BUTTON_MIN_HEIGHT = NovumDimens.ButtonHeight
+
+/** 首页、详情及其骨架共用尺寸；大字体时整组按钮按同一比例放宽。 */
+@Composable
+fun novumActionButtonWidth(): Dp =
+    NovumDimens.ActionButtonWidth * LocalDensity.current.fontScale.coerceAtLeast(1f)

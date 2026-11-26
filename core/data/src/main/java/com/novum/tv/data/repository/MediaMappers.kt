@@ -169,7 +169,7 @@ private fun formatBitrate(bps: Long): String = when {
     else -> "$bps bps"
 }
 
-    /** People[] → 演职员模型（详情 cast 与本地人物索引共用）。 */
+    /** People[] → 演职员模型。 */
     internal fun ItemDto.toCastMembers(server: String, strings: MediaStrings): List<CastMember> =
         People.toCastMembers(server, strings)
 
@@ -241,7 +241,7 @@ private fun formatBitrate(bps: Long): String = when {
             ?: ImageTags[IMAGE_TAG_PRIMARY]?.takeIf { it.isNotBlank() }
 
     /**
-     * 人物 → 搜索命中/本地索引引用。
+     * 服务器人物结果 → UI 使用的人物引用。
      *
      * 缺 id（无法导航到人物页）或缺姓名（无法展示/匹配）时返回 null。
      *

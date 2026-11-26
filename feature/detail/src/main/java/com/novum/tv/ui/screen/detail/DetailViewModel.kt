@@ -25,6 +25,8 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -32,6 +34,7 @@ import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
@@ -229,8 +232,14 @@ class DetailViewModel @Inject constructor(
     private val _state = MutableStateFlow(DetailUiState())
     val state: StateFlow<DetailUiState> = _state.asStateFlow()
 
+    private var loadJob: Job? = null
+    private var seasonsJob: Job? = null
+    private var refreshJob: Job? = null
+    private var hasResumed = false
+
     /** 分集加载任务：连续切季时取消旧请求，避免旧季结果覆盖新季。 */
     private var episodesJob: Job? = null
+    private var episodesEpoch = 0
 
     /** 季级演职员任务：与分集同步切换，旧季演员不能覆盖新季。 */
     private var seasonCastJob: Job? = null
@@ -270,7 +279,7 @@ class DetailViewModel @Inject constructor(
         versionJob = viewModelScope.launch {
             val id = runCatchingSuspend { playbackPrefs.get(targetId)?.mediaSourceId }.getOrNull()
             // 读取期间用户可能已经选了新版本：代次变化就不回写旧值
-            if (epoch == versionEpoch) {
+            if (isActive && epoch == versionEpoch) {
                 _state.update { it.copy(rememberedMediaSourceId = id) }
             }
         }
@@ -295,16 +304,21 @@ class DetailViewModel @Inject constructor(
 
     /** 首次加载或错误态重试。 */
     fun load() {
+        loadJob?.cancel()
+        seasonsJob?.cancel()
+        refreshJob?.cancel()
         episodesJob?.cancel()
         seasonCastJob?.cancel()
         versionJob?.cancel()
         versionEpoch++
-        viewModelScope.launch {
+        loadJob = viewModelScope.launch {
             _state.update {
                 it.copy(
                     detail = UiState.Loading,
                     seasons = emptyList(),
                     episodes = emptyList(),
+                    selectedSeasonId = null,
+                    currentEpisodeId = null,
                     seasonCast = null,
                     rememberedMediaSourceId = null,
                     episodesFailed = false,
@@ -313,11 +327,13 @@ class DetailViewModel @Inject constructor(
                     episodeContextFromEntry = false,
                 )
             }
-            when (val result = repository.detail(itemId)) {
+            val result = repository.detail(itemId)
+            if (!isActive) return@launch
+            when (result) {
                 is NovumResult.Success -> {
                     _state.update { it.copy(detail = UiState.Success(result.value)) }
                     if (result.value.isSeries) {
-                        loadSeasons()
+                        launchSeasons()
                     } else {
                         // 电影没有分集链路，详情到达即可按条目 id 读版本记忆
                         refreshRememberedVersion()
@@ -331,8 +347,71 @@ class DetailViewModel @Inject constructor(
         }
     }
 
+    /** 首次 RESUME 已由 init 加载；离开详情再返回时静默同步观看状态。 */
+    fun onResume() {
+        if (hasResumed) refreshWatchState()
+        hasResumed = true
+    }
+
+    /** 保留页面、选季/选集与收藏，只同步播放后可能变化的观看数据。 */
+    fun refreshWatchState() {
+        val snapshot = _state.value
+        val data = snapshot.data ?: return
+        if (snapshot.playedBusy) return
+        val seasonId = snapshot.selectedSeasonId
+        val episodeRequest = episodesEpoch
+        val rememberedVersionEpoch = versionEpoch
+        refreshJob?.cancel()
+        refreshJob = viewModelScope.launch {
+            coroutineScope {
+                val detail = async { repository.detail(itemId) }
+                val seasons = if (data.isSeries) async { repository.seasons(itemId) } else null
+                val episodes = if (data.isSeries && seasonId != null) {
+                    async { repository.episodes(itemId, seasonId) }
+                } else {
+                    null
+                }
+                val freshDetail = detail.await()
+                val freshSeasons = seasons?.await()
+                val freshEpisodes = episodes?.await()
+                ensureActive()
+                _state.update { current ->
+                    val currentData = current.data ?: return@update current
+                    val refreshedEpisodes = freshEpisodes
+                        ?.takeIf { current.selectedSeasonId == seasonId && episodesEpoch == episodeRequest }
+                        ?.valueOrNull()
+                    current.copy(
+                        // 收藏可能在刷新期间完成，不能整份回写服务端旧快照。
+                        detail = if (freshDetail is NovumResult.Success) {
+                            UiState.Success(
+                                currentData.copy(
+                                    played = freshDetail.value.played,
+                                    resumePositionMs = freshDetail.value.resumePositionMs,
+                                    unplayedCount = freshDetail.value.unplayedCount,
+                                    childCount = freshDetail.value.childCount,
+                                ),
+                            )
+                        } else {
+                            current.detail
+                        },
+                        seasons = freshSeasons?.valueOrNull() ?: current.seasons,
+                        episodes = refreshedEpisodes ?: current.episodes,
+                        episodesFailed = if (refreshedEpisodes != null) false else current.episodesFailed,
+                    )
+                }
+            }
+            if (rememberedVersionEpoch == versionEpoch) refreshRememberedVersion()
+        }
+    }
+
+    private fun launchSeasons() {
+        seasonsJob?.cancel()
+        seasonsJob = viewModelScope.launch { loadSeasons() }
+    }
+
     /** 取消旧分集请求后再加载：连续切季只保留最后一次的结果。 */
     private fun launchEpisodes(seasonId: String, nextUpHint: Episode? = null) {
+        episodesEpoch++
         episodesJob?.cancel()
         episodesJob = viewModelScope.launch { loadEpisodes(seasonId, nextUpHint) }
     }
@@ -350,7 +429,7 @@ class DetailViewModel @Inject constructor(
                 is NovumResult.Success -> result.value.ifEmpty { null }
                 is NovumResult.Failure -> null
             }
-            if (_state.value.selectedSeasonId == seasonId) {
+            if (isActive && _state.value.selectedSeasonId == seasonId) {
                 _state.update { it.copy(seasonCast = cast) }
             }
         }
@@ -411,17 +490,15 @@ class DetailViewModel @Inject constructor(
      */
     fun retryEpisodes() {
         if (_state.value.data?.isSeries != true) return
-        viewModelScope.launch {
-            _state.update { it.copy(episodesFailed = false) }
-            val snapshot = _state.value
-            val seasonId = snapshot.selectedSeasonId
-            if (snapshot.seasons.isEmpty()) {
-                loadSeasons()
-            } else if (seasonId != null) {
-                launchEpisodes(seasonId)
-                // 分集重试顺带重拉季级演职员：上次静默失败时这里可恢复
-                launchSeasonCast(seasonId)
-            }
+        _state.update { it.copy(episodesFailed = false) }
+        val snapshot = _state.value
+        val seasonId = snapshot.selectedSeasonId
+        if (snapshot.seasons.isEmpty()) {
+            launchSeasons()
+        } else if (seasonId != null) {
+            launchEpisodes(seasonId)
+            // 分集重试顺带重拉季级演职员：上次静默失败时这里可恢复
+            launchSeasonCast(seasonId)
         }
     }
 
@@ -448,6 +525,7 @@ class DetailViewModel @Inject constructor(
     fun markSeasonPlayed(played: Boolean) {
         val episodes = _state.value.episodes
         if (episodes.isEmpty() || _state.value.playedBusy) return
+        refreshJob?.cancel()
         viewModelScope.launch {
             _state.update { it.copy(playedBusy = true, playedFailed = false) }
             var failures = 0
@@ -503,10 +581,21 @@ class DetailViewModel @Inject constructor(
             // 剧集级态不本地猜（只标了本季）：重拉详情拿服务端聚合结果
             when (val fresh = repository.detail(itemId)) {
                 is NovumResult.Success -> _state.update { current ->
-                    if (current.data == null) {
+                    val data = current.data
+                    if (data == null) {
                         current.copy(playedBusy = false)
                     } else {
-                        applyResult(current, UiState.Success(fresh.value))
+                        // 只合并观看字段：请求期间可能已经完成收藏操作，不能用旧快照覆盖。
+                        applyResult(
+                            current,
+                            UiState.Success(
+                                data.copy(
+                                    played = fresh.value.played,
+                                    unplayedCount = fresh.value.unplayedCount,
+                                    resumePositionMs = fresh.value.resumePositionMs,
+                                ),
+                            ),
+                        )
                     }
                 }
 
@@ -582,6 +671,7 @@ class DetailViewModel @Inject constructor(
         val currentPlayed = targetEpisode?.played ?: item.played
         val targetId = episodeId ?: item.id
         val target = !currentPlayed
+        refreshJob?.cancel()
         viewModelScope.launch {
             _state.update { it.copy(playedBusy = true, playedFailed = false) }
             when (val result = repository.setPlayed(targetId, target)) {
@@ -591,7 +681,8 @@ class DetailViewModel @Inject constructor(
                             // 单集：更新该集，并同步其所在季的未看计数——
                             // 否则「已看 x/y 集」在标记后不变（剧集已看标记的核心 bug）。
                             current.copy(
-                                playedBusy = false,
+                                // 剧集聚合也属于本次标记，完成前不能放行新标记。
+                                playedBusy = item.isSeries,
                                 episodes = current.episodes.map { ep ->
                                     if (ep.id == episodeId) {
                                         ep.copy(
@@ -631,9 +722,11 @@ class DetailViewModel @Inject constructor(
                             )
                         }
                     }
-                    // 剧集单集标记：重拉详情拿服务端聚合的剧集级 Played，更新信息区
-                    // 的剧集已看态（只取 played 字段，不覆盖本地刚更新的其它状态）。
-                    if (item.isSeries && targetEpisode != null) refreshSeriesPlayedFlag()
+                    // 剧集单集标记：同步服务端聚合的已看态与未看计数，保留其它本地状态。
+                    if (item.isSeries && targetEpisode != null) {
+                        refreshSeriesWatchState()
+                        _state.update { it.copy(playedBusy = false) }
+                    }
                     toast.show(
                         appContext.getString(
                             if (result.value) R.string.detail_played_toast else R.string.detail_unplayed_toast,
@@ -649,19 +742,27 @@ class DetailViewModel @Inject constructor(
     }
 
     /**
-     * 重拉详情，仅把服务端聚合的剧集级 `played` 写回当前详情。
+     * 重拉详情，仅把服务端聚合的剧集级观看状态写回当前详情。
      *
      * 单集标记后 series.Played 由服务端按全部季聚合（本季全看完不一定翻
      * true，要看所有季），客户端不本地猜；拉取失败则保持现状，下次进页刷新。
      */
-    private suspend fun refreshSeriesPlayedFlag() {
+    private suspend fun refreshSeriesWatchState() {
         when (val fresh = repository.detail(itemId)) {
             is NovumResult.Success -> _state.update { current ->
                 val data = current.data
                 if (data == null) {
                     current
                 } else {
-                    current.copy(detail = UiState.Success(data.copy(played = fresh.value.played)))
+                    current.copy(
+                        detail = UiState.Success(
+                            data.copy(
+                                played = fresh.value.played,
+                                unplayedCount = fresh.value.unplayedCount,
+                                resumePositionMs = fresh.value.resumePositionMs,
+                            ),
+                        ),
+                    )
                 }
             }
             else -> Unit
@@ -691,12 +792,15 @@ class DetailViewModel @Inject constructor(
         // 提示处理，默认季与页面回落到原有逻辑，不因单点查询失败而变样。
         coroutineScope {
             val hintDeferred = async { repository.seriesNextUp(itemId) }
-            when (val result = repository.seasons(itemId)) {
+            val result = repository.seasons(itemId)
+            ensureActive()
+            when (result) {
                 is NovumResult.Success -> {
                     val hint = when (val r = hintDeferred.await()) {
                         is NovumResult.Success -> r.value
                         is NovumResult.Failure -> null
                     }
+                    ensureActive()
                     val seasons = result.value
                     // 默认季：优先 NextUp 集所在季（用户需求「进入
                     // 详情页显示当前集/新一集的状态」）。先按 **季 id** 匹配——
@@ -728,7 +832,10 @@ class DetailViewModel @Inject constructor(
     }
 
     private suspend fun loadEpisodes(seasonId: String, nextUpHint: Episode? = null) {
-        when (val result = repository.episodes(seriesId = itemId, seasonId = seasonId)) {
+        val result = repository.episodes(seriesId = itemId, seasonId = seasonId)
+        currentCoroutineContext().ensureActive()
+        if (_state.value.selectedSeasonId != seasonId) return
+        when (result) {
             is NovumResult.Success -> {
                 _state.update {
                     // 提示集就在本季 → 记为「当前集」，页面据此初始化信息块

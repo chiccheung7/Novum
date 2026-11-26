@@ -26,6 +26,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -44,6 +46,7 @@ import com.novum.tv.ui.theme.NovumType
  *
  * @param text 当前字幕文本，空串时整层不渲染。
  * @param sizeLevel 字号档位（1 小 – 4 超大）。
+ * @param weightLevel 粗细档位（0 细、1 标准、2 粗）。
  * @param offsetLevel 高度档位：0 居中，1/2 上移，3/4 下移。
  * @param controlsShown 控制条是否可见。
  * @param bottomBarHeight 视频比例换算出的下黑边高度；0 表示无黑边（满屏画面）。
@@ -57,6 +60,7 @@ internal fun SubtitleLayer(
     controlsShown: Boolean,
     bottomBarHeight: Dp,
     modifier: Modifier = Modifier,
+    weightLevel: Int = 1,
 ) {
     if (text.isEmpty()) return
     // 高度档位：0=按黑边自适应，1/2 上移，3/4 下移（负档在满屏画面触底钳制）
@@ -93,6 +97,13 @@ internal fun SubtitleLayer(
     Text(
         text = text,
         style = NovumType.Section.copy(
+            // 系统无衬线字体含轻/常规/粗字重，避免 Inter 只有 400–600 时细档回落为标准。
+            fontFamily = FontFamily.SansSerif,
+            fontWeight = when (weightLevel.coerceIn(0, 2)) {
+                0 -> FontWeight.Light
+                2 -> FontWeight.Bold
+                else -> FontWeight.Normal
+            },
             fontSize = fontSize,
             lineHeight = fontSize * 1.35f,
         ),

@@ -10,10 +10,10 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.focus.FocusRequester
-import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
@@ -60,8 +60,23 @@ fun GridScreen(
     val totalCount by viewModel.totalCount.collectAsStateWithLifecycle()
     val sortOption by viewModel.sortOption.collectAsStateWithLifecycle()
     val sortDescending by viewModel.sortDescending.collectAsStateWithLifecycle()
+    val sortFocus = remember { SortOption.entries.associateWith { FocusRequester() } }
+    var sortedInPage by remember { mutableStateOf(false) }
+    var restoreSortFocus by remember { mutableStateOf<SortOption?>(null) }
 
     LaunchedEffect(libraryId) { viewModel.start(GridSource.Library(libraryId)) }
+    // 排序会销毁旧网格的header，恢复任务必须归页面而不是旧芯片组合持有。
+    LaunchedEffect(state, restoreSortFocus) {
+        val option = restoreSortFocus ?: return@LaunchedEffect
+        if (state !is UiState.Success) return@LaunchedEffect
+        repeat(FOCUS_RESTORE_FRAMES) {
+            withFrameNanos { }
+            if (runCatching { sortFocus.getValue(option).requestFocus() }.getOrDefault(false)) {
+                restoreSortFocus = null
+                return@LaunchedEffect
+            }
+        }
+    }
 
     // 宿主全宽，标题和排序条使用 68dp 对齐线，网格自行管理 contentPadding。
     // 页头随内容滚动；底部安全区仅由网格持有，避免双重留白。
@@ -95,24 +110,23 @@ fun GridScreen(
             SortBar(
                 sortOption = sortOption,
                 sortDescending = sortDescending,
-                onSortOption = viewModel::setSortOption,
+                onSortOption = { option ->
+                    sortedInPage = true
+                    restoreSortFocus = option
+                    viewModel.setSortOption(option)
+                },
+                focusRequesters = sortFocus,
                 // 网格 contentPadding 已含 68dp，header 内不再重复加
                 applyHorizontalPadding = false,
             )
         }
 
         when (val current = state) {
-            UiState.Loading -> Column(
-                modifier = Modifier.padding(horizontal = NovumDimens.SafeHorizontal),
-                verticalArrangement = Arrangement.spacedBy(NovumDimens.Gutter),
-            ) {
-                GridHeader()
-                NovumStateView(
-                    state = UiState.Loading,
-                    onRetry = {},
-                    loading = { NovumSkeletonPosterGrid() },
-                )
-            }
+            UiState.Loading -> NovumSkeletonPosterGrid(
+                header = {
+                    Column(verticalArrangement = Arrangement.spacedBy(NovumDimens.Gutter)) { GridHeader() }
+                },
+            )
 
             is UiState.Empty -> NovumStateView(
                 state = current,
@@ -126,6 +140,7 @@ fun GridScreen(
                 items = current.data,
                 onOpenDetail = onOpenDetail,
                 onLoadMore = viewModel::loadMore,
+                focusOnEnter = !sortedInPage,
                 header = {
                     Column(verticalArrangement = Arrangement.spacedBy(NovumDimens.Gutter)) {
                         GridHeader()
@@ -153,6 +168,7 @@ internal fun SortBar(
      * 网格 contentPadding 已包含安全边距，重复添加会让排序标签缩进过多。
      */
     applyHorizontalPadding: Boolean = true,
+    focusRequesters: Map<SortOption, FocusRequester>? = null,
 ) {
     Row(
         modifier = Modifier
@@ -175,25 +191,12 @@ internal fun SortBar(
             } else {
                 ""
             }
-            // 每枚芯片持有稳定 FocusRequester。排序异步重查会重建网格和芯片节点，
-            // 因此按下后逐帧重试索焦，任一成功即停止。
-            val chipFocus = remember(option) { FocusRequester() }
-            val scope = rememberCoroutineScope()
+            val chipFocus = focusRequesters?.get(option) ?: remember(option) { FocusRequester() }
             NovumChip(
                 label = chipLabel(option) + arrow,
                 selected = selected,
                 focusRequester = chipFocus,
-                onClick = {
-                    onSortOption(option)
-                    scope.launch {
-                        repeat(FOCUS_RESTORE_FRAMES) {
-                            withFrameNanos { }
-                            if (runCatching { chipFocus.requestFocus() }.isSuccess) {
-                                return@launch
-                            }
-                        }
-                    }
-                },
+                onClick = { onSortOption(option) },
             )
         }
     }

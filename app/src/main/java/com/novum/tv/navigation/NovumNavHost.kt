@@ -13,6 +13,7 @@ import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.IntOffset
 import androidx.navigation.NavBackStackEntry
@@ -112,6 +113,7 @@ fun NovumNavHost(
             popExitTransition = { tabExitTransition(this) },
         ) {
             LibrariesScreen(
+                modifier = Modifier.fillMaxSize(),
                 onOpenLibrary = { id, name -> navController.navigate(GridRoute(id, name)) },
             )
         }
@@ -175,6 +177,7 @@ fun NovumNavHost(
             popExitTransition = { tabExitTransition(this) },
         ) {
             FavoritesScreen(
+                modifier = Modifier.fillMaxSize(),
                 onOpenDetail = { itemId -> navController.navigate(DetailRoute(itemId)) },
             )
         }
@@ -184,6 +187,7 @@ fun NovumNavHost(
             popExitTransition = { tabExitTransition(this) },
         ) {
             SearchScreen(
+                modifier = Modifier.fillMaxSize(),
                 onOpenDetail = { itemId -> navController.navigate(DetailRoute(itemId)) },
                 onOpenPerson = { personId, personName ->
                     navController.navigate(PersonRoute(personId, personName))
@@ -204,6 +208,7 @@ fun NovumNavHost(
             popExitTransition = { tabExitTransition(this) },
         ) {
             SettingsScreen(
+                modifier = Modifier.fillMaxSize(),
                 onBack = { navController.popBackStack() },
                 onLoggedOut = {
                     // 退出后清空回退栈，避免返回键回到已失效的登录态页面

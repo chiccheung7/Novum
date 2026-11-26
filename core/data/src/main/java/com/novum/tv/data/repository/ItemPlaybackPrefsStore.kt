@@ -17,13 +17,15 @@ import kotlinx.serialization.json.Json
  * 轨道用「标题 + 语言」双字段定位而非索引：MediaStreams 顺序在会话间
  * 稳定（同一媒体文件），但跨版本/换线后索引不可靠，展示名才是稳定锚。
  *
- * 存储：单 JSON 文件 + Mutex 串行读改写（同 [PersonIndexStore] 模式）；
+ * 存储：单 JSON 文件 + Mutex 串行读改写；
  * 写失败静默（记忆丢了不伤功能，下次再记即可）。
  */
 class ItemPlaybackPrefsStore(
     private val storeFile: File,
     /** 文件 IO 调度器；测试可注入测试调度器以便统一控制协程执行。 */
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
+    /** 生产实例必须注入会话命名空间；null 仅保留独立存储的旧构造方式。 */
+    private val namespaceProvider: (() -> String?)? = null,
 ) {
 
     @Serializable
@@ -61,8 +63,9 @@ class ItemPlaybackPrefsStore(
     private var cache: MutableMap<String, ItemPrefs>? = null
 
     /** 读取某条目的记忆偏好；无记录（或读盘失败）返回 null。 */
-    suspend fun get(itemId: String): ItemPrefs? = mutex.withLock {
-        loadLocked()?.get(itemId)
+    suspend fun get(itemId: String): ItemPrefs? {
+        val key = storageKey(itemId) ?: return null
+        return mutex.withLock { loadLocked()?.get(key) }
     }
 
     /**
@@ -84,20 +87,31 @@ class ItemPlaybackPrefsStore(
         clearSubtitleTrack: Boolean = false,
         clearAudioTrack: Boolean = false,
         clearDanmuEpisodeId: Boolean = false,
-    ) = mutex.withLock {
-        // 读盘失败就放弃本次写入：拿空表落盘会把文件里**其它条目**的记忆整片抹掉，
-        // 用户下次播放会发现所有手动轨/版本记忆都没了。宁可这次不记。
-        val map = loadLocked() ?: return@withLock
-        val old = map[itemId] ?: ItemPrefs(itemId = itemId)
-        map[itemId] = old.copy(
-            mediaSourceId = if (clearMediaSourceId) null else mediaSourceId ?: old.mediaSourceId,
-            subtitleTrack = if (clearSubtitleTrack) null else subtitleTrack ?: old.subtitleTrack,
-            audioTrack = if (clearAudioTrack) null else audioTrack ?: old.audioTrack,
-            subtitleDisabled = subtitleDisabled ?: old.subtitleDisabled,
-            danmuEpisodeId = if (clearDanmuEpisodeId) null else danmuEpisodeId ?: old.danmuEpisodeId,
-            danmuOffsetMs = danmuOffsetMs ?: old.danmuOffsetMs,
-        )
-        persistLocked(map)
+    ) {
+        // 挂起等待锁或 IO 前固定账号，切会话不能把旧操作写进新账号。
+        val key = storageKey(itemId) ?: return
+        mutex.withLock {
+            // 读盘失败就放弃本次写入：拿空表落盘会把文件里**其它条目**的记忆整片抹掉，
+            // 用户下次播放会发现所有手动轨/版本记忆都没了。宁可这次不记。
+            val map = loadLocked() ?: return@withLock
+            val old = map[key] ?: ItemPrefs(itemId = itemId)
+            map[key] = old.copy(
+                mediaSourceId = if (clearMediaSourceId) null else mediaSourceId ?: old.mediaSourceId,
+                subtitleTrack = if (clearSubtitleTrack) null else subtitleTrack ?: old.subtitleTrack,
+                audioTrack = if (clearAudioTrack) null else audioTrack ?: old.audioTrack,
+                subtitleDisabled = subtitleDisabled ?: old.subtitleDisabled,
+                danmuEpisodeId = if (clearDanmuEpisodeId) null else danmuEpisodeId ?: old.danmuEpisodeId,
+                danmuOffsetMs = danmuOffsetMs ?: old.danmuOffsetMs,
+            )
+            persistLocked(map)
+        }
+    }
+
+    private fun storageKey(itemId: String): String? {
+        val provider = namespaceProvider ?: return itemId
+        val namespace = provider()?.takeIf { it.isNotBlank() } ?: return null
+        // 旧裸 itemId 无服务器/用户归属，保留但不向任何账号兜底或自动迁移。
+        return "v2:$namespace:$itemId"
     }
 
     /**

@@ -5,12 +5,14 @@ import androidx.test.core.app.ApplicationProvider
 import app.cash.turbine.test
 import com.novum.tv.core.state.UiState
 import com.novum.tv.data.settings.AppSettings
+import com.novum.tv.model.DanmuArea
 import com.novum.tv.testing.MainDispatcherRule
 import com.novum.tv.testing.RecordingToastSink
 import com.novum.tv.testing.NoopNovumLogger
 import com.novum.tv.testing.FakeSettingsRepository
 import com.novum.tv.testing.NoopAuthRepository
-import com.novum.tv.testing.NoopSessionStore
+import com.novum.tv.data.remote.emby.SessionHolder
+import com.novum.tv.data.session.Session
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
@@ -46,6 +48,22 @@ class SettingsViewModelTest {
             assertTrue(success.data.audioPassthrough)
             cancelAndIgnoreRemainingEvents()
         }
+    }
+
+    @Test
+    fun accountLabelUsesTheActiveSessionWithoutRememberedCredentials() = runTest {
+        val holder = SessionHolder().apply {
+            update(Session("https://media.example", "test-token", "user-1", "Current user", "", "device-1"))
+        }
+        val (viewModel, _) = viewModel(FakeSettingsRepository(), holder = holder)
+
+        assertEquals("Current user", viewModel.sessionLabel.value)
+    }
+
+    @Test
+    fun loggedOutSessionHasNoAccountLabel() = runTest {
+        val (viewModel, _) = viewModel(FakeSettingsRepository())
+        assertEquals("", viewModel.sessionLabel.value)
     }
 
     @Test
@@ -130,6 +148,25 @@ class SettingsViewModelTest {
         }
     }
 
+    @Test
+    fun cyclesAllThreeDanmuRegionsAndWritesTopRegionByLevel() = runTest {
+        val repository = FakeSettingsRepository(AppSettings(danmuArea = DanmuArea.Full))
+        val (viewModel, _) = viewModel(repository)
+
+        viewModel.uiState.test {
+            awaitSuccess()
+            viewModel.cycleDanmuArea()
+            assertEquals(DanmuArea.Top, awaitSuccess().data.danmuArea)
+            viewModel.cycleDanmuArea()
+            assertEquals(DanmuArea.Half, awaitSuccess().data.danmuArea)
+            viewModel.setDanmuAreaLevel(2)
+            assertEquals(DanmuArea.Full, awaitSuccess().data.danmuArea)
+            viewModel.setDanmuAreaLevel(0)
+            assertEquals(DanmuArea.Top, awaitSuccess().data.danmuArea)
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
+
     /** 「界面大小」按档位表推进并回绕（85 → 100 → 115 → 130 → 150 → 85）。 */
     @Test
     fun cyclesUiScaleThroughSteps() = runTest {
@@ -151,11 +188,12 @@ class SettingsViewModelTest {
 private fun viewModel(
     repository: FakeSettingsRepository,
     toast: RecordingToastSink = RecordingToastSink(),
+    holder: SessionHolder = SessionHolder(),
 ): Pair<SettingsViewModel, RecordingToastSink> {
     val vm = SettingsViewModel(
         settingsRepository = repository,
         authRepository = NoopAuthRepository,
-        sessionStore = NoopSessionStore,
+        sessionHolder = holder,
         toast = toast,
         logger = NoopNovumLogger,
         appContext = ApplicationProvider.getApplicationContext<Context>(),

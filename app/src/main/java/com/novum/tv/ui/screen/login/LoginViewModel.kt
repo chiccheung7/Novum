@@ -29,8 +29,8 @@ data class LoginUiState(
     val server: String = "",
     val username: String = "",
     val password: String = "",
-    /** 是否记住登录（保存 token 下次自动登录）；默认开。 */
-    val remember: Boolean = true,
+    /** 是否记住凭证（安全保存 token 与密码）；首次默认关。 */
+    val remember: Boolean = false,
     val loading: Boolean = false,
     val networkError: NovumError? = null,
     val missingField: LoginField? = null,
@@ -56,39 +56,59 @@ class LoginViewModel @Inject constructor(
     private val _state = MutableStateFlow(LoginUiState())
     val state: StateFlow<LoginUiState> = _state.asStateFlow()
 
+    private var serverEdited = false
+    private var usernameEdited = false
+    private var passwordEdited = false
+    private var rememberEdited = false
+
     init {
         // 预填上次登录的服务器地址：电视上用遥控器重输域名成本很高
         viewModelScope.launch {
             val lastServer = runCatchingSuspend { authRepository.lastServer() }.getOrDefault("")
             val lastUser = runCatchingSuspend { authRepository.lastUsername() }.getOrDefault("")
+            val lastPassword = runCatchingSuspend { authRepository.lastPassword() }.getOrNull()
+            val rememberCredentials = runCatchingSuspend {
+                authRepository.shouldRememberCredentials()
+            }.getOrDefault(false)
             _state.update { current ->
-                // 只读空字段：DataStore 读取慢于遥控器输入时，不能覆盖用户已经敲下的内容
+                // Prefill only untouched fields. An explicitly cleared field is still edited;
+                // credentials saved for the old identity must not follow a newly entered server.
+                val remember = if (rememberEdited) current.remember else rememberCredentials
                 current.copy(
-                    server = current.server.takeIf { it.isNotBlank() }
-                        ?: lastServer.takeIf { it.isNotBlank() }.orEmpty(),
-                    username = current.username.takeIf { it.isNotBlank() }
-                        ?: lastUser.takeIf { it.isNotBlank() }.orEmpty(),
+                    server = if (serverEdited) current.server else lastServer,
+                    username = if (serverEdited || usernameEdited) current.username else lastUser,
+                    password = if (serverEdited || usernameEdited || passwordEdited) current.password
+                        else if (remember) lastPassword.orEmpty() else "",
+                    remember = remember,
                 )
             }
         }
     }
 
     /** 切换「记住登录」。 */
-    fun onRememberChange(value: Boolean) = _state.update { it.copy(remember = value) }
+    fun onRememberChange(value: Boolean) {
+        rememberEdited = true
+        _state.update { it.copy(remember = value) }
+        // Unchecking is immediate: stored token/password are deleted while form values stay filled.
+        viewModelScope.launch { runCatchingSuspend { authRepository.setRememberCredentials(value) } }
+    }
 
     /** 服务器地址变化。 */
-    fun onServerChange(value: String) = _state.update {
-        it.copy(server = value, missingField = null, networkError = null)
+    fun onServerChange(value: String) {
+        serverEdited = true
+        _state.update { it.copy(server = value, missingField = null, networkError = null) }
     }
 
     /** 用户名变化。 */
-    fun onUsernameChange(value: String) = _state.update {
-        it.copy(username = value, missingField = null, networkError = null)
+    fun onUsernameChange(value: String) {
+        usernameEdited = true
+        _state.update { it.copy(username = value, missingField = null, networkError = null) }
     }
 
     /** 密码变化。 */
-    fun onPasswordChange(value: String) = _state.update {
-        it.copy(password = value, missingField = null, networkError = null)
+    fun onPasswordChange(value: String) {
+        passwordEdited = true
+        _state.update { it.copy(password = value, missingField = null, networkError = null) }
     }
 
     /** 提交登录。 */

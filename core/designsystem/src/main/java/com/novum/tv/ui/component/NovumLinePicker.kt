@@ -2,6 +2,8 @@ package com.novum.tv.ui.component
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -65,7 +67,8 @@ fun NovumLinePickerDialog(
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .background(NovumPalette.Scrim.copy(alpha = LINE_PICKER_SCRIM_ALPHA)),
+                .background(NovumPalette.Scrim.copy(alpha = LINE_PICKER_SCRIM_ALPHA))
+                .padding(vertical = NovumDimens.SafeVertical),
             contentAlignment = Alignment.Center,
         ) {
             NovumLinePickerPanel(
@@ -89,9 +92,14 @@ fun NovumLinePickerPanel(
     failed: Boolean,
 ) {
     val firstRowFocus = remember { FocusRequester() }
+    val currentUrl = lines?.let { available ->
+        pinnedUrl?.takeIf { pinned -> available.any { it.baseUrl == pinned } }
+            ?: available.minByOrNull { it.latencyMs }?.baseUrl
+    }
 
-    LaunchedEffect(Unit) {
-        // 等一帧让可聚焦行挂上焦点树；列表为空（加载/失败态）时无行可焦
+    LaunchedEffect(loading, failed, currentUrl) {
+        if (loading || failed || currentUrl == null) return@LaunchedEffect
+        // 加载完成后再抓焦；保存的线路已不在列表时回落到最快的可用线路。
         withFrameNanos { }
         runCatching { firstRowFocus.requestFocus() }
     }
@@ -100,7 +108,8 @@ fun NovumLinePickerPanel(
             .width(LINE_PICKER_PANEL_WIDTH)
             .clip(NovumShapes.Large)
             .background(NovumPalette.Surface)
-            .padding(vertical = 24.dp),
+            .padding(vertical = 24.dp)
+            .verticalScroll(rememberScrollState()),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(24.dp),
     ) {
@@ -140,8 +149,6 @@ fun NovumLinePickerPanel(
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 // 未锁定时默认选中延迟最低线路；锁定后选中锁定线路。
-                val currentUrl = pinnedUrl?.takeIf { it.isNotBlank() }
-                    ?: lines.minByOrNull { it.latencyMs }?.baseUrl
                 lines.forEach { line ->
                     val isCurrent = line.baseUrl == currentUrl
                     LineRow(

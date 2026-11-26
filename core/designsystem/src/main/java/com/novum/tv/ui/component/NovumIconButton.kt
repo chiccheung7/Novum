@@ -52,6 +52,8 @@ fun NovumIconButton(
     size: Dp = 64.dp,
     /** 图标颜色覆盖（收藏红心等语义色用）；null = 按状态明暗反转。 */
     tintOverride: Color? = null,
+    /** 未聚焦时的底色覆盖；首页浮层入口可用透明底避免在海报上形成硬块。 */
+    idleContainerColor: Color? = null,
 ) {
     var focused by remember { mutableStateOf(false) }
     // semantics lambda 里 receiver 的 contentDescription 属性会遮蔽同名参数，先取别名
@@ -67,6 +69,8 @@ fun NovumIconButton(
             .background(
                 when {
                     focused -> NovumPalette.Paper
+                    idleContainerColor != null -> idleContainerColor
+                    selected -> NovumPalette.RowSelected
                     enabled -> NovumPalette.Glass
                     else -> NovumPalette.GlassDisabled
                 },

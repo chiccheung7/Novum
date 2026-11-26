@@ -6,6 +6,7 @@ import java.util.concurrent.TimeUnit
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.serialization.json.Json
+import okhttp3.Call
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import retrofit2.Retrofit
@@ -21,6 +22,9 @@ interface EmbyApiProvider {
      * @param baseUrl 规范化后的地址（不含尾部斜杠）。
      */
     fun api(baseUrl: String): EmbyApi
+
+    /** Bind an operation to one captured session, including calls that have not started executing. */
+    fun api(baseUrl: String, session: SessionSnapshot): EmbyApi = api(baseUrl)
 }
 
 /**
@@ -38,16 +42,25 @@ class EmbyClientFactory @Inject constructor(
     private val sessionHolder: SessionHolder,
 ) : EmbyApiProvider {
 
-    private val cache = ConcurrentHashMap<String, EmbyApi>()
+    private val cache = ConcurrentHashMap<String, ServerClient>()
 
     /**
      * 获取指定服务器的 API。
      *
      * @param baseUrl 规范化后的地址（不含尾部斜杠）。
      */
-    override fun api(baseUrl: String): EmbyApi = cache.getOrPut(baseUrl) { create(baseUrl) }
+    override fun api(baseUrl: String): EmbyApi = serverClient(baseUrl).api
 
-    private fun create(baseUrl: String): EmbyApi {
+    override fun api(baseUrl: String, session: SessionSnapshot): EmbyApi {
+        val client = serverClient(baseUrl).httpClient
+        return createApi(baseUrl, Call.Factory { request ->
+            client.newCall(request.newBuilder().tag(SessionSnapshot::class.java, session).build())
+        })
+    }
+
+    private fun serverClient(baseUrl: String): ServerClient = cache.getOrPut(baseUrl) { create(baseUrl) }
+
+    private fun create(baseUrl: String): ServerClient {
         val client = OkHttpClient.Builder()
             // 电视盒子网络抖动常见，连接超时不宜过长，避免登录页长时间无反馈
             .followRedirects(true)
@@ -60,21 +73,23 @@ class EmbyClientFactory @Inject constructor(
                     // UHDNOW 网关会拦截没有浏览器 UA 的请求（直接 403），必须伪装成浏览器
                     .header("User-Agent", BROWSER_USER_AGENT)
                     .header("Accept", "application/json")
-                    .header("X-Emby-Authorization", sessionHolder.authorizationHeader())
-                if (sessionHolder.token.isNotBlank()) {
-                    builder.header("X-Emby-Token", sessionHolder.token)
-                }
                 chain.proceed(builder.build())
             }
+            .addEmbySessionAuthentication(sessionHolder, includeClientDescription = true)
             .build()
 
-        return Retrofit.Builder()
+        return ServerClient(client, createApi(baseUrl, client))
+    }
+
+    private fun createApi(baseUrl: String, callFactory: Call.Factory): EmbyApi =
+        Retrofit.Builder()
             .baseUrl(ServerAddress.toBaseUrl(baseUrl))
-            .client(client)
+            .callFactory(callFactory)
             .addConverterFactory(json.asConverterFactory("application/json".toMediaType()))
             .build()
             .create(EmbyApi::class.java)
-    }
+
+    private data class ServerClient(val httpClient: OkHttpClient, val api: EmbyApi)
 
     companion object {
         /**

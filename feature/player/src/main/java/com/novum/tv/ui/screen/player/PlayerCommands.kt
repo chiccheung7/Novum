@@ -80,6 +80,7 @@ internal sealed interface PlayerCommand {
  * @param controlsVisible 控制条是否处于可交互的显示态。
  * @param progressFocused 焦点是否在进度条上。
  * @param confirmVisible 退出确认是否打开。
+ * @param overlayActionFocused 跳过/错误重试按钮是否接管确定键。
  */
 internal fun resolvePlayerCommand(
     key: Key,
@@ -87,9 +88,14 @@ internal fun resolvePlayerCommand(
     controlsVisible: Boolean,
     progressFocused: Boolean,
     confirmVisible: Boolean,
+    overlayActionFocused: Boolean = false,
 ): PlayerCommand? {
     // 弹层打开时按键交给弹层自己（确认框是独立 Dialog 窗口），父层不介入
     if (confirmVisible) return null
+    // 控制条隐藏时，浮钮仍是可点击控件，不能把它的 OK 当成播放/暂停。
+    if (overlayActionFocused &&
+        (key == Key.DirectionCenter || key == Key.Enter || key == Key.NumPadEnter)
+    ) return null
 
     if (!controlsVisible) {
         return when (key) {

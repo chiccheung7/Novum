@@ -65,24 +65,8 @@ interface MediaRepository {
     suspend fun personWorks(personId: String): NovumResult<List<MediaItem>> =
         NovumResult.Success(emptyList())
 
-    /**
-     * 按名字搜索人物（演员/导演）。
-     *
-     * 服务端 `Persons` 端点为主（覆盖未浏览过的演员），本地索引为兜底。
-     * 默认空结果：测试 Fake 不必补桩。
-     *
-     * @param query 关键词。
-     * @param limit 返回条数上限。
-     */
+    /** 按名字请求服务器人物搜索；默认空结果便于未覆盖此路径的测试 Fake。 */
     suspend fun searchPersons(query: String, limit: Int = 20): List<PersonRef> = emptyList()
-
-    /**
-     * 预热搜索目录（搜索页打开时调用）。
-     *
-     * 服务端 `SearchTerm` 对中文只认从头匹配，本地目录负责任意位置匹配；
-     * 目录是懒建的，预热只是把等待挪到用户打字之前。
-     */
-    suspend fun warmSearchCatalog() = Unit
 
     /**
      * 读取剧集的全部季。

@@ -11,8 +11,10 @@ import com.novum.tv.model.MediaLibrary
 import com.novum.tv.model.MediaPage
 import com.novum.tv.model.Season
 import com.novum.tv.testing.MainDispatcherRule
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.advanceUntilIdle
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
@@ -151,6 +153,51 @@ class GridViewModelTest {
     }
 
     @Test
+    fun refreshDuringFirstFavoritesLoadExposesFailureInsteadOfStayingLoading() = runTest {
+        val repository = FakeGridRepository(total = 8).apply {
+            response = {
+                if (calls.size == 1) awaitCancellation()
+                NovumResult.Failure(NovumError.NotFound())
+            }
+        }
+        val viewModel = GridViewModel(repository)
+        viewModel.start(GridSource.Favorites())
+        runCurrent()
+
+        // The destination can reach ON_RESUME before its first request finishes.
+        viewModel.refreshFavorites()
+        advanceUntilIdle()
+
+        assertTrue("首次加载失败应显示重试入口", viewModel.state.value is UiState.Error)
+        assertEquals(2, repository.calls.size)
+    }
+
+    @Test
+    fun overlappingFailedFavoritesRefreshesKeepTheExistingPagingCursor() = runTest {
+        val repository = FakeGridRepository(total = 90)
+        val viewModel = GridViewModel(repository)
+        viewModel.start(GridSource.Favorites())
+        advanceUntilIdle()
+        repository.response = {
+            if (calls.size == 2) awaitCancellation()
+            NovumResult.Failure(NovumError.NotFound())
+        }
+
+        viewModel.refreshFavorites()
+        runCurrent()
+        viewModel.refreshFavorites()
+        advanceUntilIdle()
+
+        assertEquals(60, successItems(viewModel).size)
+        repository.response = null
+        viewModel.loadMore()
+        advanceUntilIdle()
+
+        assertEquals("失败的刷新不能丢失已有分页位置", 60, repository.calls.last().startIndex)
+        assertEquals(90, successItems(viewModel).size)
+    }
+
+    @Test
     fun emptyLibraryShowsEmptyState() = runTest {
         val repository = FakeGridRepository(total = 0)
         val viewModel = GridViewModel(repository)
@@ -200,6 +247,46 @@ class GridViewModelTest {
         check(state is UiState.Success) { "state 应处于 Success，实际 $state" }
         return state.data
     }
+
+    @Test
+    fun overlappingPagesHaveUniquePosterKeysAndKeepTheServerCursor() = runTest {
+        val repository = FakeGridRepository(total = 120)
+        val viewModel = GridViewModel(repository)
+        viewModel.start(GridSource.Library("lib-1"))
+        advanceUntilIdle()
+        val firstPage = successItems(viewModel)
+        repository.response = {
+            NovumResult.Success(MediaPage(firstPage.takeLast(1) + firstPage.take(29).map {
+                it.copy(id = "new-${it.id}")
+            }, total = 120))
+        }
+        viewModel.loadMore()
+        advanceUntilIdle()
+        val merged = successItems(viewModel)
+        assertEquals("LazyGrid requires unique item IDs even if a library changes between pages", 89, merged.size)
+        assertEquals(merged.size, merged.distinctBy { it.id }.size)
+
+        repository.response = null
+        viewModel.loadMore()
+        advanceUntilIdle()
+        assertEquals("The API cursor counts received entries, not deduplicated cards", 90, repository.calls.last().startIndex)
+    }
+
+    @Test
+    fun anEmptyLastPageStopsFurtherLoadMoreRequests() = runTest {
+        val repository = FakeGridRepository(total = 120)
+        val viewModel = GridViewModel(repository)
+        viewModel.start(GridSource.Library("lib-1"))
+        advanceUntilIdle()
+        repository.response = { NovumResult.Success(MediaPage(emptyList(), total = 120)) }
+        viewModel.loadMore()
+        advanceUntilIdle()
+        viewModel.loadMore()
+        advanceUntilIdle()
+
+        assertEquals("A stale server count must not repeatedly request the same empty page", 2, repository.calls.size)
+        assertEquals(60, successItems(viewModel).size)
+    }
 }
 
 /** 记录式 FakeMediaRepository：记录每次 items 调用的关键参数，页数可配。 */
@@ -213,6 +300,8 @@ private class FakeGridRepository(
 
     /** 依序记录的 items 调用参数。 */
     val calls = mutableListOf<ItemCall>()
+
+    var response: (suspend FakeGridRepository.() -> NovumResult<MediaPage>)? = null
 
     data class ItemCall(
         val parentId: String?,
@@ -236,6 +325,7 @@ private class FakeGridRepository(
         includeItemTypes: String?,
     ): NovumResult<MediaPage> {
         calls += ItemCall(parentId, startIndex, limit, sortBy, ascending, filters, searchTerm, includeItemTypes)
+        response?.let { return it() }
         // 末页不足一页时只返回剩余条数（真实服务端行为）
         val count = if (startIndex >= total) 0 else minOf(pageSize, total - startIndex)
         val pageItems = List(count) { index ->

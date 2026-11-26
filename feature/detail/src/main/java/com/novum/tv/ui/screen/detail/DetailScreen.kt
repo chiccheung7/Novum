@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -39,6 +40,9 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import androidx.tv.material3.Text
 import com.novum.tv.core.designsystem.R
 import com.novum.tv.core.state.UiState
@@ -90,6 +94,14 @@ fun DetailScreen(
     viewModel: DetailViewModel = hiltViewModel(),
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner, viewModel) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) viewModel.onResume()
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
 
     // 详情页返回优先退栈，而不是退出应用
     BackHandler(onBack = onBack)
@@ -100,7 +112,7 @@ fun DetailScreen(
             .background(NovumPalette.Ink),
     ) {
         when (val detailState = state.detail) {
-            UiState.Loading -> NovumSkeletonDetail(modifier = Modifier.align(Alignment.Center))
+            UiState.Loading -> NovumSkeletonDetail()
 
             is UiState.Error -> NovumStateView(
                 state = detailState,
@@ -538,7 +550,7 @@ private fun DetailBody(
                 versions = versions,
                 // 前缀 = 电影名/剧名（分集再带 SxxExx），与规格三段拼成一行
                 titlePrefix = currentEpisode?.let { ep ->
-                    "${data.title} · S%02dE%02d".format(ep.seasonIndex, ep.index % 100)
+                    "${data.title} · S%02dE%02d".format(ep.seasonIndex, ep.index)
                 } ?: data.title,
                 // 高亮上一次记忆的版本；没有记忆时 VersionDialog 回落首项
                 selectedId = state.rememberedMediaSourceId,

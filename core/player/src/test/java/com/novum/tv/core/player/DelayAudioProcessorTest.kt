@@ -5,6 +5,8 @@ import androidx.media3.common.audio.AudioProcessor
 import java.nio.ByteBuffer
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
@@ -24,6 +26,8 @@ class DelayAudioProcessorTest {
         var delayMs = 0L
         val processor = DelayAudioProcessor { delayMs }
         processor.configure(format)
+        processor.flush()
+        assertTrue("0ms 的 PCM 处理器必须保留在 AudioSink 链中", processor.isActive())
 
         feed(processor, ByteArray(FRAME_BYTES))
         assertEquals("0 延迟时应直通", FRAME_BYTES, processor.output.remaining())
@@ -42,6 +46,7 @@ class DelayAudioProcessorTest {
     fun delayedOutputIsReadyForReading() {
         val processor = DelayAudioProcessor { 10L }
         processor.configure(format)
+        processor.flush()
 
         // 20ms 输入、10ms 延迟 → 应吐出 10ms
         feed(processor, ByteArray(20 * 48 * FRAME_BYTES))
@@ -56,6 +61,7 @@ class DelayAudioProcessorTest {
         var delayMs = 100L
         val processor = DelayAudioProcessor { delayMs }
         processor.configure(format)
+        processor.flush()
 
         feed(processor, ByteArray(100 * 48 * FRAME_BYTES))
         assertEquals(0, processor.output.remaining())
@@ -71,6 +77,7 @@ class DelayAudioProcessorTest {
         var delayMs = -10L
         val processor = DelayAudioProcessor { delayMs }
         processor.configure(format)
+        processor.flush()
 
         val tenMsBytes = 10 * 48 * FRAME_BYTES
         val input = ByteArray(2 * tenMsBytes) { (it % 251).toByte() }
@@ -87,6 +94,7 @@ class DelayAudioProcessorTest {
         var delayMs = 10L
         val processor = DelayAudioProcessor { delayMs }
         processor.configure(format)
+        processor.flush()
         val tenMsBytes = 10 * 48 * FRAME_BYTES
 
         feed(processor, ByteArray(2 * tenMsBytes))
@@ -105,6 +113,7 @@ class DelayAudioProcessorTest {
         var delayMs = -10L
         val processor = DelayAudioProcessor { delayMs }
         processor.configure(format)
+        processor.flush()
 
         feed(processor, ByteArray(10 * 48 * FRAME_BYTES))
         assertEquals(0, processor.output.remaining())
@@ -120,6 +129,7 @@ class DelayAudioProcessorTest {
         // 10ms 延迟 + 20ms 输入 → 应输出**前** 10ms（延迟队列头），不是后 10ms。
         val processor = DelayAudioProcessor { 10L }
         processor.configure(format)
+        processor.flush()
         val tenMsBytes = 10 * 48 * FRAME_BYTES
         val input = ByteArray(2 * tenMsBytes) { (it % 251).toByte() }
 
@@ -136,6 +146,7 @@ class DelayAudioProcessorTest {
         var delayMs = -10L
         val processor = DelayAudioProcessor { delayMs }
         processor.configure(format)
+        processor.flush()
         val tenMsBytes = 10 * 48 * FRAME_BYTES
 
         feed(processor, ByteArray(tenMsBytes))
@@ -151,6 +162,90 @@ class DelayAudioProcessorTest {
         delayMs = -10L
         feed(processor, ByteArray(tenMsBytes))
         assertEquals("调小提前量不应继续丢样本", tenMsBytes, processor.output.remaining())
+    }
+
+    @Test
+    fun zeroDelayConsumesInputAndExposesEachOutputOnce() {
+        val processor = DelayAudioProcessor { 0L }
+        processor.configure(format)
+        processor.flush()
+        val input = ByteBuffer.allocateDirect(FRAME_BYTES)
+            .order(java.nio.ByteOrder.nativeOrder())
+            .put(byteArrayOf(1, 2, 3, 4))
+        input.flip()
+
+        processor.queueInput(input)
+
+        assertEquals("未推进输入会让 AudioSink 反复提交同一批音频", input.limit(), input.position())
+        val output = processor.output
+        assertArrayEquals(byteArrayOf(1, 2, 3, 4), ByteArray(output.remaining()).also { output.get(it) })
+        assertEquals("取走后不得再次暴露同一输出", 0, processor.output.remaining())
+    }
+
+    @Test
+    fun flushAfterEndOfStreamAllowsTheSeekedStreamToContinue() {
+        val processor = DelayAudioProcessor { 0L }
+        processor.configure(format)
+        processor.flush()
+        processor.queueEndOfStream()
+        assertTrue(processor.isEnded())
+
+        processor.flush()
+
+        assertFalse("seek 后 flush 必须清掉上一段流的 EOS", processor.isEnded())
+        feed(processor, ByteArray(FRAME_BYTES))
+        assertEquals(FRAME_BYTES, processor.output.remaining())
+        assertFalse(processor.isEnded())
+    }
+
+    @Test
+    fun endOfStreamWaitsUntilPendingOutputHasBeenRead() {
+        val processor = DelayAudioProcessor { 0L }
+        processor.configure(format)
+        processor.flush()
+        feed(processor, ByteArray(FRAME_BYTES))
+
+        processor.queueEndOfStream()
+
+        assertFalse("还有输出时不能提前结束流", processor.isEnded())
+        assertEquals(FRAME_BYTES, processor.output.remaining())
+        assertTrue(processor.isEnded())
+    }
+
+    @Test
+    fun configureKeepsTheOldSampleRateUntilFlushAppliesTheNewFormat() {
+        val processor = DelayAudioProcessor { 10L }
+        processor.configure(format)
+        processor.flush()
+        val tenMsBytes = 10 * 48 * FRAME_BYTES
+        feed(processor, ByteArray(tenMsBytes))
+        assertEquals(0, processor.output.remaining())
+
+        processor.configure(AudioProcessor.AudioFormat(96_000, 2, C.ENCODING_PCM_16BIT))
+        feed(processor, ByteArray(tenMsBytes))
+        assertEquals("旧流排空前仍按 48kHz 的 10ms 处理", tenMsBytes, processor.output.remaining())
+
+        processor.flush()
+        feed(processor, ByteArray(tenMsBytes))
+        assertEquals("flush 后 96kHz 的 10ms 需要两倍样本", 0, processor.output.remaining())
+    }
+
+    @Test
+    fun unsupportedEncodingStaysInactiveAndResetClearsTheConfiguration() {
+        val processor = DelayAudioProcessor { 0L }
+        assertEquals(
+            AudioProcessor.AudioFormat.NOT_SET,
+            processor.configure(AudioProcessor.AudioFormat(48_000, 2, C.ENCODING_PCM_FLOAT)),
+        )
+        processor.flush()
+        assertFalse(processor.isActive())
+
+        assertEquals(format, processor.configure(format))
+        processor.flush()
+        assertTrue(processor.isActive())
+        processor.reset()
+        assertFalse(processor.isActive())
+        assertFalse(processor.isEnded())
     }
 
     private fun feed(processor: DelayAudioProcessor, bytes: ByteArray) {

@@ -6,7 +6,6 @@ import com.novum.tv.core.log.NovumLogger
 import com.novum.tv.core.network.toNovumError
 import com.novum.tv.core.result.NovumResult
 import com.novum.tv.core.result.failureOf
-import com.novum.tv.core.result.runCatchingSuspend
 import com.novum.tv.core.result.successOf
 import com.novum.tv.data.remote.emby.EmbyApi
 import com.novum.tv.data.remote.emby.EmbyApiProvider
@@ -14,6 +13,7 @@ import com.novum.tv.data.remote.emby.ItemDto
 import com.novum.tv.data.remote.emby.MediaSourceDto
 import com.novum.tv.data.remote.emby.MediaStreamDto
 import com.novum.tv.data.remote.emby.SessionHolder
+import com.novum.tv.data.remote.emby.SessionSnapshot
 import com.novum.tv.data.text.MediaStrings
 import com.novum.tv.model.CastMember
 import com.novum.tv.model.Chapter
@@ -30,9 +30,6 @@ import com.novum.tv.model.MediaItem
 import com.novum.tv.model.MediaLibrary
 import com.novum.tv.model.MediaPage
 import com.novum.tv.model.Season
-import java.text.SimpleDateFormat
-import java.util.Calendar
-import java.util.Locale
 import javax.inject.Inject
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -55,20 +52,18 @@ class DefaultMediaRepository @Inject constructor(
     private val clients: EmbyApiProvider,
     private val sessionHolder: SessionHolder,
     private val dispatchers: DispatcherProvider,
-    private val personIndex: PersonIndexStore,
-    private val searchCatalog: SearchCatalogStore,
     private val strings: MediaStrings,
     private val logger: NovumLogger,
 ) : MediaRepository {
 
-    override suspend fun libraries(): NovumResult<List<MediaLibrary>> = withContext(dispatchers.io) {
-        val server = sessionHolder.server
-        val userId = sessionHolder.userId
+    override suspend fun libraries(): NovumResult<List<MediaLibrary>> = withSession { owner ->
+        val server = owner.server
+        val userId = owner.userId
         if (server.isBlank() || userId.isBlank()) {
-            return@withContext failureOf(NovumError.Unauthorized())
+            return@withSession failureOf(NovumError.Unauthorized())
         }
         safeCall {
-            clients.api(server)
+            clients.api(server, owner)
                 .views(uid = userId)
                 .Items
                 .mapNotNull { dto -> dto.toLibrary(server) }
@@ -84,36 +79,14 @@ class DefaultMediaRepository @Inject constructor(
         filters: String?,
         searchTerm: String?,
         includeItemTypes: String?,
-    ): NovumResult<MediaPage> = withContext(dispatchers.io) {
-        val server = sessionHolder.server
-        val userId = sessionHolder.userId
+    ): NovumResult<MediaPage> = withSession { owner ->
+        val server = owner.server
+        val userId = owner.userId
         if (server.isBlank() || userId.isBlank()) {
-            return@withContext failureOf(NovumError.Unauthorized())
-        }
-        // 搜索走本地目录：Emby 的 SearchTerm 对中文只认整词/从头匹配，
-        // 「大明」搜不到「大明王朝1566」（数字片段反而能中）。目录已在
-        // SearchCatalogStore 里按页拉全，这里只做 contains + 相关度排序。
-        //
-        // 本地未命中（目录被截断/条目类型不在目录里/目录拉取失败）时回落
-        // 服务端：它的整词与数字命中仍能兜住「信号」这类完整标题。
-        if (searchTerm != null) {
-            val local = runCatchingSuspend {
-                searchInCatalog(
-                    query = searchTerm,
-                    startIndex = startIndex,
-                    limit = limit,
-                    includeItemTypes = includeItemTypes,
-                )
-            }.getOrNull()
-            if (local is NovumResult.Success &&
-                (local.value.items.isNotEmpty() || local.value.total > 0 || startIndex > 0)
-            ) {
-                return@withContext local
-            }
-            logger.w(TAG, "搜索目录未命中「$searchTerm」，回落服务端 SearchTerm")
+            return@withSession failureOf(NovumError.Unauthorized())
         }
         safeCall {
-            val response = clients.api(server).items(
+            val response = clients.api(server, owner).items(
                 uid = userId,
                 parentId = parentId,
                 startIndex = startIndex,
@@ -132,115 +105,68 @@ class DefaultMediaRepository @Inject constructor(
         }
     }
 
-    /**
-     * 在本地目录里做模糊搜索：任意位置命中 + 相关度排序 + 分页。
-     *
-     * @param query 关键词。
-     * @param startIndex 起始下标（网格分页）。
-     * @param limit 本页条数。
-     * @param includeItemTypes 类型过滤（逗号分隔，null/空 = 不过滤）。
-     */
-    private suspend fun searchInCatalog(
-        query: String,
-        startIndex: Int,
-        limit: Int,
-        includeItemTypes: String?,
-    ): NovumResult<MediaPage> = safeCall {
-        val types = includeItemTypes
-            ?.split(',')
-            ?.map { it.trim() }
-            ?.filter { it.isNotEmpty() }
-            ?.toSet()
-            .orEmpty()
-        val hits = searchCatalog.load()
-            .asSequence()
-            .filter { types.isEmpty() || it.type in types }
-            .filter { it.title.contains(query, ignoreCase = true) }
-            .sortedWith(
-                compareByDescending<MediaItem> { titleRelevance(it.title, query) }
-                    .thenBy { it.title },
-            )
-            .toList()
-        MediaPage(items = hits.drop(startIndex).take(limit), total = hits.size)
-    }
-
-    /**
-     * 预热搜索目录：搜索页一打开就拉，等用户打完字基本已就绪。
-     *
-     * 失败只留日志——真正的搜索会再试一次并把错误抛给界面。
-     */
-    override suspend fun warmSearchCatalog() {
-        withContext(dispatchers.io) {
-            runCatchingSuspend { searchCatalog.load() }
-                .onFailure { logger.w(TAG, "搜索目录预热失败", it) }
-        }
-    }
-
-    override suspend fun detail(itemId: String): NovumResult<MediaDetail> = withContext(dispatchers.io) {
-        val server = sessionHolder.server
-        val userId = sessionHolder.userId
+    override suspend fun detail(itemId: String): NovumResult<MediaDetail> = withSession { owner ->
+        val server = owner.server
+        val userId = owner.userId
         if (server.isBlank() || userId.isBlank()) {
-            return@withContext failureOf(NovumError.Unauthorized())
+            return@withSession failureOf(NovumError.Unauthorized())
         }
         safeCall {
-            val detail = clients.api(server)
+            val detail = clients.api(server, owner)
                 .detail(uid = userId, itemId = itemId)
                 .toDetail(server = server, fallbackId = itemId, strings = strings)
-            // 演职员进本地人物索引（搜演员名的客户端桥接；同名覆盖，无感增量）
-            personIndex.addAll(detail.cast)
             detail
         }
     }
 
     /** 人物全部作品：按 PersonIds 过滤，并按首播日期和年份倒序。 */
     override suspend fun personWorks(personId: String): NovumResult<List<MediaItem>> =
-        withContext(dispatchers.io) {
-            val server = sessionHolder.server
-            val userId = sessionHolder.userId
+        withSession { owner ->
+            val server = owner.server
+            val userId = owner.userId
             if (server.isBlank() || userId.isBlank()) {
-                return@withContext failureOf(NovumError.Unauthorized())
+                return@withSession failureOf(NovumError.Unauthorized())
             }
             safeCall {
-                clients.api(server)
-                    .items(
+                val api = clients.api(server, owner)
+                val works = LinkedHashMap<String, MediaItem>()
+                var startIndex = 0
+                while (true) {
+                    val page = api.items(
                         uid = userId,
                         personIds = personId,
                         recursive = true,
                         includeItemTypes = "Movie,Series",
                         sortBy = "PremiereDate,ProductionYear",
                         sortOrder = "Descending",
-                        limit = 60,
+                        startIndex = startIndex,
+                        limit = PERSON_WORKS_PAGE_SIZE,
                     )
-                    .Items
-                    .mapNotNull { dto -> dto.toMediaItem(server, strings) }
+                    if (page.Items.isEmpty()) break
+                    val mapped = page.Items.mapNotNull { dto -> dto.toMediaItem(server, strings) }
+                    // Some gateways ignore StartIndex. A repeated page must not loop forever.
+                    if (mapped.none { it.id !in works }) break
+                    mapped.forEach { item -> works.putIfAbsent(item.id, item) }
+                    startIndex += page.Items.size
+                    if (page.TotalRecordCount > 0 && startIndex >= page.TotalRecordCount) break
+                    if (page.TotalRecordCount <= 0 && page.Items.size < PERSON_WORKS_PAGE_SIZE) break
+                }
+                works.values.toList()
             }
         }
 
-    /**
-     * 人物搜索：三路来源合并，按相关度排序。
-     *
-     * 1. 服务端 `/Persons` 端点——**只认 `Type == Person` 的结果**：实测部分
-     *    网关会把这个路由接到普通条目搜索上，不过滤的话人物区会摆一排电影
-     *    海报当"人物"；
-     * 2. **条目搜索结果的 `People[]`**：走全站都在用的 `/Users/{uid}/Items`，
-     *    把命中条目的演职员按姓名过滤、按出现次数排序——这条路一定能通，
-     *    是"搜演员名搜不到人"的兜底；
-     * 3. 本地人物索引——搜索目录建好时会把**全库演职员**并入（见
-     *    [SearchCatalogStore]），这是最稳的一路。
-     *
-     * @param query 关键词（按姓名匹配）。
-     * @param limit 返回条数上限。
-     */
-    override suspend fun searchPersons(query: String, limit: Int): List<PersonRef> =
-        withContext(dispatchers.io) {
-            val server = sessionHolder.server
-            val userId = sessionHolder.userId
+    /** 人物搜索只映射服务器 `/Persons` 响应，不查询本地索引或派生本地候选。 */
+    override suspend fun searchPersons(query: String, limit: Int): List<PersonRef> {
+        val owner = sessionHolder.capture()
+        val people = withContext(dispatchers.io) {
+            val server = owner.server
+            val userId = owner.userId
             val keyword = query.trim()
-            if (server.isBlank() || userId.isBlank() || keyword.isEmpty()) {
+            if (sessionHolder.capture() !== owner || server.isBlank() || userId.isBlank() || keyword.isEmpty()) {
                 return@withContext emptyList()
             }
-            val remote = runCatchingSuspend {
-                clients.api(server)
+            safeCall {
+                clients.api(server, owner)
                     .persons(userId = userId, searchTerm = keyword, limit = limit)
                     .Items
                     // 有的网关把 /Persons 路由到了普通条目搜索：按 Type 过滤，
@@ -253,112 +179,28 @@ class DefaultMediaRepository @Inject constructor(
                             dto.toPersonRef(server)
                         }
                     }
-            }.onFailure {
-                logger.w(TAG, "守卫：/Persons 不可用，改用条目 People 兜底：$keyword", it)
-            }.getOrDefault(emptyList())
-
-            val derived = runCatchingSuspend { personsFromItemSearch(server, userId, keyword) }
-                .onFailure { logger.w(TAG, "条目 People 兜底搜索失败：$keyword", it) }
-                .getOrDefault(emptyList())
-
-            val local = runCatchingSuspend { personIndex.search(keyword, limit) }.getOrDefault(emptyList())
-
-            logger.w(TAG, "人物搜索「$keyword」：远端 ${remote.size} / 条目兜底 ${derived.size} / 本地索引 ${local.size}")
-            mergePersonHits(keyword = keyword, limit = limit, remote, derived, local)
-        }
-
-    /**
-     * 从条目搜索结果里挖人物：对命中条目的 `People[]` 按姓名过滤，
-     * 同一人按出现条目数计权重（主角在前、客串在后）。
-     */
-    private suspend fun personsFromItemSearch(
-        server: String,
-        userId: String,
-        keyword: String,
-    ): List<PersonRef> {
-        val items = clients.api(server)
-            .items(
-                uid = userId,
-                searchTerm = keyword,
-                recursive = true,
-                includeItemTypes = PERSON_DERIVE_ITEM_TYPES,
-                limit = PERSON_DERIVE_ITEMS,
-                fields = "People",
-            )
-            .Items
-        // personId → (引用, 出现次数)；LinkedHashMap 保证同权重时按首次出现顺序
-        val counts = LinkedHashMap<String, Pair<PersonRef, Int>>()
-        items.forEach { item ->
-            item.People.forEach personLoop@{ person ->
-                val ref = person.toPersonRef(server) ?: return@personLoop
-                if (!ref.name.contains(keyword, ignoreCase = true)) return@personLoop
-                val previous = counts[ref.personId]
-                counts[ref.personId] = if (previous == null) {
-                    ref to 1
-                } else {
-                    previous.first to previous.second + 1
+            }.let { result ->
+                when (result) {
+                    is NovumResult.Success -> result.value.take(limit)
+                    is NovumResult.Failure -> {
+                        logger.w(TAG, "服务器人物搜索失败：$keyword")
+                        emptyList()
+                    }
                 }
             }
         }
-        return counts.values
-            .sortedByDescending { (_, count) -> count }
-            .map { (ref, _) -> ref }
-    }
-
-    /**
-     * 合并三路人物命中：按 id 去重（优先保留有头像的来源），
-     * 再按"完全相同 > 前缀 > 包含"排序，最后按姓名收敛到 [limit]。
-     */
-    private fun mergePersonHits(
-        keyword: String,
-        limit: Int,
-        vararg sources: List<PersonRef>,
-    ): List<PersonRef> {
-        val merged = LinkedHashMap<String, PersonRef>()
-        sources.forEach { source ->
-            source.forEach { ref ->
-                val existing = merged[ref.personId]
-                merged[ref.personId] = when {
-                    existing == null -> ref
-                    existing.imageUrl == null && ref.imageUrl != null -> ref
-                    else -> existing
-                }
-            }
-        }
-        return merged.values
-            .sortedWith(
-                compareByDescending<PersonRef> { personRelevance(it.name, keyword) }
-                    .thenBy { it.name.length }
-                    .thenBy { it.name },
-            )
-            .take(limit)
-    }
-
-    /** 片名命中强度：完全相同 3 / 前缀 2 / 包含 1（搜「大明」时「大明王朝1566」优先）。 */
-    private fun titleRelevance(title: String, keyword: String): Int = when {
-        title.equals(keyword, ignoreCase = true) -> 3
-        title.startsWith(keyword, ignoreCase = true) -> 2
-        title.contains(keyword, ignoreCase = true) -> 1
-        else -> 0
-    }
-
-    /** 姓名命中强度：完全相同 3 / 前缀 2 / 包含 1 / 其它 0（服务端按别名命中时保留原序）。 */
-    private fun personRelevance(name: String, keyword: String): Int = when {
-        name.equals(keyword, ignoreCase = true) -> 3
-        name.startsWith(keyword, ignoreCase = true) -> 2
-        name.contains(keyword, ignoreCase = true) -> 1
-        else -> 0
+        return if (sessionHolder.capture() === owner) people else emptyList()
     }
 
     override suspend fun seasons(seriesId: String): NovumResult<List<Season>> =
-        withContext(dispatchers.io) {
-            val server = sessionHolder.server
-            val userId = sessionHolder.userId
+        withSession { owner ->
+            val server = owner.server
+            val userId = owner.userId
             if (server.isBlank() || userId.isBlank()) {
-                return@withContext failureOf(NovumError.Unauthorized())
+                return@withSession failureOf(NovumError.Unauthorized())
             }
             safeCall {
-                clients.api(server)
+                clients.api(server, owner)
                     .seasons(seriesId = seriesId, userId = userId)
                     .Items
                     .mapIndexedNotNull { index, dto -> dto.toSeason(index, strings) }
@@ -367,14 +209,14 @@ class DefaultMediaRepository @Inject constructor(
         }
 
     override suspend fun episodes(seriesId: String, seasonId: String?): NovumResult<List<Episode>> =
-        withContext(dispatchers.io) {
-            val server = sessionHolder.server
-            val userId = sessionHolder.userId
+        withSession { owner ->
+            val server = owner.server
+            val userId = owner.userId
             if (server.isBlank() || userId.isBlank()) {
-                return@withContext failureOf(NovumError.Unauthorized())
+                return@withSession failureOf(NovumError.Unauthorized())
             }
             safeCall {
-                clients.api(server)
+                clients.api(server, owner)
                     .episodes(seriesId = seriesId, userId = userId, seasonId = seasonId)
                     .Items
                     .mapIndexedNotNull { index, dto -> dto.toEpisode(server, index, strings) }
@@ -393,14 +235,14 @@ class DefaultMediaRepository @Inject constructor(
      * 主角（每集都在）在前、客串在后；请求失败由页面回落剧集级演职员。
      */
     override suspend fun seasonCast(seriesId: String, seasonId: String): NovumResult<List<CastMember>> =
-        withContext(dispatchers.io) {
-            val server = sessionHolder.server
-            val userId = sessionHolder.userId
+        withSession { owner ->
+            val server = owner.server
+            val userId = owner.userId
             if (server.isBlank() || userId.isBlank()) {
-                return@withContext failureOf(NovumError.Unauthorized())
+                return@withSession failureOf(NovumError.Unauthorized())
             }
             safeCall {
-                val cast = clients.api(server)
+                val cast = clients.api(server, owner)
                     .episodes(
                         seriesId = seriesId,
                         userId = userId,
@@ -411,21 +253,19 @@ class DefaultMediaRepository @Inject constructor(
                     )
                     .Items
                     .toSeasonCast(server, strings)
-                // 季级出现的演员同样进本地人物索引（搜名字能命中）
-                personIndex.addAll(cast)
                 cast
             }
         }
 
     override suspend fun seriesNextUp(seriesId: String): NovumResult<Episode?> =
-        withContext(dispatchers.io) {
-            val server = sessionHolder.server
-            val userId = sessionHolder.userId
+        withSession { owner ->
+            val server = owner.server
+            val userId = owner.userId
             if (server.isBlank() || userId.isBlank()) {
-                return@withContext failureOf(NovumError.Unauthorized())
+                return@withSession failureOf(NovumError.Unauthorized())
             }
             safeCall {
-                val api = clients.api(server)
+                val api = clients.api(server, owner)
                 // 单剧集 NextUp——详情页默认定位的「当前集」。字段用
                 // 分集口径（带 MediaSources），让焦点集的多版本信息开箱即用；
                 // 全部看完且无上新时服务端返回空列表 → null（页面回落剧集级）。
@@ -459,14 +299,14 @@ class DefaultMediaRepository @Inject constructor(
         }
 
     override suspend fun setFavorite(itemId: String, favorite: Boolean): NovumResult<Boolean> =
-        withContext(dispatchers.io) {
-            val server = sessionHolder.server
-            val userId = sessionHolder.userId
+        withSession { owner ->
+            val server = owner.server
+            val userId = owner.userId
             if (server.isBlank() || userId.isBlank()) {
-                return@withContext failureOf(NovumError.Unauthorized())
+                return@withSession failureOf(NovumError.Unauthorized())
             }
             safeCall {
-                val api = clients.api(server)
+                val api = clients.api(server, owner)
                 val data = if (favorite) {
                     api.addFavorite(uid = userId, itemId = itemId)
                 } else {
@@ -477,14 +317,14 @@ class DefaultMediaRepository @Inject constructor(
         }
 
     override suspend fun setPlayed(itemId: String, played: Boolean): NovumResult<Boolean> =
-        withContext(dispatchers.io) {
-            val server = sessionHolder.server
-            val userId = sessionHolder.userId
+        withSession { owner ->
+            val server = owner.server
+            val userId = owner.userId
             if (server.isBlank() || userId.isBlank()) {
-                return@withContext failureOf(NovumError.Unauthorized())
+                return@withSession failureOf(NovumError.Unauthorized())
             }
             safeCall {
-                val api = clients.api(server)
+                val api = clients.api(server, owner)
                 val data = if (played) {
                     api.markPlayed(uid = userId, itemId = itemId)
                 } else {
@@ -494,46 +334,23 @@ class DefaultMediaRepository @Inject constructor(
             }
         }
 
-    override suspend fun feed(): NovumResult<HomeFeed> = withContext(dispatchers.io) {
-        val server = sessionHolder.server
-        val userId = sessionHolder.userId
+    override suspend fun feed(): NovumResult<HomeFeed> = withSession { owner ->
+        val server = owner.server
+        val userId = owner.userId
         if (server.isBlank() || userId.isBlank()) {
-            return@withContext failureOf(NovumError.Unauthorized())
+            return@withSession failureOf(NovumError.Unauthorized())
         }
         safeCall {
-            val api = clients.api(server)
-            // 只有影片与剧集两类库上首页；音乐 / 图片等类型的内容形态不同，不强行混排
+            val api = clients.api(server, owner)
+            // 影片/剧集库按原顺序展示；全库追新可能是混合库，按名称识别。
             val libraries = api.views(uid = userId).Items
                 .mapNotNull { dto -> dto.toLibrary(server) }
-                .filter { it.kind == "movies" || it.kind == "tvshows" }
-            // Hero 候选的双口径：电影看发行时间，剧综看近期是否上新
-            val movieCutoff = isoDateDaysAgo(DAYS_MOVIE_WINDOW)
-            val updateCutoff = isoDateDaysAgo(DAYS_UPDATE_WINDOW)
+                .filter { it.kind == "movies" || it.kind == "tvshows" || it.isRecentUpdatesSource }
+            val recentLibraryId = libraries.firstOrNull { it.isRecentUpdatesSource }?.id
             coroutineScope {
                 // 各区块并发拉取，单个区块失败只让该区块为空，不拖垮整页
                 val resumeItems = asyncOrNull { api.resume(uid = userId).Items }
                 val nextUpItems = asyncOrNull { api.nextUp(uid = userId).Items }
-                val moviePicks = asyncOrNull {
-                    api.items(
-                        uid = userId,
-                        includeItemTypes = "Movie",
-                        sortBy = "PremiereDate,SortName",
-                        limit = REQUEST_MOVIE_LIMIT,
-                        minPremiereDate = movieCutoff,
-                    ).Items
-                }
-                // Emby 的 PlayCount 排序按累计播放次数提供 Hero 热播候选。
-                // 电影+剧集一起取，只要可播放条目（IsNotFolder 排除合集/目录）。
-                val hotPicks = asyncOrNull {
-                    api.items(
-                        uid = userId,
-                        includeItemTypes = "Movie,Series",
-                        sortBy = "PlayCount,CommunityRating",
-                        sortOrder = "Descending",
-                        filters = "IsNotFolder",
-                        limit = REQUEST_HOT_LIMIT,
-                    ).Items
-                }
                 val latestPerLibrary = libraries.map { library ->
                     asyncOrNull { library.id to api.latest(uid = userId, parentId = library.id) }
                 }
@@ -549,29 +366,15 @@ class DefaultMediaRepository @Inject constructor(
                     if (entries.isEmpty()) {
                         null
                     } else {
-                        HomeLatestRow(libraryId = library.id, libraryName = library.name, items = entries)
+                        HomeLatestRow(
+                            libraryId = library.id,
+                            libraryName = if (library.id == recentLibraryId) strings.recentBroadcastsTitle() else library.name,
+                            items = entries,
+                        )
                     }
+                }.let { rows ->
+                    rows.filter { it.libraryId == recentLibraryId } + rows.filter { it.libraryId != recentLibraryId }
                 }
-
-                val movies = moviePicks.await().orEmpty()
-                    // 服务端可能忽略 MinPremiereDate，因此客户端再过滤一次。
-                    .filter { dto -> dto.PremiereDate.isOnOrAfter(movieCutoff) }
-                    .sortedByDescending { dto -> dto.CommunityRating ?: 0f }
-                    .take(PICK_MOVIE_LIMIT)
-                // 剧综池复用各库最新结果，避免额外请求；按条目类型筛选，不依赖库类型标记。
-                val seriesPool = rawLatest
-                    .flatMap { (_, items) -> items }
-                    .filter { dto -> dto.Type == "Series" }
-                    .distinctBy { dto -> dto.Id }
-                // 「近一周有更新」优先看最后添加新集的时间；服务端不返回该字段时退回入库时间
-                val seriesInWeek = seriesPool.filter { dto -> dto.isUpdatedSince(updateCutoff) }
-                // 一周内没有新集就退回一个月；latest 本身就是最近入库，字段全缺时直接采用
-                val fallbackCutoff = isoDateDaysAgo(DAYS_UPDATE_FALLBACK)
-                val series = seriesInWeek.ifEmpty { seriesPool.filter { dto -> dto.isUpdatedSince(fallbackCutoff) } }
-                    .ifEmpty { seriesPool }
-                    .sortedByDescending { dto -> dto.DateLastMediaAdded ?: dto.DateCreated.orEmpty() }
-                    .take(PICK_SERIES_LIMIT)
-                // 电影在前（评分优先），剧综在后（按最近上新时间）
 
                 val resumeDtoItems = resumeItems.await().orEmpty()
                 // 正在续播的条目不占用 Hero 推荐位，避免重复展示。
@@ -580,36 +383,19 @@ class DefaultMediaRepository @Inject constructor(
                 // 同一剧集只保留一张卡：
                 // 在看的优先，NextUp 条目按分集 id + 剧集 id 双重去重后追加行尾。
                 val resumeSeriesIds = resumeDtoItems.mapNotNull { dto -> dto.SeriesId }.toSet()
-                val mergedResume = (
-                    resumeDtoItems +
-                        nextUpItems.await().orEmpty()
-                            .filter { dto -> dto.isUnfinishedForResume() }
-                            .filter { dto -> dto.Id !in resumeIds && dto.SeriesId !in resumeSeriesIds }
-                            // 同剧集的多个 NextUp 只留首个；SeriesId 缺失时按分集 id 去重，
-                            // 不能把所有无剧集归属的条目折叠成一张卡。
-                            .distinctBy { dto -> dto.SeriesId ?: dto.Id }
-                    )
-                    .distinctBy { dto -> dto.Id }
+                val nextUpEntries = nextUpItems.await().orEmpty()
+                    .filter { dto -> dto.isUnfinishedForResume() }
+                    .filter { dto -> dto.Id !in resumeIds && dto.SeriesId !in resumeSeriesIds }
+                    // 同剧集的多个 NextUp 只留首个；SeriesId 缺失时按分集 id 去重，
+                    // 不能把所有无剧集归属的条目折叠成一张卡。
+                    .distinctBy { dto -> dto.SeriesId ?: dto.Id }
+                val mergedResume = (resumeDtoItems.map { it to false } + nextUpEntries.map { it to true })
+                    .distinctBy { (dto, _) -> dto.SeriesId ?: dto.Id }
                     .take(HOME_ROW_RESUME_LIMIT)
-
-                // Hero 优先使用热播候选；数量不足时从电影、剧集和各库最新条目构建候选池。
-                // 两条路径都按同一规则洗牌并限制容量。
-                // 先按「可展示」过滤再判断数量：热播候选里常混入没有背景图的
-                // 合集/低质量条目，若按过滤前数量走热播分支，结果会不足甚至为空，
-                // 且永远不会进入电影/剧集/latest 三级兜底。
-                val hot = hotPicks.await().orEmpty()
-                    .filter { dto -> dto.Id !in resumeIds && dto.BackdropImageTags.isNotEmpty() }
-                val hero = if (hot.size >= HERO_LIMIT) {
-                    hot.seededShuffle(_heroSeedProvider())
-                        .take(HERO_LIMIT)
-                } else {
-                    heroRotationPool(
-                        movies = movies.filter { dto -> dto.Id !in resumeIds },
-                        series = series.filter { dto -> dto.Id !in resumeIds },
-                        latest = rawLatest.flatMap { (_, items) -> items }
-                            .filter { dto -> dto.Id !in resumeIds },
-                    )
-                }
+                // Hero 只复用全库追新的最新18部；源库不可用或无可展示候选时保持为空。
+                val recentItems = rawLatest.firstOrNull { (library, _) -> library.id == recentLibraryId }
+                    ?.second.orEmpty()
+                val hero = heroRotationPool(recentItems.filter { dto -> dto.Id !in resumeIds })
                     // /Items/Latest 不含 MediaStreams 和 OfficialRating；按 Ids 回捞完整字段，
                     // 请求失败时保留原 DTO。
                     .let { pool ->
@@ -627,14 +413,21 @@ class DefaultMediaRepository @Inject constructor(
                         }
                         val fullById = fullItems?.associateBy { it.Id }
                         pool.mapNotNull { dto ->
-                            (fullById?.get(dto.Id) ?: dto).toHomeEntry(server, strings)
+                            val full = fullById?.get(dto.Id)
+                            val enriched = full?.copy(
+                                BackdropImageTags = full.BackdropImageTags
+                                    .takeIf { it.firstOrNull()?.isNotBlank() == true } ?: dto.BackdropImageTags,
+                            ) ?: dto
+                            enriched.toHomeEntry(server, strings)
                         }
                     }
 
                 HomeFeed(
                     hero = hero,
                     resume = mergedResume
-                        .mapNotNull { dto -> dto.toHomeEntry(server, strings) }
+                        .mapNotNull { (dto, isNextUp) ->
+                            dto.toHomeEntry(server, strings)?.copy(isNextUp = isNextUp)
+                        }
                         .toRow(HOME_ROW_RESUME),
                     // 首页按媒体库目录构建分库内容行。
                     libraries = libraries,
@@ -643,6 +436,21 @@ class DefaultMediaRepository @Inject constructor(
                 )
             }
         }
+    }
+
+    /** Capture before IO dispatch so a queued action cannot silently move to a different account. */
+    private suspend fun <T> withSession(
+        block: suspend (SessionSnapshot) -> NovumResult<T>,
+    ): NovumResult<T> {
+        val owner = sessionHolder.capture()
+        val result = withContext(dispatchers.io) {
+            if (sessionHolder.capture() !== owner) {
+                failureOf(NovumError.Unauthorized())
+            } else {
+                block(owner)
+            }
+        }
+        return if (sessionHolder.capture() === owner) result else failureOf(NovumError.Unauthorized())
     }
 
     /** 统一异常映射，保证仓储不向 UI 抛异常。 */
@@ -673,14 +481,10 @@ private const val TAG = "MediaRepo"
 /** 季级演职员取样集数：足够覆盖常驻主创与主要客串，又不至于整季大请求。 */
 private const val CAST_SAMPLE_EPISODES = 24
 
+private const val PERSON_WORKS_PAGE_SIZE = 60
+
 /** NextUp 为空时回查续播列表的条数上限。 */
 private const val RESUME_HINT_LIMIT = 12
-
-/** 人物兜底搜索取样条目数：20 条主角阵容足够覆盖常见演员名。 */
-private const val PERSON_DERIVE_ITEMS = 20
-
-/** 人物兜底搜索的条目类型：剧集/电影/分集都挂 People。 */
-private const val PERSON_DERIVE_ITEM_TYPES = "Movie,Series,Episode"
 
 /**
  * 单剧集 NextUp 的取样条数：网关忽略 `SeriesId` 时用来在客户端捞出本剧那条，

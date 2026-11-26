@@ -7,6 +7,7 @@ import com.novum.tv.core.error.NovumError
 import com.novum.tv.core.result.NovumResult
 import com.novum.tv.data.repository.ItemPlaybackPrefsStore
 import com.novum.tv.data.repository.MediaRepository
+import com.novum.tv.data.repository.PlaybackReporter
 import com.novum.tv.data.repository.PlaybackRepository
 import com.novum.tv.data.settings.AppSettings
 import com.novum.tv.data.settings.SettingsRepository
@@ -32,11 +33,14 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.TestCoroutineScheduler
 import java.io.File
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Rule
 import org.junit.Test
+import org.junit.rules.TemporaryFolder
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
@@ -55,7 +59,10 @@ import org.robolectric.annotation.Config
 class PlayerViewModelPlanReloadTest {
 
     @get:Rule
-    val dispatchers = MainDispatcherRule()
+    val dispatchers = MainDispatcherRule(StandardTestDispatcher())
+
+    @get:Rule
+    val temporaryFolder = TemporaryFolder()
 
     @Test
     fun `切换音频直通会写设置并从当前位置重新取计划`() = runTest {
@@ -132,17 +139,160 @@ class PlayerViewModelPlanReloadTest {
         assertEquals("重取计划必须沿用内存里的当前倍速", 1.5f, viewModel.state.value.playbackSpeed)
     }
 
+    @Test
+    fun subtitleWeightLoadsUpdatesImmediatelyAndPersistsAcrossPlaybackReloads() = runTest {
+        val settings = FakeSettingsRepository(AppSettings(subtitleWeight = 2))
+        val viewModel = viewModel(RecordingPlaybackRepository(), settings)
+        advanceUntilIdle()
+        assertEquals(2, viewModel.state.value.subtitleWeight)
+
+        viewModel.setSubtitleWeight(0)
+        assertEquals(0, viewModel.state.value.subtitleWeight)
+        advanceUntilIdle()
+        assertEquals(0, settings.settings.first().subtitleWeight)
+
+        viewModel.load(startOverrideMs = 20_000)
+        advanceUntilIdle()
+        assertEquals(0, viewModel.state.value.subtitleWeight)
+    }
+
+    @Test
+    fun subtitleWeightDoesNotRevertWhenReloadReadsAStaleSettingsSnapshot() = runTest {
+        val viewModel = viewModel(RecordingPlaybackRepository(), StaleSettingsRepository(playbackSpeed = 1f))
+        advanceUntilIdle()
+        assertEquals(1, viewModel.state.value.subtitleWeight)
+
+        viewModel.setSubtitleWeight(99)
+        assertEquals(2, viewModel.state.value.subtitleWeight)
+        viewModel.load(startOverrideMs = 20_000)
+        advanceUntilIdle()
+
+        assertEquals(2, viewModel.state.value.subtitleWeight)
+    }
+
+    @Test
+    fun `手动选择和关闭字幕立即更新恢复策略而不等待落盘`() = runTest {
+        val prefs = ItemPlaybackPrefsStore(temporaryFolder.newFile(), Dispatchers.Unconfined)
+        val oldAudio = ItemPlaybackPrefsStore.TrackRef("原音轨", "zh", rawLabel = "原音轨")
+        prefs.update(
+            itemId = ITEM_ID,
+            mediaSourceId = "source-1",
+            subtitleTrack = ItemPlaybackPrefsStore.TrackRef("旧字幕", "zh", rawLabel = "旧字幕"),
+            audioTrack = oldAudio,
+        )
+        val viewModel = viewModel(RecordingPlaybackRepository(), FakeSettingsRepository(), playbackPrefs = prefs)
+        advanceUntilIdle()
+
+        viewModel.rememberManualTrack(true, "新字幕", "en", rawLabel = "新字幕")
+
+        val selected = viewModel.state.value.rememberedPrefs
+        assertEquals("新字幕", selected?.subtitleTrack?.rawLabel)
+        assertFalse(selected?.subtitleDisabled ?: true)
+        assertEquals(oldAudio, selected?.audioTrack)
+        assertEquals("source-1", selected?.mediaSourceId)
+
+        viewModel.rememberManualTrack(true, "", null, disabled = true)
+        assertEquals(true, viewModel.state.value.rememberedPrefs?.subtitleDisabled)
+        assertEquals(null, viewModel.state.value.rememberedPrefs?.subtitleTrack)
+        advanceUntilIdle()
+    }
+
+    @Test
+    fun `手动选择音轨立即替换起播记忆且保留字幕设置`() = runTest {
+        val prefs = ItemPlaybackPrefsStore(temporaryFolder.newFile(), Dispatchers.Unconfined)
+        prefs.update(
+            itemId = ITEM_ID,
+            audioTrack = ItemPlaybackPrefsStore.TrackRef("旧音轨", "zh", rawLabel = "旧音轨"),
+            subtitleDisabled = true,
+        )
+        val viewModel = viewModel(RecordingPlaybackRepository(), FakeSettingsRepository(), playbackPrefs = prefs)
+        advanceUntilIdle()
+
+        viewModel.rememberManualTrack(false, "新音轨", "en", rawLabel = "新音轨", channels = 6)
+
+        val selected = viewModel.state.value.rememberedPrefs
+        assertEquals("新音轨", selected?.audioTrack?.rawLabel)
+        assertEquals(6, selected?.audioTrack?.channels)
+        assertEquals(true, selected?.subtitleDisabled)
+        advanceUntilIdle()
+    }
+
+    @Test
+    fun `排队的上报保留事件发生时的播放方式和会话`() = runTest {
+        val playback = RecordingPlaybackRepository(
+            plan = plan().copy(playSessionId = "session-a"),
+        )
+        // 停止上报走独立 IO 队列，故意等主线程新计划生效后再执行。
+        val reportScheduler = TestCoroutineScheduler()
+        val viewModel = viewModel(
+            playback,
+            FakeSettingsRepository(),
+            appScope = CoroutineScope(StandardTestDispatcher(reportScheduler)),
+        )
+        advanceUntilIdle()
+
+        viewModel.onStarted(1_000)
+        viewModel.onProgress(2_000)
+        viewModel.onStopped(3_000)
+        viewModel.onMethodChanged(PlayMethod.DirectStream)
+        playback.nextPlan = plan().copy(method = PlayMethod.Transcode, playSessionId = "session-b")
+        viewModel.retryWithTranscode(4_000)
+        advanceUntilIdle()
+        assertEquals("session-b", viewModel.state.value.data?.playSessionId)
+        reportScheduler.advanceUntilIdle()
+
+        assertEquals(
+            listOf(
+                ReportCall("started", 1_000, PlayMethod.DirectPlay, "session-a"),
+                ReportCall("progress", 2_000, PlayMethod.DirectPlay, "session-a"),
+                ReportCall("stopped", 3_000, PlayMethod.DirectPlay, "session-a"),
+            ),
+            playback.reports,
+        )
+    }
+
+    @Test
+    fun `播放页始终使用构造时绑定的上报器`() = runTest {
+        val originalReporter = RecordingPlaybackRepository()
+        val otherReporter = RecordingPlaybackRepository()
+        val playback = RecordingPlaybackRepository().apply { sessionReporterOverride = originalReporter }
+        val viewModel = viewModel(playback, FakeSettingsRepository())
+        advanceUntilIdle()
+
+        // 模拟用户切换服务器/账号，之后读取仓储的当前会话会拿到另一个上报器。
+        playback.sessionReporterOverride = otherReporter
+        viewModel.onStarted(1_000)
+        viewModel.onProgress(2_000)
+        viewModel.onStopped(3_000)
+        advanceUntilIdle()
+
+        // appScope 与 Main 队列独立；此处约束归属与完整事件，不约束完成顺序。
+        assertEquals(3, originalReporter.reports.size)
+        assertEquals(
+            setOf(
+                ReportCall("started", 1_000, PlayMethod.DirectPlay, null),
+                ReportCall("progress", 2_000, PlayMethod.DirectPlay, null),
+                ReportCall("stopped", 3_000, PlayMethod.DirectPlay, null),
+            ),
+            originalReporter.reports.toSet(),
+        )
+        assertEquals(emptyList<ReportCall>(), otherReporter.reports)
+        assertEquals(emptyList<ReportCall>(), playback.reports)
+    }
+
     private fun viewModel(
         playback: PlaybackRepository,
         settings: SettingsRepository,
         mediaSourceId: String? = null,
+        playbackPrefs: ItemPlaybackPrefsStore? = null,
+        appScope: CoroutineScope = CoroutineScope(Dispatchers.Unconfined),
     ) = PlayerViewModel(
         playback = playback,
         media = EmptyMediaRepository,
         settings = settings,
         danmuRepository = NoopDanmuRepository,
         capability = FakeCapabilityProvider(),
-        playbackPrefs = ItemPlaybackPrefsStore(
+        playbackPrefs = playbackPrefs ?: ItemPlaybackPrefsStore(
             File(ApplicationProvider.getApplicationContext<Context>().filesDir, "test_player_prefs.json"),
             // 真实 IO 线程会越过用例边界回补 Main 续体（UncaughtExceptionsBeforeTest
             // 偶红根因）：注入 Unconfined 让文件 IO 内联在测试协程上执行
@@ -152,7 +302,7 @@ class PlayerViewModelPlanReloadTest {
         logger = NoopNovumLogger,
         // 收尾上报用的是进程级作用域：测试里用 Unconfined 让它内联执行，避免用例
         // 跑完后还有游离协程越过用例边界
-        appScope = CoroutineScope(Dispatchers.Unconfined),
+        appScope = appScope,
         savedStateHandle = SavedStateHandle(
             buildMap {
                 put("itemId", ITEM_ID)
@@ -169,11 +319,23 @@ class PlayerViewModelPlanReloadTest {
         val mediaSourceId: String?,
     )
 
+    private data class ReportCall(
+        val event: String,
+        val positionMs: Long,
+        val method: PlayMethod,
+        val playSessionId: String?,
+    )
+
     private class RecordingPlaybackRepository(
-        private val plan: PlaybackPlan = plan(),
+        plan: PlaybackPlan = plan(),
     ) : PlaybackRepository {
 
         val calls = mutableListOf<PlanCall>()
+        val reports = mutableListOf<ReportCall>()
+        var nextPlan = plan
+        var sessionReporterOverride: PlaybackReporter? = null
+
+        override fun sessionReporter(): PlaybackReporter = sessionReporterOverride ?: this
 
         override suspend fun plan(
             itemId: String,
@@ -183,7 +345,7 @@ class PlayerViewModelPlanReloadTest {
             mediaSourceId: String?,
         ): NovumResult<PlaybackPlan> {
             calls += PlanCall(itemId, startPositionMs, excludeLine, mediaSourceId)
-            return NovumResult.Success(plan)
+            return NovumResult.Success(nextPlan)
         }
 
         override suspend fun reportStarted(
@@ -191,21 +353,27 @@ class PlayerViewModelPlanReloadTest {
             positionMs: Long,
             method: PlayMethod,
             playSessionId: String?,
-        ) = Unit
+        ) {
+            reports += ReportCall("started", positionMs, method, playSessionId)
+        }
 
         override suspend fun reportProgress(
             itemId: String,
             positionMs: Long,
             method: PlayMethod,
             playSessionId: String?,
-        ) = Unit
+        ) {
+            reports += ReportCall("progress", positionMs, method, playSessionId)
+        }
 
         override suspend fun reportStopped(
             itemId: String,
             positionMs: Long,
             method: PlayMethod,
             playSessionId: String?,
-        ) = Unit
+        ) {
+            reports += ReportCall("stopped", positionMs, method, playSessionId)
+        }
     }
 
     /**

@@ -18,7 +18,6 @@ import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
-import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -42,6 +41,7 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import coil3.SingletonImageLoader
 import coil3.request.ImageRequest
 import com.novum.tv.core.designsystem.R
@@ -107,10 +107,21 @@ fun HomeScreen(
 
     // 回到首页时向服务器静默确认：在详情页标为已看/
     // 收藏后回到首页，继续观看栏/收藏态要立刻与服务器对齐；不进 Loading 态
-    val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
+    val lifecycleOwner = LocalLifecycleOwner.current
+    var isHomeResumed by remember(lifecycleOwner) {
+        mutableStateOf(lifecycleOwner.lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED))
+    }
     DisposableEffect(lifecycleOwner) {
         val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
-            if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) viewModel.refresh()
+            when (event) {
+                androidx.lifecycle.Lifecycle.Event.ON_RESUME -> {
+                    isHomeResumed = true
+                    viewModel.refresh()
+                }
+                androidx.lifecycle.Lifecycle.Event.ON_PAUSE,
+                androidx.lifecycle.Lifecycle.Event.ON_STOP -> isHomeResumed = false
+                else -> Unit
+            }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
@@ -169,6 +180,7 @@ fun HomeScreen(
                 onOpenLibrary = onOpenLibrary,
                 onNavigateTab = onNavigateTab,
                 firstFocus = firstFocus,
+                isPageVisible = isHomeResumed,
                 onHeroPlayFocusChanged = { heroPlayHasFocus = it },
                 listState = listState,
             )
@@ -207,6 +219,7 @@ fun HomeScreen(
  * @param onHeroPlayFocusChanged Hero 播放 CTA 焦点变化回调（Back 分层状态）。
  * @param listState 外部注入的列表状态；首页 Back 处理需要将列表滚回顶部
  *  由 [HomeScreen] 持有并传入，单测直接渲染时用默认值。
+ * @param isPageVisible 页面处于前台时允许 Hero 空闲轮播。
  */
 @Composable
 fun HomeContent(
@@ -220,6 +233,8 @@ fun HomeContent(
     firstFocus: FocusRequester = remember { FocusRequester() },
     onHeroPlayFocusChanged: ((Boolean) -> Unit)? = null,
     listState: LazyListState = rememberLazyListState(),
+    heroRotateIdleMs: Long = HERO_ROTATE_IDLE_MS,
+    isPageVisible: Boolean = true,
 ) {
     val context = LocalContext.current
 
@@ -248,7 +263,6 @@ fun HomeContent(
     // 用户已轮播到的作品必须保留，否则返回首页会突然跳回第一张。
     var displayEntry by remember { mutableStateOf(feed.hero.firstOrNull()) }
     var heroRotateIndex by remember { mutableIntStateOf(0) }
-    var lastInteractionAt by remember { mutableLongStateOf(SystemClock.uptimeMillis()) }
 
     LaunchedEffect(feed) {
         val heroes = feed.hero
@@ -274,15 +288,14 @@ fun HomeContent(
     // 用户操作信号：任何按键 +1（轮播计时重置；DPAD 导航本身就是按键事件）
     var interactionTick by remember { mutableIntStateOf(0) }
 
-    // Hero 自动轮播：无操作达到设定时长后推进作品；任意按键重置计时。
-    LaunchedEffect(interactionTick) { lastInteractionAt = SystemClock.uptimeMillis() }
-    LaunchedEffect(feed.hero) {
-        while (feed.hero.isNotEmpty()) {
-            delay(HERO_ROTATE_IDLE_MS)
-            if (SystemClock.uptimeMillis() - lastInteractionAt >= HERO_ROTATE_IDLE_MS) {
-                heroRotateIndex = (heroRotateIndex + 1) % feed.hero.size
-                displayEntry = feed.hero[heroRotateIndex]
-            }
+    // 页面可见且无遥控操作时轮播；CTA 焦点不参与计时，离开首页则由生命周期暂停。
+    // 任意按键都会重启静默计时，避免用户刚操作就切换海报。
+    LaunchedEffect(feed.hero, interactionTick, isPageVisible) {
+        if (!isPageVisible || feed.hero.isEmpty()) return@LaunchedEffect
+        while (true) {
+            delay(heroRotateIdleMs)
+            heroRotateIndex = (heroRotateIndex + 1) % feed.hero.size
+            displayEntry = feed.hero[heroRotateIndex]
         }
     }
 
@@ -456,9 +469,8 @@ private const val HERO_PRELOAD_COUNT = 4
 private const val FOCUS_REQUEST_FRAMES = 3
 
 /**
- * Hero 自动轮播：信息态下无操作 [HERO_ROTATE_IDLE_MS] 后推进下一部作品
- * （Netflix/Apple 惯例 5~8s 取中）；任何按键操作即时重置计时并暂停推进，
- * 回到信息态静止后恢复。浏览态（内容行/Hero 卡行）不轮播。
+ * Hero 自动轮播：首页处于前台且无操作 [HERO_ROTATE_IDLE_MS] 后推进下一部作品。
+ * 任意按键重置计时，焦点位置不限制轮播；离开首页暂停，返回后重新计时。
  */
 private const val HERO_ROTATE_IDLE_MS = 6_000L
 

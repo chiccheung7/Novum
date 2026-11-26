@@ -1,5 +1,6 @@
 package com.novum.tv.core.network
 
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 /**
  * 服务器地址解析与规范化。
  *
@@ -78,6 +79,19 @@ object ServerAddress {
      * @param baseUrl 规范化后的地址（不带尾部斜杠）。
      */
     fun toBaseUrl(baseUrl: String): String = if (baseUrl.endsWith("/")) baseUrl else "$baseUrl/"
+
+    /** Keep API-relative media paths below the configured proxy prefix without duplicating it. */
+    fun resolveUrl(server: String, path: String): String? {
+        val base = toBaseUrl(server).toHttpUrlOrNull() ?: return null
+        val resolved = base.resolve(path) ?: return null
+        if (!path.startsWith('/') || path.startsWith("//")) return resolved.toString()
+        val prefix = base.encodedPath.trimEnd('/')
+        if (prefix.isEmpty() || resolved.encodedPath == prefix || resolved.encodedPath.startsWith("$prefix/")) {
+            return resolved.toString()
+        }
+        // Emby may omit a proxy-owned prefix even when its API path starts with '/'.
+        return base.resolve(path.trimStart('/'))?.toString()
+    }
 
     /**
      * 该地址是否将以**明文 HTTP** 传输（登录页据此要求用户显式确认）。

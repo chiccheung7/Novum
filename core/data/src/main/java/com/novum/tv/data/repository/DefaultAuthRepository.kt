@@ -14,8 +14,14 @@ import com.novum.tv.data.remote.emby.EmbyApiProvider
 import com.novum.tv.data.remote.emby.SessionHolder
 import com.novum.tv.data.session.Session
 import com.novum.tv.data.session.SessionStore
+import java.util.concurrent.atomic.AtomicReference
 import javax.inject.Inject
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
 /**
@@ -39,75 +45,111 @@ class DefaultAuthRepository @Inject constructor(
     private val dispatchers: DispatcherProvider,
 ) : AuthRepository {
 
+    // Network calls may finish out of order. Only the latest login intent can publish a session;
+    // persistence and the in-memory header snapshot must then advance as one short commit.
+    private data class SessionIntent(
+        val revision: Long = 0,
+        val rememberRevision: Long = 0,
+        val remember: Boolean = false,
+    )
+
+    private val sessionIntent = AtomicReference(SessionIntent())
+    private val sessionCommit = Mutex()
+    private var committedRevision = 0L // Protected by sessionCommit.
+
     override suspend fun login(
         rawServer: String,
         username: String,
         password: String,
         remember: Boolean,
-    ): NovumResult<Session> = withContext(dispatchers.io) {
-        val candidates = ServerAddress.candidates(rawServer)
-        if (candidates.isEmpty()) {
-            return@withContext failureOf(NovumError.Unknown())
-        }
+    ): NovumResult<Session> {
+        val revision = sessionIntent.updateAndGet {
+            SessionIntent(it.revision + 1, it.rememberRevision + 1, remember)
+        }.revision
+        return withContext(dispatchers.io) {
+            val candidates = ServerAddress.candidates(rawServer)
+            if (candidates.isEmpty()) {
+                return@withContext failureOf(NovumError.Unknown())
+            }
 
-        var lastError: NovumError = NovumError.Unknown()
-        // 多候选地址时，网络错误常常只是「另一个候选不可达」，而鉴权错误才是用户真正要修的。
-        // 不能让最后一条候选的网络错误覆盖前面更准确的 401。
-        var sawUnauthorized = false
-        for (baseUrl in candidates) {
-            try {
-                val api = clients.api(baseUrl)
-                val info = api.publicInfo()
-                val auth = api.authenticate(AuthRequestDto(Username = username, Pw = password))
-                val token = auth.AccessToken
-                val user = auth.User ?: UserDto()
-                val userId = user.Id
-                if (token.isNullOrBlank() || userId.isNullOrBlank()) {
-                    lastError = NovumError.Unauthorized()
-                    sawUnauthorized = true
-                    continue
-                }
+            var lastError: NovumError = NovumError.Unknown()
+            // 多候选地址时，网络错误常常只是「另一个候选不可达」，而鉴权错误才是用户真正要修的。
+            // 不能让最后一条候选的网络错误覆盖前面更准确的 401。
+            var sawUnauthorized = false
+            for (baseUrl in candidates) {
+                try {
+                    val api = clients.api(baseUrl)
+                    val info = api.publicInfo()
+                    val auth = api.authenticate(AuthRequestDto(Username = username, Pw = password))
+                    val token = auth.AccessToken
+                    val user = auth.User ?: UserDto()
+                    val userId = user.Id
+                    if (token.isNullOrBlank() || userId.isNullOrBlank()) {
+                        lastError = NovumError.Unauthorized()
+                        sawUnauthorized = true
+                        continue
+                    }
 
-                val deviceId = sessionStore.deviceId()
-                val serverName = info.ServerName.orEmpty()
-                val userName = user.Name ?: username
-                if (remember) {
-                    sessionStore.save(
+                    val deviceId = sessionStore.deviceId()
+                    val serverName = info.ServerName.orEmpty()
+                    val userName = user.Name ?: username
+                    val session = Session(
                         server = baseUrl,
                         token = token,
                         userId = userId,
                         userName = userName,
                         serverName = serverName,
+                        deviceId = deviceId,
                     )
-                } else {
-                    // 不记住登录：只存服务器+用户名供预填，绝不落盘 token/身份
-                    sessionStore.saveIdentity(server = baseUrl, username = userName)
+                    val committed = sessionCommit.withLock {
+                        currentCoroutineContext().ensureActive()
+                        val currentIntent = sessionIntent.get()
+                        if (revision != currentIntent.revision) return@withLock false
+                        // DataStore may commit just before cancellation is delivered. Finish the
+                        // matching holder update so a cancelled caller cannot leave disk/memory split.
+                        withContext(NonCancellable) {
+                            if (currentIntent.remember) {
+                                sessionStore.save(
+                                    server = baseUrl,
+                                    token = token,
+                                    userId = userId,
+                                    userName = userName,
+                                    serverName = serverName,
+                                    rememberedPassword = password,
+                                )
+                            } else {
+                                // 不记住登录：只存服务器+用户名供预填，绝不落盘 token/身份
+                                sessionStore.saveIdentity(server = baseUrl, username = userName)
+                            }
+                            sessionHolder.update(session)
+                            committedRevision = revision
+                        }
+                        true
+                    }
+                    if (!committed) return@withContext failureOf(NovumError.Unknown())
+                    return@withContext successOf(session)
+                } catch (cancellation: CancellationException) {
+                    throw cancellation
+                } catch (throwable: Throwable) {
+                    val error = throwable.toNovumError()
+                    if (error is NovumError.Unauthorized) sawUnauthorized = true
+                    lastError = error
                 }
-                val session = Session(
-                    server = baseUrl,
-                    token = token,
-                    userId = userId,
-                    userName = userName,
-                    serverName = serverName,
-                    deviceId = deviceId,
-                )
-                sessionHolder.update(session)
-                return@withContext successOf(session)
-            } catch (cancellation: CancellationException) {
-                throw cancellation
-            } catch (throwable: Throwable) {
-                val error = throwable.toNovumError()
-                if (error is NovumError.Unauthorized) sawUnauthorized = true
-                lastError = error
             }
+            failureOf(if (sawUnauthorized) NovumError.Unauthorized() else lastError)
         }
-        failureOf(if (sawUnauthorized) NovumError.Unauthorized() else lastError)
     }
 
-    override suspend fun restore(): Session? = withContext(dispatchers.io) {
-        val session = sessionStore.load()
-        sessionHolder.update(session)
-        session
+    override suspend fun restore(): Session? {
+        val revision = sessionIntent.get().revision
+        return withContext(dispatchers.io) {
+            sessionCommit.withLock {
+                val session = sessionStore.load()
+                if (revision != sessionIntent.get().revision) return@withLock null
+                sessionHolder.update(session)
+                session
+            }
+        }
     }
 
     override suspend fun lastServer(): String = withContext(dispatchers.io) {
@@ -118,8 +160,41 @@ class DefaultAuthRepository @Inject constructor(
         runCatchingSuspend { sessionStore.lastUsername() }.getOrDefault("")
     }
 
-    override suspend fun logout() = withContext(dispatchers.io) {
-        sessionStore.clear()
-        sessionHolder.update(null)
+    override suspend fun lastPassword(): String? = withContext(dispatchers.io) {
+        runCatchingSuspend { sessionStore.rememberedPassword() }.getOrNull()
+    }
+
+    override suspend fun shouldRememberCredentials(): Boolean = withContext(dispatchers.io) {
+        runCatchingSuspend { sessionStore.shouldRememberCredentials() }.getOrDefault(false)
+    }
+
+    override suspend fun setRememberCredentials(remember: Boolean) {
+        val choice = sessionIntent.updateAndGet {
+            it.copy(rememberRevision = it.rememberRevision + 1, remember = remember)
+        }
+        // A successful login can navigate away and cancel the form while this choice waits
+        // behind its disk commit. An explicit opt-out must still remove the saved secrets.
+        withContext(NonCancellable + dispatchers.io) {
+            sessionCommit.withLock {
+                if (choice.rememberRevision != sessionIntent.get().rememberRevision) return@withLock
+                sessionStore.setRememberCredentials(remember)
+            }
+        }
+    }
+
+    override suspend fun logout() {
+        val revision = sessionIntent.updateAndGet { it.copy(revision = it.revision + 1) }.revision
+        withContext(dispatchers.io) {
+            sessionCommit.withLock {
+                // A newer login may already have committed before this IO task was scheduled.
+                if (committedRevision > revision) return@withLock
+                currentCoroutineContext().ensureActive()
+                withContext(NonCancellable) {
+                    sessionStore.clear()
+                    sessionHolder.update(null)
+                    committedRevision = revision
+                }
+            }
+        }
     }
 }

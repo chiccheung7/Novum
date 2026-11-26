@@ -20,7 +20,6 @@ import com.novum.tv.data.settings.SettingsRepository
 import com.novum.tv.data.settings.danmuConfig
 import com.novum.tv.model.Chapter
 import com.novum.tv.model.DanmuAnime
-import com.novum.tv.model.DanmuArea
 import com.novum.tv.model.DanmuConfig
 import com.novum.tv.model.DanmuEpisode
 import com.novum.tv.model.DanmuSize
@@ -50,6 +49,7 @@ import kotlinx.coroutines.launch
  * @param subtitle 播放方式描述，在抽屉的画质 tab 展示。
  * @param subtitlesEnabled 设置里的「默认开启字幕」，决定外挂字幕是否默认选中。
  * @param subtitleSize 字幕字号档位（1 小 – 4 超大），驱动字幕层字号。
+ * @param subtitleWeight 字幕粗细（0 细、1 标准、2 粗）。
  * @param chapters 章节列表，服务端未提供时为空。
  */
 data class PlayerUiState(
@@ -60,6 +60,7 @@ data class PlayerUiState(
     val subtitle: String = "",
     val subtitlesEnabled: Boolean = true,
     val subtitleSize: Int = 2,
+    val subtitleWeight: Int = 1,
     /** 字幕抬升档位（0=默认居中 1/2 往高 3/4 往低（五档双向，二次））。 */
     val subtitleOffsetLevel: Int = 0,
     val chapters: List<Chapter> = emptyList(),
@@ -133,6 +134,9 @@ class PlayerViewModel @Inject constructor(
     private val _state = MutableStateFlow(PlayerUiState())
     val state: StateFlow<PlayerUiState> = _state.asStateFlow()
 
+    /** 绑定进入播放页时的服务端/账号，离场后的排队上报不能改投新登录会话。 */
+    private val reporter = playback.sessionReporter()
+
     /** 记录当前播放方式，退出时上报要用。 */
     private var method: PlayMethod = PlayMethod.DirectPlay
 
@@ -177,6 +181,9 @@ class PlayerViewModel @Inject constructor(
      */
     private var speedAdopted = false
 
+    /** 首次读取后沿用当前粗细，重取计划不覆盖尚未落盘的调节值。 */
+    private var subtitleWeightAdopted = false
+
     private fun replan(block: suspend CoroutineScope.() -> Unit) {
         planJob?.cancel()
         planJob = viewModelScope.launch(block = block)
@@ -212,6 +219,18 @@ class PlayerViewModel @Inject constructor(
         }
     }
 
+    /** 字幕粗细立即更新渲染并持久化，跨片沿用。 */
+    fun setSubtitleWeight(level: Int) {
+        val coerced = level.coerceIn(0, 2)
+        subtitleWeightAdopted = true
+        _state.update { it.copy(subtitleWeight = coerced) }
+        viewModelScope.launch {
+            runCatchingSuspend {
+                settings.update { it.copy(subtitleWeight = coerced) }
+            }.onFailure { logger.w(TAG, "字幕粗细偏好写入失败", it) }
+        }
+    }
+
     /**
      * 字幕抬升档位切换（抽屉字幕 tab 调节字幕高度）：
      * 立即同步 UiState（SubtitleLayer 底部留白响应式跟随）并持久化（跨片记忆）。
@@ -241,6 +260,18 @@ class PlayerViewModel @Inject constructor(
         channels: Int? = null,
     ) {
         val ref = ItemPlaybackPrefsStore.TrackRef(label = label, language = language, rawLabel = rawLabel, channels = channels)
+        // 轨道变更会立即触发 onTracksChanged。先更新恢复策略的快照，
+        // 否则监听器还拿着起播时的旧记忆，会把用户刚选的轨道切回去。
+        _state.update { state ->
+            val previous = state.rememberedPrefs ?: ItemPlaybackPrefsStore.ItemPrefs(itemId = itemId)
+            state.copy(
+                rememberedPrefs = if (isText) {
+                    previous.copy(subtitleTrack = ref.takeUnless { disabled }, subtitleDisabled = disabled)
+                } else {
+                    previous.copy(audioTrack = ref)
+                },
+            )
+        }
         viewModelScope.launch {
             runCatchingSuspend {
                 playbackPrefs.update(
@@ -354,7 +385,7 @@ class PlayerViewModel @Inject constructor(
                     s.copy(
                         danmuOpacity = next.opacity,
                         danmuDensity = next.density,
-                        danmuAreaFull = next.area == DanmuArea.Full,
+                        danmuArea = next.area,
                         danmuSize = when (next.size) {
                             DanmuSize.Small -> 1
                             DanmuSize.Large -> 3
@@ -517,6 +548,12 @@ class PlayerViewModel @Inject constructor(
                     planFileName = result.value.fileName
                     danmuEpisodeId = remembered?.danmuEpisodeId
                     speedAdopted = true
+                    val subtitleWeight = if (subtitleWeightAdopted) {
+                        _state.value.subtitleWeight
+                    } else {
+                        (snapshot?.subtitleWeight ?: 1).coerceIn(0, 2)
+                    }
+                    subtitleWeightAdopted = true
                     _state.update {
                         it.copy(
                             plan = UiState.Success(result.value),
@@ -526,6 +563,7 @@ class PlayerViewModel @Inject constructor(
                             subtitle = result.value.method.label(appContext),
                             subtitlesEnabled = subtitlesEnabled,
                             subtitleSize = subtitleSize,
+                            subtitleWeight = subtitleWeight,
                             subtitleOffsetLevel = subtitleOffsetLevel,
                             chapters = detail?.chapters.orEmpty(),
                             audioPassthrough = snapshot?.audioPassthrough ?: true,
@@ -588,7 +626,7 @@ class PlayerViewModel @Inject constructor(
      * 切换音频直通并用新 DeviceProfile 重新请求播放计划。
      *
      * 路径：写设置 → 重新请求 PlaybackInfo → 界面按新计划从 [resumeAtMs] 续播。
-     * 不做运行时重建 AudioSink（Media3 1.11 已移除该能力，重建播放器代价更大）。
+     * UI 按新直通设置重建播放器，让 AudioSink 的构造能力与新计划一致。
      *
      * @param enabled 是否开启直通。
      * @param resumeAtMs 切换前的播放位置，重载后从此处继续。
@@ -688,7 +726,9 @@ class PlayerViewModel @Inject constructor(
      *   写死 0 会把服务端「继续观看」进度先打回开头。
      */
     fun onStarted(positionMs: Long) {
-        viewModelScope.launch { playback.reportStarted(itemId, positionMs, method, playSessionId) }
+        val eventMethod = method
+        val eventSessionId = playSessionId
+        viewModelScope.launch { reporter.reportStarted(itemId, positionMs, eventMethod, eventSessionId) }
     }
 
     /**
@@ -697,7 +737,9 @@ class PlayerViewModel @Inject constructor(
      * @param positionMs 当前位置。
      */
     fun onProgress(positionMs: Long) {
-        viewModelScope.launch { playback.reportProgress(itemId, positionMs, method, playSessionId) }
+        val eventMethod = method
+        val eventSessionId = playSessionId
+        viewModelScope.launch { reporter.reportProgress(itemId, positionMs, eventMethod, eventSessionId) }
     }
 
     /**
@@ -711,7 +753,10 @@ class PlayerViewModel @Inject constructor(
      * @param positionMs 退出位置（片尾附近由界面传完整时长，见 PlayerScreen）。
      */
     fun onStopped(positionMs: Long) {
-        appScope.launch { playback.reportStopped(itemId, positionMs, method, playSessionId) }
+        // appScope 在 IO 线程执行前可能已经重取计划；事件属于调用瞬间的会话。
+        val eventMethod = method
+        val eventSessionId = playSessionId
+        appScope.launch { reporter.reportStopped(itemId, positionMs, eventMethod, eventSessionId) }
     }
 }
 

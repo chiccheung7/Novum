@@ -19,18 +19,31 @@ class PlayerCommandsTest {
         controlsVisible: Boolean = false,
         progressFocused: Boolean = false,
         confirmVisible: Boolean = false,
+        overlayActionFocused: Boolean = false,
     ): PlayerCommand? = resolvePlayerCommand(
         key = key,
         repeatCount = repeatCount,
         controlsVisible = controlsVisible,
         progressFocused = progressFocused,
         confirmVisible = confirmVisible,
+        overlayActionFocused = overlayActionFocused,
     )
 
     @Test
     fun `隐藏态确定键切换播放`() {
         assertEquals(PlayerCommand.TogglePlay, resolve(Key.DirectionCenter))
         assertEquals(PlayerCommand.TogglePlay, resolve(Key.Enter))
+    }
+
+    @Test
+    fun `跳过或重试按钮的确定键不能被隐藏控制条当成播放暂停`() {
+        assertNull(resolve(Key.DirectionCenter, overlayActionFocused = true))
+        assertNull(resolve(Key.Enter, overlayActionFocused = true))
+        assertNull(resolve(Key.NumPadEnter, overlayActionFocused = true))
+        assertEquals(
+            PlayerCommand.ShowControls,
+            resolve(Key.DirectionUp, overlayActionFocused = true),
+        )
     }
 
     @Test

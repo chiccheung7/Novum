@@ -4,6 +4,7 @@ import com.novum.tv.core.log.NovumLogger
 import com.novum.tv.core.result.runCatchingSuspend
 import com.novum.tv.data.remote.emby.EmbyApiProvider
 import com.novum.tv.data.remote.emby.SessionHolder
+import com.novum.tv.data.remote.emby.SessionSnapshot
 import java.net.HttpURLConnection
 import java.net.URL
 import java.util.concurrent.ConcurrentHashMap
@@ -78,32 +79,36 @@ class LineProbe @Inject constructor(
     suspend fun lines(
         excludeBaseUrl: String? = null,
         pinnedLine: String? = null,
-    ): List<ServerLine> = withContext(Dispatchers.IO) {
-        val server = sessionHolder.server
-        if (server.isBlank()) return@withContext emptyList()
-        val now = System.currentTimeMillis()
-        val cached = cache[server]?.takeIf { now - it.at < CACHE_TTL_MS }?.lines
-        val base = cached ?: probe(server).also { cache[server] = CacheEntry(now, it) }
-        val pinned = pinnedLine?.takeIf { it.isNotBlank() }
-        val pinnedEntry = pinned?.let { url -> base.find { it.baseUrl == url } }
-        val rest = base.filter {
-            (excludeBaseUrl == null || it.baseUrl != excludeBaseUrl) && it.baseUrl != pinned
+    ): List<ServerLine> {
+        val owner = sessionHolder.capture()
+        return withContext(Dispatchers.IO) {
+            val key = owner.playbackPrefsNamespace() ?: return@withContext emptyList()
+            if (sessionHolder.capture() !== owner) return@withContext emptyList()
+            val now = System.currentTimeMillis()
+            val cached = cache[key]?.takeIf { now - it.at < CACHE_TTL_MS }?.lines
+            val base = cached ?: probe(owner)
+            if (sessionHolder.capture() !== owner) return@withContext emptyList()
+            if (cached == null) cache[key] = CacheEntry(now, base)
+            val pinned = pinnedLine?.takeIf { it.isNotBlank() }
+            val pinnedEntry = pinned?.let { url -> base.find { it.baseUrl == url } }
+            val rest = base.filter {
+                (excludeBaseUrl == null || it.baseUrl != excludeBaseUrl) && it.baseUrl != pinned
+            }
+            // 锁线已由调用方核对账号归属；暂未发现/下线的同账号线路仍尊重手动选择。
+            listOfNotNull(pinnedEntry ?: pinned?.let { ServerLine(it, 0L) }) + rest
         }
-        // 锁定线路不在服务端列表里（接口没返回/已下线）：仍尊重用户选择，
-        // 以未测速条目置顶（播放失败自然走换线重试）
-        listOfNotNull(pinnedEntry ?: pinned?.let { ServerLine(it, 0L) }) + rest
     }
 
     /** 手动切线后强制重探（清缓存；TTL 内的测速数据随线路变化失去意义）。 */
     fun invalidate() {
-        val server = sessionHolder.server
-        if (server.isNotBlank()) cache.remove(server)
+        sessionHolder.playbackPrefsNamespace()?.let(cache::remove)
     }
 
     /** 探测 + 测速；任何异常都退化为单线路。 */
-    private suspend fun probe(server: String): List<ServerLine> {
+    private suspend fun probe(owner: SessionSnapshot): List<ServerLine> {
+        val server = owner.server
         val discovered = runCatchingSuspend {
-            linesFromJson(clients.api(server).serverDomains(), server)
+            linesFromJson(clients.api(server, owner).serverDomains(), server)
         }.getOrElse {
             logger.w("LineProbe", "ServerDomains 不可用，退化为单线路: ${it.message}")
             listOf(ServerLine(server.trimEnd('/'), 0L))

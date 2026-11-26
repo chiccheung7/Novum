@@ -13,6 +13,7 @@ import coil3.network.okhttp.OkHttpNetworkFetcherFactory
 import okio.Path.Companion.toOkioPath
 import com.novum.tv.data.remote.emby.EmbyClientFactory
 import com.novum.tv.data.remote.emby.SessionHolder
+import com.novum.tv.data.remote.emby.addEmbySessionAuthentication
 import com.novum.tv.ui.component.NovumFastNav
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.sync.Semaphore
@@ -93,7 +94,7 @@ class NovumApplication : Application(), SingletonImageLoader.Factory {
     }
 
     /**
-     * 图片专用 OkHttp：补 UA 与 Token，并跟随 301 到图片 CDN。
+     * 图片专用 OkHttp：补 UA，Token 只发给当前会话的服务器。
      *
      * 不复用 API 客户端的连接池，避免图片请求与 JSON 请求互相排队。
      */
@@ -103,11 +104,9 @@ class NovumApplication : Application(), SingletonImageLoader.Factory {
         .addInterceptor { chain ->
             val builder = chain.request().newBuilder()
                 .header("User-Agent", EmbyClientFactory.BROWSER_USER_AGENT)
-            if (sessionHolder.token.isNotBlank()) {
-                builder.header("X-Emby-Token", sessionHolder.token)
-            }
             chain.proceed(builder.build())
         }
+        .addEmbySessionAuthentication(sessionHolder)
         .build()
 
     private companion object {

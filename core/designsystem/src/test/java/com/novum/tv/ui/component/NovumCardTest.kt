@@ -1,6 +1,8 @@
 package com.novum.tv.ui.component
 
 import androidx.compose.ui.Modifier
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.remember
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.semantics.SemanticsActions
@@ -74,5 +76,44 @@ class NovumCardTest {
         composeRule.waitForIdle()
 
         composeRule.onNodeWithContentDescription("焦点测试").assertIsFocused()
+    }
+
+    @Test
+    fun forwardsModifierFocusRequesterToTextCard() {
+        lateinit var requester: FocusRequester
+        composeRule.setContent {
+            NovumTheme {
+                requester = remember { FocusRequester() }
+                NovumCard(
+                    title = "修饰符焦点测试",
+                    modifier = Modifier.focusRequester(requester),
+                    onClick = {},
+                )
+                LaunchedEffect(requester) { requester.requestFocus() }
+            }
+        }
+        composeRule.waitForIdle()
+
+        composeRule.onNodeWithContentDescription("修饰符焦点测试").assertIsFocused()
+    }
+
+    @Test
+    fun forwardsModifierFocusRequesterToImageOnlyCard() {
+        lateinit var requester: FocusRequester
+        composeRule.setContent {
+            NovumTheme {
+                requester = remember { FocusRequester() }
+                NovumCard(
+                    title = "纯图焦点测试",
+                    showText = false,
+                    modifier = Modifier.focusRequester(requester),
+                    onClick = {},
+                )
+                LaunchedEffect(requester) { requester.requestFocus() }
+            }
+        }
+        composeRule.waitForIdle()
+
+        composeRule.onNodeWithContentDescription("纯图焦点测试").assertIsFocused()
     }
 }

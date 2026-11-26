@@ -46,6 +46,8 @@ import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
@@ -57,7 +59,6 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
-import kotlin.math.roundToInt
 import androidx.tv.material3.Text
 import com.novum.tv.core.designsystem.R
 import com.novum.tv.core.error.NovumError
@@ -154,7 +155,7 @@ internal class PlayerLiveStats {
 /**
  * 播放设置抽屉，按 tab 显示不同设置。
  *
- * 从右侧滑入，包含六个 tab（[DrawerTab]）：
+ * 从右侧滑入，包含七个 tab（[DrawerTab]）：
  * - **选集**：当前季分集列表，OK 直接换集。
  * - **简介**：当前集（电影为整部）的完整简介，独立成页可滚动。
  * - **字幕**：字幕延迟、字号和字幕轨道列表。
@@ -240,6 +241,8 @@ internal fun PlayerSettingsDrawer(
     subtitleSize: Int = 2,
     /** 字幕字号切换回调（OK 循环档位，立即生效并持久化）。 */
     onSubtitleSizeChanged: (Int) -> Unit = {},
+    subtitleWeight: Int = 1,
+    onSubtitleWeightChanged: (Int) -> Unit = {},
     /** 字幕抬升档位（0=默认居中，1/2 上移，3/4 下移）。 */
     subtitleOffsetLevel: Int = 0,
     /** 字幕抬升切换回调（OK 循环档位，立即生效并持久化）。 */
@@ -314,12 +317,14 @@ internal fun PlayerSettingsDrawer(
                     color = NovumPalette.Border,
                     shape = NovumShapes.Large,
                 )
-                // 抽屉是独立焦点组：内部导航由组内节点完成，不向控制条逃逸
-                .focusGroup()
                 // 四向困焦：列表翻到顶/底、tab 行到头时
                 // 焦点搜索会逃出抽屉落到根节点（高亮凭空消失）——exit 一律取消
                 // 边界处焦点停在原地；抽屉内芯片↔内容的上下移动不受影响
-                .focusProperties { onExit = { FocusRequester.Cancel } }
+                // properties 必须在组 target 前，否则会困住子 tab 组，连内容区也进不去。
+                // 退出动画期间节点仍在；关闭后要允许父层把焦点交还控制条。
+                .focusProperties { onExit = { if (visible) cancelFocusChange() } }
+                // 抽屉是独立焦点组：内部导航由组内节点完成，不向控制条逃逸
+                .focusGroup()
                 // 上下键：焦点优先、翻页兜底（只读页没有可聚焦行，靠这条才翻得动）
                 .onPreviewKeyEvent { event ->
                     if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
@@ -343,25 +348,42 @@ internal fun PlayerSettingsDrawer(
                     color = NovumPalette.Paper,
                 )
 
-                // tab 行：选中 = 淡白底 + 底部短线；焦点 = 白底黑字（NovumChip 统一语义）。
-                // 七个 tab 在 480dp 面板内已放不下，横向可滚是常态（焦点移动会自动滚入）。
+                // 抽屉内侧宽度不足以容纳七个 tab。两侧预留固定的方向提示位，
+                // 不压住标签和焦点框；左右键移焦时 horizontalScroll 会跟随焦点滚动。
                 Row(
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    // 焦点上报给父层：焦点在 tab 行时根节点放行左右键（芯片间移焦），
-                    // 在内容行时根节点吞掉左右键（防逃逸到控制条）
                     modifier = Modifier
                         .fillMaxWidth()
-                        .horizontalScroll(tabRowScroll)
+                        .focusGroup()
                         .onFocusChanged { onTabsFocusChanged(it.hasFocus) },
+                    verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    DrawerTab.entries.forEach { tab ->
-                        NovumChip(
-                            label = stringResource(tab.labelRes),
-                            selected = tab == currentTab,
-                            onClick = { currentTab = tab },
-                            focusRequester = tabFocus.takeIf { tab == initialTab },
-                        )
+                    TabOverflowHint(
+                        visible = hasMoreTabsBefore(tabRowScroll.value, tabRowScroll.maxValue),
+                        text = "‹",
+                        description = stringResource(R.string.player_drawer_tabs_more_left),
+                        modifier = Modifier.width(TAB_OVERFLOW_HINT_WIDTH),
+                    )
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        modifier = Modifier
+                            .weight(1f)
+                            .horizontalScroll(tabRowScroll),
+                    ) {
+                        DrawerTab.entries.forEach { tab ->
+                            NovumChip(
+                                label = stringResource(tab.labelRes),
+                                selected = tab == currentTab,
+                                onClick = { currentTab = tab },
+                                focusRequester = tabFocus.takeIf { tab == initialTab },
+                            )
+                        }
                     }
+                    TabOverflowHint(
+                        visible = hasMoreTabsAfter(tabRowScroll.value, tabRowScroll.maxValue),
+                        text = "›",
+                        description = stringResource(R.string.player_drawer_tabs_more_right),
+                        modifier = Modifier.width(TAB_OVERFLOW_HINT_WIDTH),
+                    )
                 }
             }
 
@@ -404,6 +426,8 @@ internal fun PlayerSettingsDrawer(
                             onSubtitleDelayChanged = onSubtitleDelayChanged,
                             subtitleSize = subtitleSize,
                             onSubtitleSizeChanged = onSubtitleSizeChanged,
+                            subtitleWeight = subtitleWeight,
+                            onSubtitleWeightChanged = onSubtitleWeightChanged,
                             subtitleOffsetLevel = subtitleOffsetLevel,
                             onSubtitleOffsetLevelChanged = onSubtitleOffsetLevelChanged,
                             onSelectText = onSelectText,
@@ -500,7 +524,7 @@ private fun EpisodesTab(
     onSelectEpisode: (String) -> Unit,
 ) {
     if (episodes.isEmpty()) {
-        HintRow(stringResource(R.string.player_drawer_empty))
+        HintRow(stringResource(R.string.player_drawer_no_episodes))
         return
     }
     // 页签本身就叫「选集」，页内不再重复一遍小标题
@@ -508,7 +532,7 @@ private fun EpisodesTab(
         val runtime = episode.runtimeMinutes
         val progress = episode.progressRatio
         val value = when {
-            episode.played -> stringResource(R.string.detail_episode_played)
+            episode.played -> null
             progress != null && runtime != null -> stringResource(
                 R.string.detail_episode_remaining,
                 ((runtime * (1f - progress)).toInt()).coerceAtLeast(1),
@@ -516,10 +540,10 @@ private fun EpisodesTab(
             else -> null
         }
         DrawerRow(
-            label = "S%02dE%02d".format(episode.seasonIndex, episode.index % 100) +
-                " · " + episode.title,
+            label = drawerEpisodeLabel(episode.seasonIndex, episode.index, episode.title),
             value = value,
             selected = episode.id == currentEpisodeId,
+            played = episode.played,
             onClick = { onSelectEpisode(episode.id) },
         )
     }
@@ -543,7 +567,7 @@ private fun OverviewTab(
 ) {
     // 集号单独进元信息行：原来标题里再拼一次 "SxxExx · 第N集 标题"，
     // Emby 的 Name 本身常带「第N集」，看起来就是同一串编号写了两遍
-    val episodeLabel = episode?.let { "S%02dE%02d".format(it.seasonIndex, it.index % 100) }
+    val episodeLabel = episode?.let { episodeCode(it.seasonIndex, it.index) }
     val heading = episode?.let { stripEpisodePrefix(it.title) }?.takeIf { it.isNotBlank() }
         ?: title
     val meta = listOfNotNull(
@@ -571,20 +595,12 @@ private fun OverviewTab(
     }
     val rawBody = episode?.overview?.takeIf { it.isNotBlank() }
         ?: overview?.takeIf { it.isNotBlank() }
-    // 正文若以标题开头（Emby 有些库的简介就是这么写的），去掉重复的那一段
-    val body = rawBody?.let { text ->
-        val prefix = heading.takeIf { it.isNotBlank() }
-        if (prefix != null && text.startsWith(prefix)) {
-            text.removePrefix(prefix).trimStart(' ', '：', ':', '·', '-', '—', '\n')
-        } else {
-            text
-        }
-    }
+    val body = drawerOverviewBody(heading, rawBody)
     Spacer(modifier = Modifier.height(14.dp))
     Text(
         text = body ?: stringResource(R.string.player_drawer_no_overview),
-        style = NovumType.Body,
-        color = NovumPalette.PaperMuted,
+        style = NovumType.Synopsis,
+        color = NovumPalette.PaperFaint,
         modifier = Modifier.padding(horizontal = 4.dp),
     )
 }
@@ -598,7 +614,17 @@ private val EPISODE_PREFIX = Regex(
 
 /** 去掉集名里的编号前缀（编号已经在元信息行单独展示）。 */
 internal fun stripEpisodePrefix(title: String): String =
-    title.replace(EPISODE_PREFIX, "").trim().ifBlank { title }
+    title.replace(EPISODE_PREFIX, "").trim()
+
+/** 两位是最小补零宽度，不截断第 100 集及之后的真实集号。 */
+internal fun episodeCode(seasonIndex: Int, episodeIndex: Int): String =
+    "S%02dE%02d".format(seasonIndex, episodeIndex)
+
+/** 集号只展示一次；源标题若只有编号，列表直接显示标准集号。 */
+internal fun drawerEpisodeLabel(seasonIndex: Int, episodeIndex: Int, title: String): String {
+    val name = stripEpisodePrefix(title)
+    return listOf(episodeCode(seasonIndex, episodeIndex), name).filter { it.isNotBlank() }.joinToString(" · ")
+}
 
 /** 字幕 tab：字幕延迟微调 + 字幕字号调节 + 字幕高度调节 + 轨道列表（首位「关闭字幕」）。 */
 @Composable
@@ -608,6 +634,8 @@ private fun SubtitleTab(
     onSubtitleDelayChanged: (Long) -> Unit,
     subtitleSize: Int,
     onSubtitleSizeChanged: (Int) -> Unit,
+    subtitleWeight: Int,
+    onSubtitleWeightChanged: (Int) -> Unit,
     subtitleOffsetLevel: Int,
     onSubtitleOffsetLevelChanged: (Int) -> Unit,
     onSelectText: (TrackOption) -> Unit,
@@ -618,17 +646,17 @@ private fun SubtitleTab(
     // 布尔语义统一交给开关：开 = 选第一条字幕轨，关 = 选中「关闭字幕」。
     val offOption = textTracks.firstOrNull { it.id == TEXT_OFF_ID }
     val tracks = textTracks.filter { it.id != TEXT_OFF_ID }
-    // 片源没有字幕轨时，开关与三个调节项都没有意义：整页禁用 + 一句说明，
-    // 不再让用户以为「按了没反应是坏了」
-    val hasTracks = tracks.isNotEmpty()
+    if (tracks.isEmpty()) {
+        HintRow(stringResource(R.string.player_drawer_no_subtitle))
+        return
+    }
     NovumSwitchRow(
         text = stringResource(R.string.player_drawer_subtitle_switch),
-        checked = hasTracks && tracks.any { it.selected },
+        checked = tracks.any { it.selected },
         onCheckedChange = { enabled ->
             (if (enabled) tracks.firstOrNull() else offOption)?.let(onSelectText)
         },
         consumeAtBoundary = true,
-        enabled = hasTracks,
     )
     // 延迟/字号/高度：左右键无级调节（OK 保留原循环作为兼容）
     DrawerRow(
@@ -640,7 +668,7 @@ private fun SubtitleTab(
         onClick = { onSubtitleDelayChanged(if (subtitleDelayMs >= 2_000L) 0L else subtitleDelayMs + 100L) },
         onStep = { dir -> onSubtitleDelayChanged((subtitleDelayMs + dir * 100L).coerceIn(0L, 2_000L)) },
         onAdjustFocus = onAdjustFocus,
-        enabled = hasTracks,
+        adjustmentFraction = subtitleDelayMs / 2_000f,
     )
     DrawerRow(
         label = stringResource(R.string.settings_subtitle_size),
@@ -658,9 +686,24 @@ private fun SubtitleTab(
         onAdjustFocus = onAdjustFocus,
         segmentCount = 4,
         segmentLevel = subtitleSize - 1,
-        enabled = hasTracks,
     )
-    // 字幕高度：0=自适应黑边（默认）1/2 上移，3/4 下移；左右键逐档调节
+    DrawerRow(
+        label = stringResource(R.string.settings_subtitle_weight),
+        value = stringResource(
+            when (subtitleWeight) {
+                0 -> R.string.subtitle_weight_thin
+                2 -> R.string.subtitle_weight_bold
+                else -> R.string.subtitle_weight_normal
+            },
+        ),
+        selected = false,
+        onClick = { onSubtitleWeightChanged((subtitleWeight + 1) % 3) },
+        segmentCount = 3,
+        segmentLevel = subtitleWeight,
+    )
+    // 保留存储值，按实际高度排列控制条：低 → 默认 → 高。
+    val heightLevels = listOf(4, 3, 0, 1, 2)
+    val heightIndex = heightLevels.indexOf(subtitleOffsetLevel).coerceAtLeast(0)
     DrawerRow(
         label = stringResource(R.string.player_drawer_subtitle_height),
         value = stringResource(
@@ -673,17 +716,13 @@ private fun SubtitleTab(
             },
         ),
         selected = subtitleOffsetLevel != 0,
-        onClick = { onSubtitleOffsetLevelChanged(if (subtitleOffsetLevel >= 4) 0 else subtitleOffsetLevel + 1) },
-        onStep = { dir -> onSubtitleOffsetLevelChanged((subtitleOffsetLevel + dir).coerceIn(0, 4)) },
+        onClick = { onSubtitleOffsetLevelChanged(heightLevels[(heightIndex + 1) % heightLevels.size]) },
+        onStep = { dir -> onSubtitleOffsetLevelChanged(heightLevels[(heightIndex + dir).coerceIn(0, 4)]) },
         onAdjustFocus = onAdjustFocus,
         segmentCount = 5,
-        segmentLevel = subtitleOffsetLevel,
-        enabled = hasTracks,
+        segmentLevel = heightIndex,
+        adjustmentCenterFraction = 0.5f,
     )
-    if (!hasTracks) {
-        HintRow(stringResource(R.string.player_drawer_no_subtitle))
-        return
-    }
     tracks.forEach { option ->
         DrawerRow(
             label = option.label,
@@ -720,21 +759,20 @@ private fun DanmakuTab(
     )
     if (!config.enabled) return
 
-    // 显示区域：上半屏（默认，不挡字幕）/ 全屏；左右键或 OK 切换
+    // 三档区域用 OK 循环；仅顶部占上四分之一屏。
     DrawerRow(
         label = stringResource(R.string.danmu_area),
         value = stringResource(
-            if (config.area == DanmuArea.Full) R.string.danmu_area_full else R.string.danmu_area_half,
+            when (config.area) {
+                DanmuArea.Top -> R.string.danmu_area_top
+                DanmuArea.Half -> R.string.danmu_area_half
+                DanmuArea.Full -> R.string.danmu_area_full
+            },
         ),
-        selected = config.area == DanmuArea.Full,
-        onClick = { actions?.updateConfig { it.toggleArea() } },
-        // 左 = 上半屏，右 = 全屏：方向键给出确定方向，不做单纯翻转
-        onStep = { dir ->
-            actions?.updateConfig { it.copy(area = if (dir > 0) DanmuArea.Full else DanmuArea.Half) }
-        },
-        onAdjustFocus = onAdjustFocus,
-        segmentCount = 2,
-        segmentLevel = if (config.area == DanmuArea.Full) 1 else 0,
+        selected = false,
+        onClick = { actions?.updateConfig { it.copy(area = DanmuArea.entries[(it.area.ordinal + 1) % 3]) } },
+        segmentCount = 3,
+        segmentLevel = config.area.ordinal,
     )
     // 透明度：10%–100%，步进 10%
     DrawerRow(
@@ -809,7 +847,7 @@ private fun DanmakuTab(
         segmentCount = 3,
         segmentLevel = config.speed.ordinal,
     )
-    // 时间偏移：±0.1 秒步进（左右键），OK +0.1 秒，长按 Back 由行外部处理
+    // 时间偏移：±0.1 秒步进，控制条中线表示零偏移。
     DrawerRow(
         label = stringResource(R.string.danmu_offset),
         value = formatDanmuOffset(danmu.offsetMs),
@@ -817,6 +855,8 @@ private fun DanmakuTab(
         onClick = { actions?.adjustOffset(DANMU_OFFSET_STEP_MS) },
         onStep = { dir -> actions?.adjustOffset(dir * DANMU_OFFSET_STEP_MS) },
         onAdjustFocus = onAdjustFocus,
+        adjustmentFraction = 0.5f + danmu.offsetMs.toFloat() / (2 * DANMU_OFFSET_LIMIT_MS),
+        adjustmentCenterFraction = 0.5f,
     )
     if (danmu.offsetMs != 0L) {
         DrawerRow(
@@ -952,10 +992,6 @@ private fun DanmakuTab(
     }
 }
 
-/** 区域切换。 */
-private fun DanmuConfig.toggleArea(): DanmuConfig =
-    copy(area = if (area == DanmuArea.Full) DanmuArea.Half else DanmuArea.Full)
-
 /** 百分比档位（10 档）：把可能带浮点误差的当前值归一到 1..10。 */
 private fun percentLevel(value: Float): Int = (value * 10f).roundToInt().coerceIn(1, 10)
 
@@ -989,10 +1025,9 @@ private fun DanmuSpeed.stepped(dir: Int): DanmuSpeed =
 /** 弹幕偏移步进（±0.1 秒）。 */
 internal const val DANMU_OFFSET_STEP_MS = 100L
 
-/** 偏移展示：0 显示「关」，其余按秒保留一位小数（如 `+0.3s`）。 */
-@Composable
+/** 偏移按秒保留一位小数，零偏移同样显示数值。 */
 private fun formatDanmuOffset(ms: Long): String {
-    if (ms == 0L) return stringResource(R.string.player_delay_off)
+    if (ms == 0L) return "0.0s"
     val seconds = ms / 1000.0
     return String.format(java.util.Locale.ROOT, "%+.1fs", seconds)
 }
@@ -1008,6 +1043,10 @@ private fun AudioTab(
     onTogglePassthrough: () -> Unit,
     onAdjustFocus: (Boolean) -> Unit,
 ) {
+    if (audioTracks.isEmpty()) {
+        HintRow(stringResource(R.string.player_drawer_no_audio_operations))
+        return
+    }
     // 页签已是「音轨」；「音频直通」这块的小标题也与开关自己的文案重复
     NovumSwitchRow(
         text = stringResource(R.string.player_drawer_passthrough),
@@ -1024,22 +1063,19 @@ private fun AudioTab(
         onClick = { onAudioDelayChanged(if (audioDelayMs >= 2_000L) -2_000L else audioDelayMs + 100L) },
         onStep = { dir -> onAudioDelayChanged((audioDelayMs + dir * 100L).coerceIn(-2_000L, 2_000L)) },
         onAdjustFocus = onAdjustFocus,
+        adjustmentFraction = (audioDelayMs + 2_000L) / 4_000f,
+        adjustmentCenterFraction = 0.5f,
     )
-    if (audioTracks.isEmpty()) {
-        HintRow(stringResource(R.string.player_drawer_empty))
-    } else {
-        // 只有一条音轨时没有"选"的余地：整行禁用（灰字、不进焦点链），
-        // 只作为"当前用的是这条"的信息展示
-        val single = audioTracks.size == 1
-        audioTracks.forEach { option ->
-            DrawerRow(
-                label = option.label,
-                value = option.codec,
-                selected = option.selected,
-                onClick = { onSelectAudio(option) },
-                enabled = !single,
-            )
-        }
+    // 单音轨没有切换对象：保留当前格式作只读信息。
+    val single = audioTracks.size == 1
+    audioTracks.forEach { option ->
+        DrawerRow(
+            label = option.label,
+            value = option.codec,
+            selected = option.selected,
+            onClick = { onSelectAudio(option) },
+            enabled = !single,
+        )
     }
 }
 
@@ -1081,10 +1117,7 @@ private fun QualityTab(
     InfoLine(R.string.player_info_method, subtitle.ifBlank { null })
     InfoLine(
         R.string.player_info_audio,
-        listOfNotNull(
-            audioLabel.ifBlank { null },
-            spec?.audioChannels?.let { String.format(channelsTemplate, it) },
-        ).joinToString(" · ").ifBlank { null },
+        drawerAudioSummary(audioLabel, spec?.audioChannels, channelsTemplate),
     )
     // 音频输出路径：PCM 解码 / bitstream 直通——「音画延迟是否生效」就看这一行
     // （延迟处理器只挂在 PCM 路径，bitstream 直通不经过，属预期行为）
@@ -1114,7 +1147,7 @@ private fun ChapterTab(
     onSelectChapter: (Chapter) -> Unit,
 ) {
     if (chapters.isEmpty()) {
-        HintRow(stringResource(R.string.player_drawer_empty))
+        HintRow(stringResource(R.string.player_drawer_no_chapters))
         return
     }
     val chapterTemplate = stringResource(R.string.player_info_chapter_default)
@@ -1216,20 +1249,27 @@ private fun DrawerRow(
     segmentCount: Int? = null,
     /** 档位条当前档（0 起）。 */
     segmentLevel: Int = 0,
+    /** 连续数值的控制条位置；有限档位自动由档位数和当前档换算。 */
+    adjustmentFraction: Float? = null,
+    adjustmentCenterFraction: Float? = null,
     /** 是否可操作；false = 灰字、不聚焦（没有选择余地的行）。 */
     enabled: Boolean = true,
+    played: Boolean = false,
 ) {
     val bringIntoView = remember { BringIntoViewRequester() }
     val scope = rememberCoroutineScope()
+    val cycleOnly = segmentCount != null && segmentCount <= 3
+    val usesBar = !cycleOnly && (adjustmentFraction != null || segmentCount != null)
+    val step = onStep.takeIf { usesBar }
     val modifier = Modifier
         .bringIntoViewRequester(bringIntoView)
         .then(
-            if (onStep != null) {
+            if (step != null) {
                 Modifier.onPreviewKeyEvent { event ->
                     if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
                     when (event.key) {
-                        Key.DirectionLeft -> { onStep(-1); true }
-                        Key.DirectionRight -> { onStep(1); true }
+                        Key.DirectionLeft -> { step(-1); true }
+                        Key.DirectionRight -> { step(1); true }
                         else -> false
                     }
                 }
@@ -1238,19 +1278,24 @@ private fun DrawerRow(
     NovumOptionRow(
         text = label,
         value = value,
-        selected = selected,
+        selected = selected && !cycleOnly,
+        played = played,
         onClick = onClick,
         focusRequester = focusRequester,
-        // 调节项不是"选项"：不显示选中态，只留左右箭头（或有档位条时只留条）
-        adjustable = onStep != null,
+        // 调节项以控制条表达当前值；整行持有焦点，方向键直接调节。
+        adjustable = usesBar,
         onFocused = { focused ->
             if (focused) scope.launch { bringIntoView.bringIntoView() }
-            onAdjustFocus?.invoke(focused)
+            if (step != null) onAdjustFocus?.invoke(focused)
         },
         modifier = modifier,
-        segmentCount = segmentCount,
+        segmentCount = segmentCount.takeIf { usesBar },
         segmentLevel = segmentLevel,
         enabled = enabled,
+        adjustmentFraction = if (!usesBar) null else adjustmentFraction ?: segmentCount?.takeIf { it > 3 }?.let {
+            segmentLevel.toFloat() / (it - 1)
+        },
+        adjustmentCenterFraction = adjustmentCenterFraction,
     )
 }
 
@@ -1286,10 +1331,38 @@ private suspend fun withFrameNanosCompat() {
     androidx.compose.runtime.withFrameNanos { }
 }
 
-/** 延迟毫秒转为展示文案；0 显示「关」。 */
+/** 头部横向标签的纯滚动边界判断，单测覆盖初始/中段/末端。 */
+internal fun hasMoreTabsBefore(scrollValue: Int, maxValue: Int): Boolean = maxValue > 0 && scrollValue > 0
+
+internal fun hasMoreTabsAfter(scrollValue: Int, maxValue: Int): Boolean =
+    maxValue > 0 && scrollValue < maxValue
+
+/** 固定宽度的滚动方向提示；不参与焦点链，也不覆盖标签可视区域。 */
 @Composable
+private fun TabOverflowHint(
+    visible: Boolean,
+    text: String,
+    description: String,
+    modifier: Modifier = Modifier,
+) {
+    Box(
+        modifier = modifier.height(52.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        if (visible) {
+            Text(
+                text = text,
+                style = NovumType.Title,
+                color = NovumPalette.PaperMuted,
+                modifier = Modifier.semantics { contentDescription = description },
+            )
+        }
+    }
+}
+
+/** 延迟毫秒转为展示文案，零延迟同样显示数值。 */
 private fun formatDelay(ms: Long): String = if (ms == 0L) {
-    stringResource(R.string.player_delay_off)
+    "0ms"
 } else {
     val signed = if (ms > 0) "+$ms" else "$ms"
     "${signed}ms"
@@ -1303,6 +1376,9 @@ private val DRAWER_VERTICAL_INSET = 32.dp
 
 /** 内容区上下边缘渐隐高度。 */
 private val DRAWER_EDGE_FADE = 18.dp
+
+/** 标签栏两侧提示位；给芯片留出独立可见区域。 */
+private val TAB_OVERFLOW_HINT_WIDTH = 24.dp
 
 /** 只读页整页翻的比例：一屏 85%，留 15% 上下文。 */
 private const val DRAWER_SCROLL_PAGE_RATIO = 0.85f

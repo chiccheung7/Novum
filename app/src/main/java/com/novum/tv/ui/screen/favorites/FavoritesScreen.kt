@@ -11,6 +11,8 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
@@ -54,6 +56,7 @@ fun FavoritesScreen(
     // 排序：收藏页复用网格页 SortBar / GridViewModel 排序能力
     val sortOption by viewModel.sortOption.collectAsStateWithLifecycle()
     val sortDescending by viewModel.sortDescending.collectAsStateWithLifecycle()
+    var sortedInPage by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) { viewModel.start(GridSource.Favorites(SearchType.All)) }
 
@@ -103,7 +106,10 @@ fun FavoritesScreen(
             SortBar(
                 sortOption = sortOption,
                 sortDescending = sortDescending,
-                onSortOption = viewModel::setSortOption,
+                onSortOption = { option ->
+                    sortedInPage = true
+                    viewModel.setSortOption(option)
+                },
             )
 
             when (val current = state) {
@@ -125,8 +131,8 @@ fun FavoritesScreen(
                     items = current.data,
                     onOpenDetail = onOpenDetail,
                     onLoadMore = viewModel::loadMore,
-                    // 首焦落网格首卡（芯片行已移除，本页唯一抓焦源）
-                    focusOnEnter = true,
+                    // 初次进入落首卡；主动排序后保留排序芯片上的焦点。
+                    focusOnEnter = !sortedInPage,
                 )
             }
 

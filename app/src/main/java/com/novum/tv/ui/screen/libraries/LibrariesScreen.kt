@@ -32,7 +32,10 @@ import com.novum.tv.ui.component.NovumCard
 import com.novum.tv.ui.component.NovumContentScaffold
 import com.novum.tv.ui.component.NovumGridFocusScrollScope
 import com.novum.tv.ui.component.NovumInitialFocus
+import com.novum.tv.ui.component.NovumSkeletonCardGrid
 import com.novum.tv.ui.component.NovumStateView
+import com.novum.tv.ui.component.mediaCardWidth
+import com.novum.tv.ui.component.mediaGridColumns
 import com.novum.tv.ui.theme.NovumDimens
 import com.novum.tv.ui.theme.NovumFocusTokens
 import com.novum.tv.ui.theme.NovumPalette
@@ -40,7 +43,7 @@ import com.novum.tv.ui.theme.NovumType
 
 /**
  * 媒体库目录：16:9 库卡网格，点击进入该库条目页。
- * 卡宽由 LIBRARY_CARD_WIDTH 控制，列数随可用宽度计算。
+ * 卡宽与首页横卡共用标准规格，列数随可用宽度计算。
  * 首列静止位与 [NovumDimens.SafeHorizontal] 对齐。
  *
  * @param onOpenLibrary 打开媒体库网格，参数为库 id 与名称。
@@ -63,52 +66,42 @@ fun LibrariesScreen(
         contentHorizontalPadding = 0.dp,
         bottomPadding = 0.dp,
     ) {
-        when (val current = state) {
-            is UiState.Loading -> NovumStateView(state = current, onRetry = {})
-
-            is UiState.Empty -> NovumStateView(state = current, onRetry = {})
-
-            is UiState.Error -> NovumStateView(state = current, onRetry = viewModel::reload)
-
-            is UiState.Success -> LibraryList(
-                libraries = current.data,
-                firstFocus = firstFocus,
-                onOpenLibrary = onOpenLibrary,
+        Column(modifier = Modifier.fillMaxSize()) {
+            Text(
+                text = stringResource(R.string.library_title),
+                style = NovumType.Title,
+                color = NovumPalette.Paper,
+                modifier = Modifier.padding(horizontal = NovumDimens.SafeHorizontal),
             )
+            Spacer(modifier = Modifier.height(NovumDimens.TitleToRow))
+            when (val current = state) {
+                UiState.Loading -> NovumSkeletonCardGrid(
+                    aspectRatio = LANDSCAPE_ASPECT,
+                    rows = 2,
+                    modifier = Modifier.weight(1f),
+                )
+
+                is UiState.Empty -> NovumStateView(state = current, onRetry = {})
+
+                is UiState.Error -> NovumStateView(state = current, onRetry = viewModel::reload)
+
+                is UiState.Success -> {
+                    // 首焦只在库卡到位后绑定；页标题在所有状态中保持同一位置。
+                    NovumInitialFocus(firstFocus)
+                    LibraryGrid(
+                        libraries = current.data,
+                        firstFocus = firstFocus,
+                        onOpenLibrary = onOpenLibrary,
+                        modifier = Modifier.weight(1f),
+                    )
+                }
+            }
         }
     }
 }
-
-@Composable
-private fun LibraryList(
-    libraries: List<MediaLibrary>,
-    firstFocus: FocusRequester,
-    onOpenLibrary: (libraryId: String, libraryName: String) -> Unit,
-) {
-    // 首焦 = 第一张库卡
-    NovumInitialFocus(firstFocus)
-    Column(modifier = Modifier.fillMaxSize()) {
-        Text(
-            text = stringResource(R.string.library_title),
-            style = NovumType.Title,
-            color = NovumPalette.Paper,
-            modifier = Modifier.padding(horizontal = NovumDimens.SafeHorizontal),
-        )
-        Spacer(modifier = Modifier.height(NovumDimens.TitleToRow))
-        // 网格自己吃满剩余高度并内部滚动（标题固定，不随网格滚出屏幕）
-        LibraryGrid(
-            libraries = libraries,
-            firstFocus = firstFocus,
-            onOpenLibrary = onOpenLibrary,
-            modifier = Modifier.weight(1f),
-        )
-    }
-}
-
 /**
- * 库卡网格：官方标准卡统一口径（[NovumDimens.CardWidth] 268dp / 16:9），
- * 列数按卡宽自适应（1280dp 内容区 4 列，960dp 3 列），出血按标准卡实际
- * 尺寸反推（不手写常量）。
+ * 库卡网格：与首页续播、详情选集共用 [NovumDimens.CardWidth] 目标宽度。
+ * 列数与实际卡宽由共享布局函数计算，出血按同一实际尺寸反推。
  */
 @Composable
 private fun LibraryGrid(
@@ -121,11 +114,8 @@ private fun LibraryGrid(
         val gap = NovumDimens.CardGap
         // 内容区宽（68dp 对齐线内侧）→ 列数
         val contentWidth = maxWidth - NovumDimens.SafeHorizontal * 2
-        // 库卡宽 260dp，在目标画布上可并排展示四张。
-        val cardWidth = LIBRARY_CARD_WIDTH
-        val columns = ((contentWidth + gap) / (cardWidth + gap))
-            .toInt()
-            .coerceIn(2, 6)
+        val columns = mediaGridColumns(contentWidth.value, NovumDimens.CardWidth.value)
+        val cardWidth = mediaCardWidth(contentWidth, NovumDimens.CardWidth)
         // 标准卡实际高度（16:9 图区 + 文字区）→ 出血
         val cardHeight = cardWidth / LANDSCAPE_ASPECT + NovumDimens.CardTextBlockMaxHeight(1)
         val bleed = NovumFocusTokens.bleed(
@@ -152,9 +142,7 @@ private fun LibraryGrid(
                 ),
                 horizontalArrangement = Arrangement.spacedBy(gap),
                 verticalArrangement = Arrangement.spacedBy(rowGap),
-                modifier = Modifier
-                    .fillMaxSize()
-
+                modifier = Modifier.fillMaxSize(),
             ) {
                 itemsIndexed(items = libraries, key = { _, library -> library.id }) { index, library ->
                     NovumCard(
@@ -177,6 +165,3 @@ private fun LibraryGrid(
         }
     }
 }
-
-/** 媒体库卡宽度。 */
-private val LIBRARY_CARD_WIDTH = 260.dp

@@ -8,7 +8,7 @@ import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.emptyPreferences
 import androidx.datastore.preferences.preferencesDataStoreFile
 import java.io.File
-import com.novum.tv.data.repository.PersonIndexStore
+import com.novum.tv.data.remote.emby.SessionHolder
 import com.novum.tv.data.repository.ItemPlaybackPrefsStore
 import com.novum.tv.data.settings.DataStoreSettingsRepository
 import com.novum.tv.data.settings.SettingsRepository
@@ -60,19 +60,16 @@ object DataStoreModule {
         produceFile = { context.preferencesDataStoreFile("novum_settings") },
     )
 
-    /** 提供本地人物索引（落盘文件定位在应用私有目录）。 */
-    @Provides
-    @Singleton
-    fun providePersonIndexStore(
-        @ApplicationContext context: Context,
-    ): PersonIndexStore = PersonIndexStore(File(context.filesDir, "person_index.json"))
-
     /** 提供条目级播放偏好（手动改过的字幕/音轨/版本，按条目记忆）。 */
     @Provides
     @Singleton
     fun provideItemPlaybackPrefsStore(
         @ApplicationContext context: Context,
-    ): ItemPlaybackPrefsStore = ItemPlaybackPrefsStore(File(context.filesDir, "item_playback_prefs.json"))
+        sessionHolder: SessionHolder,
+    ): ItemPlaybackPrefsStore = ItemPlaybackPrefsStore(
+        storeFile = File(context.filesDir, "item_playback_prefs.json"),
+        namespaceProvider = sessionHolder::playbackPrefsNamespace,
+    )
 
     /**
      * 进程级协程作用域（见 [ApplicationScope]）。

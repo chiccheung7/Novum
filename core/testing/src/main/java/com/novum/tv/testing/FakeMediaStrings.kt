@@ -7,6 +7,7 @@ import com.novum.tv.data.text.MediaStrings
  * 仓储测试断言（如「导演」职位兜底）不需要 Robolectric 就能跑。
  */
 object FakeMediaStrings : MediaStrings {
+    override fun recentBroadcastsTitle(): String = "近期热播"
     override fun typeMovie(): String = "电影"
     override fun typeSeries(): String = "剧集"
     override fun typeEpisode(): String = "分集"

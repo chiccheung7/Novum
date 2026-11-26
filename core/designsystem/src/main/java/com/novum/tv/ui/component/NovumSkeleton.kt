@@ -1,43 +1,36 @@
 package com.novum.tv.ui.component
 
-import androidx.compose.animation.core.RepeatMode
-import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.GridItemSpan
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Shape
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.novum.tv.ui.theme.NovumDimens
+import com.novum.tv.ui.theme.NovumFocusTokens
 import com.novum.tv.ui.theme.NovumPalette
 import com.novum.tv.ui.theme.NovumShapes
 
-/**
- * 骨架屏基础块：一块带呼吸动画的灰色占位。
- *
- * 性能要点：透明度动画值在 `graphicsLayer` 的绘制回调里读取，
- * 每帧只触发重绘，不触发重组——列表页骨架动辄十几个块，用 `by` 委托会直接掉帧。
- *
- * @param modifier 外部修饰符。
- * @param shape 圆角形状，默认徽章级小圆角。
- * @param width 固定宽度；为 null 时由 [modifier] 决定。
- * @param height 固定高度；为 null 时由 [modifier] 决定。
- */
+/** Stable neutral blocks avoid independent animation rhythms across a loading page. */
 @Composable
 fun NovumSkeletonBlock(
     modifier: Modifier = Modifier,
@@ -45,154 +38,148 @@ fun NovumSkeletonBlock(
     width: Dp? = null,
     height: Dp? = null,
 ) {
-    val transition = rememberInfiniteTransition(label = "skeleton")
-    val pulse = transition.animateFloat(
-        initialValue = SKELETON_ALPHA_MIN,
-        targetValue = SKELETON_ALPHA_MAX,
-        animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = SKELETON_PULSE_MS),
-            repeatMode = RepeatMode.Reverse,
-        ),
-        label = "skeletonAlpha",
-    )
     Box(
         modifier = modifier
             .then(if (width != null) Modifier.width(width) else Modifier)
             .then(if (height != null) Modifier.height(height) else Modifier)
-            .graphicsLayer { alpha = pulse.value }
             .clip(shape)
             .background(NovumPalette.Surface),
     )
 }
 
-/**
- * 通用列表骨架：若干「标题 + 行」的占位，用于设置、媒体库、搜索等列表型页面。
- *
- * @param modifier 外部修饰符。
- * @param rows 行数。
- */
+/** For actual settings rows; media pages use the corresponding card grid. */
 @Composable
-fun NovumSkeletonRows(
-    modifier: Modifier = Modifier,
-    rows: Int = DEFAULT_SKELETON_ROWS,
-) {
+fun NovumSkeletonRows(modifier: Modifier = Modifier, rows: Int = 6) {
     Column(
         modifier = modifier.fillMaxWidth(),
-        verticalArrangement = Arrangement.spacedBy(NovumDimens.Gutter),
+        verticalArrangement = Arrangement.spacedBy(NovumDimens.TextBlockGap),
     ) {
-        NovumSkeletonBlock(width = 180.dp, height = 20.dp)
         repeat(rows) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                NovumSkeletonBlock(width = 260.dp, height = 18.dp)
+                NovumSkeletonBlock(width = 260.dp, height = 20.dp)
                 NovumSkeletonBlock(width = 96.dp, height = 36.dp, shape = NovumShapes.Pill)
             }
         }
     }
 }
 
-/**
- * 网格骨架：用于媒体库下钻、收藏与搜索结果。
- *
- * @param modifier 外部修饰符。
- * @param rows 行数。
- * @param columns 每行卡片数。
- */
+/** Same image ratio and text height as NovumCard. */
 @Composable
-fun NovumSkeletonPosterGrid(
+fun NovumSkeletonCard(
+    width: Dp,
     modifier: Modifier = Modifier,
-    rows: Int = 3,
-    columns: Int = 4,
+    aspectRatio: Float = POSTER_ASPECT,
 ) {
-    Column(
-        modifier = modifier.fillMaxWidth(),
-        verticalArrangement = Arrangement.spacedBy(NovumDimens.Gutter * 2),
-    ) {
-        repeat(rows) {
-            Row(horizontalArrangement = Arrangement.spacedBy(NovumDimens.CardGap)) {
-                repeat(columns) {
-                    Column(
-                        modifier = Modifier.weight(1f),
-                        verticalArrangement = Arrangement.spacedBy(8.dp),
-                    ) {
-                        NovumSkeletonBlock(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .aspectRatio(POSTER_ASPECT),
-                            shape = NovumShapes.Card,
-                        )
-                        NovumSkeletonBlock(
-                            modifier = Modifier
-                                .fillMaxWidth(SKELETON_TITLE_WIDTH)
-                                .height(18.dp),
-                        )
-                    }
-                }
-            }
+    Column(modifier = modifier.width(width)) {
+        NovumSkeletonBlock(
+            modifier = Modifier.fillMaxWidth().aspectRatio(aspectRatio),
+            shape = NovumShapes.Card,
+        )
+        Column(
+            modifier = Modifier.fillMaxWidth().height(NovumDimens.CardTextBlockMaxHeight(1))
+                .padding(top = NovumDimens.CardImageToTextGap),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            NovumSkeletonBlock(modifier = Modifier.fillMaxWidth(0.72f), height = 20.dp)
+            NovumSkeletonBlock(modifier = Modifier.fillMaxWidth(0.42f), height = 14.dp)
         }
     }
 }
 
-/**
- * 详情页骨架：左侧标题/简介/按钮，右侧海报。
- *
- * @param modifier 外部修饰符。
- */
+/** Same columns, padding and card dimensions as the corresponding loaded grid. */
 @Composable
-fun NovumSkeletonDetail(modifier: Modifier = Modifier) {
-    Row(
-        modifier = modifier
-            .fillMaxWidth()
-            .padding(
-                horizontal = NovumDimens.SafeHorizontal,
-                vertical = NovumDimens.SafeVertical,
+fun NovumSkeletonCardGrid(
+    modifier: Modifier = Modifier,
+    aspectRatio: Float = POSTER_ASPECT,
+    rows: Int = 2,
+    header: (@Composable () -> Unit)? = null,
+) {
+    BoxWithConstraints(modifier = modifier.fillMaxSize()) {
+        val contentWidth = maxWidth - NovumDimens.SafeHorizontal * 2
+        val target = if (aspectRatio == POSTER_ASPECT) NovumDimens.PosterCardWidth else NovumDimens.CardWidth
+        val columns = mediaGridColumns(contentWidth.value, target.value)
+        val cardWidth = mediaCardWidth(contentWidth, target)
+        val cardHeight = cardWidth / aspectRatio + NovumDimens.CardTextBlockMaxHeight(1)
+        val bleed = NovumFocusTokens.bleed(maxOf(cardWidth, cardHeight))
+        LazyVerticalGrid(
+            columns = GridCells.Fixed(columns),
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(
+                start = NovumDimens.SafeHorizontal,
+                end = NovumDimens.SafeHorizontal,
+                top = bleed,
+                bottom = NovumDimens.SafeVertical,
             ),
-        horizontalArrangement = Arrangement.spacedBy(56.dp),
-    ) {
-        Column(
-            modifier = Modifier.weight(1f),
-            verticalArrangement = Arrangement.spacedBy(16.dp),
+            horizontalArrangement = Arrangement.spacedBy(NovumDimens.CardGap),
+            verticalArrangement = Arrangement.spacedBy(maxOf(NovumDimens.CardGap, bleed)),
+            userScrollEnabled = false,
         ) {
-            NovumSkeletonBlock(width = 420.dp, height = 44.dp)
-            NovumSkeletonBlock(width = 260.dp, height = 16.dp)
-            NovumSkeletonBlock(modifier = Modifier.fillMaxWidth(0.9f).height(18.dp))
-            NovumSkeletonBlock(modifier = Modifier.fillMaxWidth(0.8f).height(18.dp))
-            NovumSkeletonBlock(modifier = Modifier.fillMaxWidth(0.6f).height(18.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                NovumSkeletonBlock(width = 160.dp, height = 52.dp, shape = NovumShapes.Pill)
-                NovumSkeletonBlock(width = 160.dp, height = 52.dp, shape = NovumShapes.Pill)
+            if (header != null) {
+                item(span = { GridItemSpan(maxLineSpan) }) {
+                    Box(modifier = Modifier.padding(bottom = NovumDimens.RowGap)) { header() }
+                }
+            }
+            items(columns * rows) { NovumSkeletonCard(cardWidth, aspectRatio = aspectRatio) }
+        }
+    }
+}
+@Composable
+fun NovumSkeletonPosterGrid(
+    modifier: Modifier = Modifier,
+    rows: Int = 2,
+    header: (@Composable () -> Unit)? = null,
+) = NovumSkeletonCardGrid(modifier = modifier, rows = rows, header = header)
+
+/** Shared loading header: title, metadata, synopsis and two actions. */
+@Composable
+fun NovumSkeletonMediaInfo(modifier: Modifier = Modifier) {
+    Column(
+        modifier = modifier.widthIn(max = 720.dp).fillMaxWidth(),
+    ) {
+        NovumSkeletonBlock(modifier = Modifier.fillMaxWidth(0.65f), height = 64.dp)
+        Spacer(Modifier.height(MEDIA_INFO_TITLE_TO_META))
+        NovumSkeletonBlock(modifier = Modifier.fillMaxWidth(0.45f), height = 26.dp)
+        Spacer(Modifier.height(MEDIA_INFO_META_TO_TAGS))
+        Row(horizontalArrangement = Arrangement.spacedBy(MEDIA_INFO_CHIP_GAP)) {
+            listOf(62.dp, 62.dp, 78.dp).forEach { width ->
+                NovumSkeletonBlock(width = width, height = 30.dp, shape = NovumShapes.Pill)
             }
         }
-        Column(
-            modifier = Modifier.width(280.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
+        Spacer(Modifier.height(MEDIA_INFO_TAGS_TO_OVERVIEW))
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            NovumSkeletonBlock(modifier = Modifier.fillMaxWidth(0.95f), height = 18.dp)
+            NovumSkeletonBlock(modifier = Modifier.fillMaxWidth(0.85f), height = 18.dp)
+            NovumSkeletonBlock(modifier = Modifier.fillMaxWidth(0.6f), height = 18.dp)
+        }
+        Spacer(Modifier.height(24.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(NovumDimens.CardGap)) {
             repeat(2) {
                 NovumSkeletonBlock(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .aspectRatio(POSTER_ASPECT),
-                    shape = NovumShapes.Card,
+                    width = novumActionButtonWidth(),
+                    height = NovumDimens.ButtonHeight,
+                    shape = NovumShapes.Pill,
                 )
             }
         }
     }
 }
 
-/** 骨架透明度下限。 */
-private const val SKELETON_ALPHA_MIN = 0.22f
-
-/** 骨架透明度上限。 */
-private const val SKELETON_ALPHA_MAX = 0.42f
-
-/** 一次呼吸耗时。 */
-private const val SKELETON_PULSE_MS = 900
-
-/** 通用列表骨架默认行数。 */
-private const val DEFAULT_SKELETON_ROWS = 6
-
-/** 海报标题占位宽度比例。 */
-private const val SKELETON_TITLE_WIDTH = 0.7f
+/** Follow the real full-width information header, rather than an unrelated poster column. */
+@Composable
+fun NovumSkeletonDetail(modifier: Modifier = Modifier) {
+    Column(
+        modifier = modifier.fillMaxSize().padding(
+            horizontal = NovumDimens.SafeHorizontal,
+            vertical = NovumDimens.SafeVertical,
+        ),
+        verticalArrangement = Arrangement.spacedBy(NovumDimens.SectionGap),
+    ) {
+        NovumSkeletonBlock(width = 56.dp, height = 56.dp, shape = NovumShapes.Pill)
+        NovumSkeletonMediaInfo()
+    }
+}

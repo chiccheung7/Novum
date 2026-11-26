@@ -215,12 +215,6 @@ class DefaultMediaRepositoryDetailTest {
             clients = clients,
             sessionHolder = holder,
             dispatchers = dispatchers,
-            searchCatalog = testSearchCatalog(clients, holder, dispatchers),
-            personIndex = PersonIndexStore(
-                kotlin.io.path.createTempFile("person_index").toFile(),
-                // 同类文件 IO 走测试调度器，防真实 IO 线程越过用例边界回补续体
-                ioDispatcher = dispatcher,
-            ),
             strings = FakeMediaStrings,
             logger = NoopNovumLogger,
         )

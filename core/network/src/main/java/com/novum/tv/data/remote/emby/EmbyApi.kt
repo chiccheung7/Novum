@@ -162,7 +162,7 @@ interface EmbyApi {
     /**
      * 人物（演员/导演）搜索：服务端 `Persons` 端点。
      *
-     * 本地 `PersonIndexStore` 只包含已出现过的演职员，本端点直接按名字查询服务端。
+     * 直接按名字查询服务端人物，覆盖本地已浏览内容之外的结果。
      *
      * @param userId 用户 id。
      * @param searchTerm 关键词。

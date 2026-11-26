@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="640" height="360" viewBox="0 0 640 360">
+  <!-- Novum's flat projector mark and geometric wordmark. All lettering is paths. -->
+  <path id="brand-background" fill="#111317" d="M0,0 H640 V360 H0 Z"/>
+  <g id="novum-mark" transform="translate(0 48) scale(2.5)">
+    <path fill="#F5F5F7" fill-rule="evenodd" d="M39,29.4 A9.8,9.8 0,1 1,39,49 A9.8,9.8 0,1 1,39,29.4 Z M39,34.4 A4.8,4.8 0,1 1,39,44 A4.8,4.8 0,1 1,39,34.4 Z"/>
+    <path fill="#F5F5F7" fill-rule="evenodd" d="M62,28 A10.5,10.5 0,1 1,62,49 A10.5,10.5 0,1 1,62,28 Z M62,33.4 A5.1,5.1 0,1 1,62,43.6 A5.1,5.1 0,1 1,62,33.4 Z"/>
+    <path fill="#AFBDC8" d="M66,60 C70,60 72,57.6 76,55.4 C78.9,53.8 81,55.2 81,58.6 L81,71.4 C81,74.8 78.9,76.2 76,74.6 C72,72.4 70,70 66,70 Z"/>
+    <path fill="#F5F5F7" fill-rule="evenodd" d="M38,51 L60,51 C67,51 71,55 71,62 L71,68 C71,75 67,79 60,79 L38,79 C31,79 27,75 27,68 L27,62 C27,55 31,51 38,51 Z M45.7,58.9 L56.4,64.7 Q57.8,65.5 56.4,66.3 L45.7,72.1 Q44.2,72.9 44.2,71.2 L44.2,59.8 Q44.2,58.1 45.7,58.9 Z"/>
+  </g>
+  <g id="novum-wordmark" transform="translate(280 152)">
+    <path fill="none" stroke="#F5F5F7" stroke-width="6.5" stroke-linecap="square" stroke-linejoin="round" d="M0,56 V0 L36,56 V0 M73,0 C47,0 47,56 73,56 C99,56 99,0 73,0 Z M111,0 L131,56 L151,0 M170,0 V36 C170,63 210,63 210,36 V0 M232,56 V0 L252,32 L272,0 V56"/>
+  </g>
+</svg>

@@ -20,6 +20,7 @@ import android.util.Log
 import coil3.compose.AsyncImage
 import coil3.decode.DataSource
 import coil3.request.ImageRequest
+import com.novum.tv.core.log.LogRedaction
 
 /**
  * 统一的网络图片组件。
@@ -108,7 +109,7 @@ fun NovumImage(
             onError = { value ->
                 // 静默失败排查入口（NovumImage 无 error 分支，失败恒隐形）：
                 // 没有这行日志，「图为什么没上屏」只能靠猜
-                Log.e("NovumImage", "load error: $url -> ${value.result.throwable}")
+                Log.e("NovumImage", LogRedaction.redact("load error: $url -> ${value.result.throwable}"))
                 onLoadState?.invoke(false)
             },
         )

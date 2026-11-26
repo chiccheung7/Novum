@@ -7,6 +7,8 @@ import com.novum.tv.data.repository.DefaultPlaybackRepository
 import com.novum.tv.data.repository.MediaRepository
 import com.novum.tv.data.repository.PlaybackRepository
 import com.novum.tv.data.session.DataStoreSessionStore
+import com.novum.tv.data.session.AndroidKeyStoreSessionSecretCipher
+import com.novum.tv.data.session.SessionSecretCipher
 import com.novum.tv.data.session.SessionStore
 import dagger.Binds
 import dagger.Module
@@ -17,6 +19,10 @@ import javax.inject.Singleton
 @Module
 @InstallIn(SingletonComponent::class)
 abstract class SessionModule {
+
+    @Binds
+    @Singleton
+    abstract fun bindSessionSecretCipher(cipher: AndroidKeyStoreSessionSecretCipher): SessionSecretCipher
 
     /**
      * 会话存储实现绑定。

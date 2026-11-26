@@ -238,6 +238,24 @@ class DanmuRepositoryParseTest {
     }
 
     @Test
+    fun extractsFileNameFromWindowsServerPath() {
+        val source = com.novum.tv.data.remote.emby.MediaSourceDto(
+            Id = "1",
+            Path = """D:\Movies\Fixture (2026)\Fixture.2026.mkv""",
+        )
+        assertEquals("Fixture.2026.mkv", source.danmuFileName())
+    }
+
+    @Test
+    fun queryPathSeparatorsDoNotReplaceTheMediaFileName() {
+        val source = com.novum.tv.data.remote.emby.MediaSourceDto(
+            Id = "1",
+            Path = "/play/video/fixture.mkv?redirect=/other/location",
+        )
+        assertEquals("fixture.mkv", source.danmuFileName())
+    }
+
+    @Test
     fun blankFieldsReturnNull() {
         assertNull(com.novum.tv.data.remote.emby.MediaSourceDto(Id = "1").danmuFileName())
     }

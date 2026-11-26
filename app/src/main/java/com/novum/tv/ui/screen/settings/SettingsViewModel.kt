@@ -10,9 +10,10 @@ import com.novum.tv.core.log.NovumLogger
 import com.novum.tv.core.result.runCatchingSuspend
 import com.novum.tv.core.state.UiState
 import com.novum.tv.data.repository.AuthRepository
-import com.novum.tv.data.session.SessionStore
+import com.novum.tv.data.remote.emby.SessionHolder
 import com.novum.tv.data.settings.AppSettings
 import com.novum.tv.data.settings.SettingsRepository
+import com.novum.tv.model.DanmuArea
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
@@ -77,7 +78,7 @@ internal fun Int.labelRes(): Int = when (this) {
  *
  * @param settingsRepository 设置仓储，生产环境由 Hilt 注入 DataStore 实现。
  * @param authRepository 账号仓储，用于退出登录。
- * @param sessionStore 会话存储，用于展示当前连接信息。
+ * @param sessionHolder 当前内存会话，用于展示账号信息（也适用于未记住凭据的登录）。
  * @param toast 全局提示队列。
  * @param appContext 应用上下文，仅用于取字符串资源。
  */
@@ -86,7 +87,7 @@ internal fun Int.labelRes(): Int = when (this) {
 class SettingsViewModel @Inject constructor(
     private val settingsRepository: SettingsRepository,
     private val authRepository: AuthRepository,
-    private val sessionStore: SessionStore,
+    private val sessionHolder: SessionHolder,
     private val toast: ToastSink,
     private val logger: NovumLogger,
     @ApplicationContext private val appContext: Context,
@@ -112,7 +113,7 @@ class SettingsViewModel @Inject constructor(
             initialValue = UiState.Loading,
         )
 
-    private val _sessionLabel = MutableStateFlow("")
+    private val _sessionLabel = MutableStateFlow(sessionHolder.userName)
     val sessionLabel: StateFlow<String> = _sessionLabel.asStateFlow()
 
     private val _loggingOut = MutableStateFlow(false)
@@ -124,10 +125,6 @@ class SettingsViewModel @Inject constructor(
      */
     private var subtitleSizePending: Int? = null
     private var skipIntroSecondsPending: Int? = null
-
-    init {
-        loadSessionLabel()
-    }
 
     /** 重新订阅设置流；用于错误态的「重试」。 */
     fun reload() {
@@ -247,6 +244,11 @@ class SettingsViewModel @Inject constructor(
         )
     }
 
+    /** 字幕粗细：0=细，1=标准，2=粗。 */
+    fun setSubtitleWeightLevel(level: Int) {
+        update { it.copy(subtitleWeight = level.coerceIn(0, 2)) }
+    }
+
     /** 片头时长档位（0 起，对应 SKIP_INTRO_STEPS）。 */
     fun setSkipIntroSecondsLevel(level: Int) {
         val next = SKIP_INTRO_STEPS[level.coerceIn(0, SKIP_INTRO_STEPS.lastIndex)]
@@ -257,9 +259,10 @@ class SettingsViewModel @Inject constructor(
         )
     }
 
-    /** 弹幕显示区域档位：0=上半屏 1=全屏。 */
+    /** 弹幕显示区域档位：0=仅顶部，1=上半屏，2=全屏。 */
     fun setDanmuAreaLevel(level: Int) {
-        update { it.copy(danmuAreaFull = level >= 1) }
+        val area = DanmuArea.entries[level.coerceIn(0, DanmuArea.entries.lastIndex)]
+        update { it.copy(danmuArea = area) }
     }
 
     /** 弹幕字号档位（0 起，对应 danmuSize 1–3）。 */
@@ -288,13 +291,19 @@ class SettingsViewModel @Inject constructor(
         toastPref(R.string.danmu_enabled, enabled)
     }
 
-    /** 弹幕显示区域：上半屏 ↔ 全屏。 */
+    /** 弹幕显示区域：仅顶部 → 上半屏 → 全屏。 */
     fun cycleDanmuArea() {
-        val before = currentSettings().danmuAreaFull
-        update { it.copy(danmuAreaFull = !it.danmuAreaFull) }
+        val next = DanmuArea.entries[(currentSettings().danmuArea.ordinal + 1) % DanmuArea.entries.size]
+        update { it.copy(danmuArea = next) }
         toastCycled(
             appContext.getString(R.string.danmu_area),
-            appContext.getString(if (before) R.string.danmu_area_half else R.string.danmu_area_full),
+            appContext.getString(
+                when (next) {
+                    DanmuArea.Top -> R.string.danmu_area_top
+                    DanmuArea.Half -> R.string.danmu_area_half
+                    DanmuArea.Full -> R.string.danmu_area_full
+                },
+            ),
         )
     }
 
@@ -366,14 +375,6 @@ class SettingsViewModel @Inject constructor(
                 logger.w(TAG, "退出登录清理失败", it)
                 toast.show(appContext.getString(R.string.settings_logout_failed))
             }.onSuccess { onDone() }
-        }
-    }
-
-    /** 读取账号区展示的用户名。 */
-    private fun loadSessionLabel() {
-        viewModelScope.launch {
-            val session = runCatchingSuspend { sessionStore.load() }.getOrNull() ?: return@launch
-            _sessionLabel.value = session.userName
         }
     }
 

@@ -57,7 +57,9 @@ class PersonViewModel @Inject constructor(
         loadJob = viewModelScope.launch {
             _state.value = PersonUiState(UiState.Loading)
             _state.value = when (val result = repository.personWorks(personId)) {
-                is NovumResult.Success -> PersonUiState(UiState.Success(result.value))
+                is NovumResult.Success -> PersonUiState(
+                    if (result.value.isEmpty()) UiState.Empty() else UiState.Success(result.value),
+                )
                 is NovumResult.Failure -> PersonUiState(UiState.Error(result.error))
             }
         }

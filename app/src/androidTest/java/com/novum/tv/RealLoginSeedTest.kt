@@ -78,6 +78,7 @@ class RealLoginSeedTest {
             userId = requireNotNull(uid),
             userName = user0.Name ?: user,
             serverName = info.ServerName.orEmpty(),
+            rememberedPassword = null,
         )
 
         assertTrue("会话未写入", store.load() != null)

@@ -98,7 +98,8 @@ fun Player.subtitleLabel(): String {
     val selected = groups.firstOrNull { group ->
         (0 until group.length).any { group.isTrackSelected(it) }
     } ?: return "关闭"
-    val format = selected.mediaTrackGroup.getFormat(0)
+    val selectedIndex = (0 until selected.length).first { selected.isTrackSelected(it) }
+    val format = selected.getTrackFormat(selectedIndex)
     return format.label ?: format.language?.takeIf { it != "und" } ?: "字幕"
 }
 
@@ -111,7 +112,9 @@ private fun Player.trackLabel(type: Int, fallback: String): String {
         (0 until group.length).any { group.isTrackSelected(it) }
     }
     if (index < 0) return fallback
-    val format = groups[index].mediaTrackGroup.getFormat(0)
+    val selected = groups[index]
+    val selectedIndex = (0 until selected.length).first { selected.isTrackSelected(it) }
+    val format = selected.getTrackFormat(selectedIndex)
     return format.label ?: format.language?.takeIf { it != "und" } ?: "$fallback ${index + 1}"
 }
 

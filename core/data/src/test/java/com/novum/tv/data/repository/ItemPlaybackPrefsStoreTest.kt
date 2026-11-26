@@ -1,12 +1,21 @@
 package com.novum.tv.data.repository
 
+import com.novum.tv.data.remote.emby.SessionHolder
+import com.novum.tv.data.session.Session
 import java.io.File
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.async
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
@@ -39,6 +48,30 @@ class ItemPlaybackPrefsStoreTest {
 
         assertEquals(cn, store.get("item")?.subtitleTrack)
         assertEquals(en, store.get("item")?.audioTrack)
+    }
+
+    @Test
+    fun persistsPreferencesAcrossStoreRecreation() = runTest {
+        val expected = ItemPlaybackPrefsStore.ItemPrefs(
+            itemId = "item",
+            mediaSourceId = "fixture-source",
+            subtitleTrack = ItemPlaybackPrefsStore.TrackRef("简体", "chi", "简体字幕"),
+            audioTrack = ItemPlaybackPrefsStore.TrackRef("English · 5.1", "eng", "English", 6),
+            danmuEpisodeId = "fixture-episode",
+            danmuOffsetMs = 1_250L,
+        )
+        newStore().update(
+            itemId = expected.itemId,
+            mediaSourceId = expected.mediaSourceId,
+            subtitleTrack = expected.subtitleTrack,
+            audioTrack = expected.audioTrack,
+            danmuEpisodeId = expected.danmuEpisodeId,
+            danmuOffsetMs = expected.danmuOffsetMs,
+        )
+
+        assertEquals(expected, newStore().get("item"))
+        assertTrue(File(folder.root, "item_prefs.json").exists())
+        assertFalse(File(folder.root, "item_prefs.json.corrupt").exists())
     }
 
     @Test
@@ -94,4 +127,127 @@ class ItemPlaybackPrefsStoreTest {
             File(folder.root, "item_prefs.json.corrupt").readText(),
         )
     }
+
+    @Test
+    fun sameItemIdHasIndependentPreferencesPerServerAndUserAfterReload() = runTest {
+        val holder = SessionHolder()
+        val store = scopedStore(holder)
+        val identities = listOf(
+            session("https://one.example/emby", "fixture-user"),
+            session("https://two.example/emby", "fixture-user"),
+            session("https://two.example/emby", "other-user"),
+        )
+        identities.forEachIndexed { index, identity ->
+            holder.update(identity)
+            assertNull(store.get("100"))
+            store.update("100", mediaSourceId = "source-$index", danmuOffsetMs = index * 1_000L)
+        }
+
+        val reloaded = scopedStore(holder)
+        identities.forEachIndexed { index, identity ->
+            holder.update(identity.copy(token = "rotated-fixture-token"))
+            assertEquals("source-$index", store.get("100")?.mediaSourceId)
+            assertEquals("source-$index", reloaded.get("100")?.mediaSourceId)
+            assertEquals(index * 1_000L, reloaded.get("100")?.danmuOffsetMs)
+            assertEquals("100", reloaded.get("100")?.itemId)
+        }
+        val persisted = File(folder.root, "item_prefs.json").readText()
+        assertFalse(persisted.contains("fixture-token"))
+        assertFalse(persisted.contains("fixture-user"))
+        assertFalse(persisted.contains("one.example"))
+    }
+
+    @Test
+    fun scopedStoreDoesNotReadOrWriteWithoutAnActiveSession() = runTest {
+        val holder = SessionHolder()
+        val store = scopedStore(holder)
+        val file = File(folder.root, "item_prefs.json")
+        assertNull(store.get("100"))
+        store.update("100", mediaSourceId = "anonymous")
+        assertFalse(file.exists())
+
+        val identity = session("https://one.example", "fixture-user")
+        holder.update(identity)
+        store.update("100", mediaSourceId = "remembered")
+        val beforeLogout = file.readText()
+        holder.update(null)
+        assertNull(store.get("100"))
+        store.update("100", mediaSourceId = "logged-out")
+        assertEquals(beforeLogout, file.readText())
+        holder.update(identity)
+        assertEquals("remembered", store.get("100")?.mediaSourceId)
+    }
+
+    @Test
+    fun legacyUnscopedEntriesArePreservedButNeverAdoptedByAnAccount() = runTest {
+        val file = File(folder.root, "item_prefs.json")
+        file.writeText("""{"100":{"itemId":"100","mediaSourceId":"legacy-source"}}""")
+        val holder = SessionHolder().apply { update(session("https://one.example", "fixture-user")) }
+        val store = scopedStore(holder)
+
+        assertNull(store.get("100"))
+        store.update("100", mediaSourceId = "scoped-source")
+        assertEquals("scoped-source", store.get("100")?.mediaSourceId)
+        assertEquals("legacy-source", newStore().get("100")?.mediaSourceId)
+        assertTrue(file.readText().contains("v2:"))
+        holder.update(session("https://two.example", "fixture-user"))
+        assertNull(store.get("100"))
+    }
+
+    @Test
+    fun queuedWriteKeepsTheNamespaceFromBeforeWaitingForTheMutex() = runTest {
+        val original = session("https://one.example", "fixture-user")
+        val holder = SessionHolder().apply { update(original) }
+        val store = scopedStore(holder, StandardTestDispatcher(testScheduler))
+        // 首次读取挂起在 IO 上并持有锁；第二次写入必须在等锁前固定原账号。
+        val blocking = launch(start = CoroutineStart.UNDISPATCHED) {
+            store.update("other-item", mediaSourceId = "other-source")
+        }
+        val queued = launch(start = CoroutineStart.UNDISPATCHED) {
+            store.update("100", mediaSourceId = "original-source")
+        }
+        holder.update(session("https://two.example", "fixture-user"))
+        advanceUntilIdle()
+        blocking.join()
+        queued.join()
+
+        assertNull(store.get("100"))
+        holder.update(original)
+        assertEquals("original-source", store.get("100")?.mediaSourceId)
+    }
+
+    @Test
+    fun queuedReadKeepsTheNamespaceFromBeforeWaitingForTheMutex() = runTest {
+        val original = session("https://one.example", "fixture-user")
+        val holder = SessionHolder().apply { update(original) }
+        val store = scopedStore(holder, StandardTestDispatcher(testScheduler))
+        val blocking = launch(start = CoroutineStart.UNDISPATCHED) {
+            store.update("100", mediaSourceId = "original-source")
+        }
+        val queued = async(start = CoroutineStart.UNDISPATCHED) { store.get("100") }
+        holder.update(session("https://two.example", "fixture-user"))
+        advanceUntilIdle()
+        blocking.join()
+
+        assertEquals("original-source", queued.await()?.mediaSourceId)
+        assertNull(store.get("100"))
+    }
+
+    private fun scopedStore(
+        holder: SessionHolder,
+        dispatcher: CoroutineDispatcher = Dispatchers.Unconfined,
+    ) = ItemPlaybackPrefsStore(
+        storeFile = File(folder.root, "item_prefs.json"),
+        ioDispatcher = dispatcher,
+        namespaceProvider = holder::playbackPrefsNamespace,
+    )
+
+    private fun session(server: String, userId: String) = Session(
+        server = server,
+        token = "fixture-token",
+        userId = userId,
+        userName = "Fixture",
+        serverName = "Fixture server",
+        deviceId = "fixture-device",
+    )
 }

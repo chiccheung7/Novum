@@ -37,11 +37,12 @@ import coil3.request.ImageRequest
 import com.novum.tv.model.MediaItem
 import com.novum.tv.ui.theme.NovumDimens
 import com.novum.tv.ui.theme.NovumFocusTokens
+import kotlin.math.roundToInt
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
 
 /**
- * 媒体库下钻、收藏与搜索共用的 2:3 海报网格，固定 6 列，接近末尾时预加载。
+ * 媒体库下钻、收藏与搜索共用的 2:3 海报网格，按可用宽度自适应列数，接近末尾时预加载。
  *
  * 首列静止时与 [NovumDimens.SafeHorizontal] 对齐；卡宽由内容区宽度和列间距反算。
  * [NovumFocusTokens.bleed] 按实际卡尺寸计算出血，行间距至少为出血大小。
@@ -88,19 +89,20 @@ fun PosterGrid(
     // 已预取 URL 随数据集记账，避免重复入队和重复解码。
     val context = LocalContext.current
     val density = LocalDensity.current
-    // 预取尺寸必须与显示解码键一致：显示侧卡宽 = (容器宽 − 2×68dp
-    // − 5×列距) / 6。容器宽取窗口宽（网格恒全宽），与 BoxWithConstraints 同源
+    // 预取尺寸必须与显示解码键一致；列数和显示端一样按可用宽度计算。
     val windowWidthPx = LocalWindowInfo.current.containerSize.width
     val safePx = with(density) { SafeMargin.toPx() }
     val gapPx = with(density) { COLUMN_GAP.toPx() }
-    val prefetchSize = remember(density, windowWidthPx, safePx, gapPx) {
+    val minCardPx = with(density) { MIN_POSTER_WIDTH.toPx() }
+    val prefetchSize = remember(density, windowWidthPx, safePx, gapPx, minCardPx) {
         val contentPx = windowWidthPx - safePx * 2
-        val cardPx = ((contentPx - gapPx * (POSTER_COLUMNS - 1)) / POSTER_COLUMNS)
-            .coerceAtLeast(1f).toInt()
-        IntSize(cardPx, (cardPx / POSTER_ASPECT).toInt())
+        val columns = posterColumnCount(contentPx, minCardPx, gapPx)
+        val cardPx = ((contentPx - gapPx * (columns - 1)) / columns)
+            .roundToInt().coerceAtLeast(1)
+        IntSize(cardPx, (cardPx / POSTER_ASPECT).roundToInt())
     }
-    val prefetched = remember(items) { mutableSetOf<String>() }
-    LaunchedEffect(items) {
+    val prefetched = remember(items, prefetchSize) { mutableSetOf<String>() }
+    LaunchedEffect(items, prefetchSize, headerOffset) {
         val loader = SingletonImageLoader.get(context)
         // 网格离开组合时立即 dispose 预取请求，避免孤儿请求阻塞后续页面的解码队列。
         val inflight = mutableListOf<Disposable>()
@@ -130,12 +132,11 @@ fun PosterGrid(
     }
 
     BoxWithConstraints(modifier = modifier.fillMaxWidth()) {
-        // 内容区宽（68dp 对齐线内侧）→ 列数自适应：1280dp 落 6 列（2:3 177dp 卡）
+        // 内容区宽（68dp 对齐线内侧）决定列数；卡宽与首页共用约180dp目标。
         val contentWidth = maxWidth - SafeMargin * 2
-        // 固定 6 列，与页头的安全对齐线同宽。
-        val columns = POSTER_COLUMNS
+        val columns = posterColumnCount(contentWidth.value)
         // 卡宽按内容区宽减去列间距后均分，保证网格左右边缘与页头对齐。
-        val cardWidth = (contentWidth - COLUMN_GAP * (POSTER_COLUMNS - 1)) / POSTER_COLUMNS
+        val cardWidth = mediaCardWidth(contentWidth)
         // 卡高 = 2:3 海报高 + 文字区（标题/元数据）；出血按实际卡尺寸反推
         val cardHeight = cardWidth / POSTER_ASPECT + NovumDimens.CardTextBlockMaxHeight(1)
         // 出血按实际卡片的最大边计算。
@@ -266,8 +267,17 @@ fun PosterGrid(
 /** 内容对齐线（首页同款）：静止首列卡与页面标题同垂线。 */
 private val SafeMargin = NovumDimens.SafeHorizontal
 
-/** 海报网格固定列数，与页头同宽。 */
-private const val POSTER_COLUMNS = 6
+/** 2:3 海报的目标宽度。 */
+private val MIN_POSTER_WIDTH = NovumDimens.PosterCardWidth
+
+/** 按内容宽和海报目标宽度计算列数，接受相同单位（dp 或 px）。 */
+internal fun posterColumnCount(
+    contentWidth: Float,
+    minCardWidth: Float = NovumDimens.PosterCardWidth.value,
+    gap: Float = COLUMN_GAP.value,
+): Int {
+    return mediaGridColumns(contentWidth, minCardWidth, gap)
+}
 
 /** 列间距（guide 布局模板间距峰值 20dp；放大溢出 ≈5dp 仍包得住）。 */
 private val COLUMN_GAP = 20.dp

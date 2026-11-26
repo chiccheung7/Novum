@@ -14,10 +14,10 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -26,6 +26,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.Dp
@@ -44,16 +45,6 @@ import com.novum.tv.ui.theme.NovumPalette
 import androidx.compose.foundation.shape.RoundedCornerShape
 import com.novum.tv.ui.theme.NovumShapes
 import com.novum.tv.ui.theme.NovumType
-
-/**
- * 无图占位使用的中性灰渐变组合，按标题哈希选取，错开亮度以区分并排卡片。
- */
-private val PosterPalettes = listOf(
-    Color(0xFF2C2C2E) to Color(0xFF161618),
-    Color(0xFF3A3A3C) to Color(0xFF1C1C1E),
-    Color(0xFF252527) to Color(0xFF101012),
-    Color(0xFF333335) to Color(0xFF19191B),
-)
 
 /** 16:9 标准卡图区比例。 */
 const val LANDSCAPE_ASPECT: Float = 16f / 9f
@@ -93,8 +84,8 @@ fun cardRequestSize(width: Dp, aspectRatio: Float, density: Density): IntSize {
  *   永不黑卡）、观看进度条（[progress]）、右上角角标（[badge]）；
  * - **语义锚点**：contentDescription 挂整卡容器（无图卡不消失）。
  *
- * 卡宽由调用方决定（16:9 用 [NovumDimens.CardWidth] 320dp，2:3 用
- * [NovumDimens.PosterCardWidth] 177dp）。
+ * 卡宽由调用方使用共享布局计算（16:9 目标 [NovumDimens.CardWidth]，2:3 目标
+ * [NovumDimens.PosterCardWidth]）。
  *
  * 纯图形态（[showText] = false）：仅图区 `Card`，官方缩放承担聚焦反馈。
  *
@@ -138,8 +129,13 @@ fun NovumCard(
     /** 是否显示副标题（16:9 卡只显示作品名）。 */
     showSubtitle: Boolean = true,
     subtitleMaxLines: Int = 1,
+    subtitleStyle: TextStyle = NovumType.Label,
+    subtitleColor: Color = NovumPalette.PaperMuted,
+    imageAlpha: Float = 1f,
     glowing: Boolean = false,
     onClick: (() -> Unit)? = null,
+    /** 图标角标的无障碍状态描述，不显示为文字。 */
+    badgeIconContentDescription: String? = null,
 ) {
     // 品牌三态映射进官方参数（容器色恒深灰不改白）
     val cardShape = CardDefaults.shape(NovumShapes.Card, NovumShapes.Card, NovumShapes.Card)
@@ -183,7 +179,8 @@ fun NovumCard(
 
     if (showText) {
         Column(
-            modifier = sizeModifier
+            modifier = modifier
+                .then(sizeModifier)
                 .tvFocusScale(NovumFocusTokens.CardScale),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
@@ -205,12 +202,14 @@ fun NovumCard(
                     badge = badge,
                     badgeIcon = badgeIcon,
                     badgeIconTint = badgeIconTint,
+                    badgeIconContentDescription = badgeIconContentDescription,
                     imageUrl = imageUrl,
                     logoUrl = logoUrl,
                     progress = progress,
                     progressText = progressText,
                     requestSize = imageRequestSize,
                     selected = glowing,
+                    imageAlpha = imageAlpha,
                     modifier = Modifier.fillMaxWidth(),
                 )
             }
@@ -224,12 +223,13 @@ fun NovumCard(
                 overflow = TextOverflow.Ellipsis,
                 textAlign = TextAlign.Center,
             )
-            if (subtitle != null && showSubtitle) {
+            if (showSubtitle) {
                 Text(
-                    text = subtitle,
-                    style = NovumType.Label,
-                    color = NovumPalette.PaperMuted,
+                    text = subtitle.orEmpty(),
+                    style = subtitleStyle,
+                    color = subtitleColor,
                     maxLines = subtitleMaxLines,
+                    minLines = subtitleMaxLines,
                     overflow = TextOverflow.Ellipsis,
                     textAlign = TextAlign.Center,
                 )
@@ -239,7 +239,7 @@ fun NovumCard(
         // 纯图卡：仅图区（语义锚点同样挂容器）
         Card(
             onClick = onClick ?: {},
-            modifier = sizeModifier
+            modifier = modifier.then(sizeModifier)
                 .semantics(mergeDescendants = true) {
                     contentDescription = title
                 },
@@ -260,12 +260,14 @@ fun NovumCard(
                     badge = badge,
                     badgeIcon = badgeIcon,
                     badgeIconTint = badgeIconTint,
+                    badgeIconContentDescription = badgeIconContentDescription,
                     imageUrl = imageUrl,
                     logoUrl = logoUrl,
                     progress = progress,
                     progressText = progressText,
                     requestSize = imageRequestSize,
                     selected = glowing,
+                    imageAlpha = imageAlpha,
                     modifier = Modifier.fillMaxSize(),
                 )
             }
@@ -307,9 +309,11 @@ private fun CardImageLayer(
     modifier: Modifier = Modifier,
     requestSize: IntSize? = null,
     selected: Boolean = false,
+    imageAlpha: Float = 1f,
+    badgeIconContentDescription: String? = null,
 ) {
     Box(modifier = modifier.aspectRatio(aspectRatio)) {
-        PosterArtwork(seed = title, modifier = Modifier.fillMaxSize())
+        PosterArtwork(seed = title, modifier = Modifier.fillMaxSize().alpha(imageAlpha.coerceIn(0f, 1f)))
         if (imageUrl != null) {
             NovumImage(
                 url = imageUrl,
@@ -317,7 +321,7 @@ private fun CardImageLayer(
                 contentDescription = null,
                 alignment = Alignment.TopCenter,
                 requestSize = requestSize,
-                modifier = Modifier.fillMaxSize(),
+                modifier = Modifier.fillMaxSize().alpha(imageAlpha.coerceIn(0f, 1f)),
             )
         }
         // 选中标记：左侧 4dp 竖条（与列表行同一种"形状语言"）。
@@ -415,7 +419,7 @@ private fun CardImageLayer(
             // [badgeIconTint] 染绿，常规态纸白
             Icon(
                 imageVector = badgeIcon,
-                contentDescription = null,
+                contentDescription = badgeIconContentDescription,
                 tint = badgeIconTint ?: NovumPalette.Paper,
                 modifier = Modifier
                     .align(Alignment.TopEnd)
@@ -460,22 +464,14 @@ private const val CARD_LOGO_ASPECT = 3.2f
 private val CARD_LOGO_PADDING = 8.dp
 
 /**
- * 卡片占位画面：按标题哈希选一组中性灰渐变，相邻卡片通过灰阶区分。
+ * 卡片占位画面：与页面骨架共用中性表面色，加载前后不出现随机色块。
  *
  * 这是纯绘制组件，不含任何图片请求，作为占位恒居图片层之下（加载中/失败透出）。
  *
- * @param seed 决定渐变配色的种子（通常传标题）。
+ * @param seed 保留调用方的条目标识，所有条目采用同款占位。
  * @param modifier 外部修饰符。
  */
 @Composable
 fun PosterArtwork(seed: String, modifier: Modifier = Modifier) {
-    // 调色板是常量，配色只与标题有关：记住结果，避免焦点动画触发重组时反复计算
-    val pair = remember(seed) {
-        PosterPalettes[(seed.hashCode() and Int.MAX_VALUE) % PosterPalettes.size]
-    }
-    Box(
-        modifier = modifier.background(
-            Brush.linearGradient(listOf(pair.first, pair.second)),
-        ),
-    )
+    Box(modifier = modifier.background(NovumPalette.Surface))
 }

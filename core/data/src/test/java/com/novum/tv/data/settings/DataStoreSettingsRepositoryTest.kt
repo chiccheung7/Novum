@@ -1,6 +1,13 @@
 package com.novum.tv.data.settings
 
+import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.PreferenceDataStoreFactory
+import androidx.datastore.preferences.core.Preferences
+import androidx.datastore.preferences.core.booleanPreferencesKey
+import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.intPreferencesKey
+import androidx.datastore.preferences.core.stringPreferencesKey
+import com.novum.tv.model.DanmuArea
 import java.io.File
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -8,6 +15,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -31,12 +39,13 @@ class DataStoreSettingsRepositoryTest {
     val temporaryFolder = TemporaryFolder()
 
     private fun CoroutineScope.createRepository(): DataStoreSettingsRepository {
-        val dataStore = PreferenceDataStoreFactory.create(
-            scope = this,
-            produceFile = { File(temporaryFolder.root, "novum_settings.preferences_pb") },
-        )
-        return DataStoreSettingsRepository(dataStore)
+        return DataStoreSettingsRepository(createDataStore())
     }
+
+    private fun CoroutineScope.createDataStore(): DataStore<Preferences> = PreferenceDataStoreFactory.create(
+        scope = this,
+        produceFile = { File(temporaryFolder.root, "novum_settings.preferences_pb") },
+    )
 
     @Test
     fun defaultsMatchLegacyBehaviour() = runTest {
@@ -86,6 +95,23 @@ class DataStoreSettingsRepositoryTest {
     }
 
     @Test
+    fun subtitleWeightPersistsAndLegacyOrInvalidValuesStayUsable() = runTest {
+        val dataStore = createDataStore()
+        val repository = DataStoreSettingsRepository(dataStore)
+        assertEquals(1, repository.settings.first().subtitleWeight)
+
+        repository.update { it.copy(subtitleWeight = 0) }
+        assertEquals(0, DataStoreSettingsRepository(dataStore).settings.first().subtitleWeight)
+        repository.update { it.copy(subtitleWeight = 2) }
+        assertEquals(2, DataStoreSettingsRepository(dataStore).settings.first().subtitleWeight)
+
+        repository.update { it.copy(subtitleWeight = 99) }
+        assertEquals(2, repository.settings.first().subtitleWeight)
+        dataStore.edit { it[intPreferencesKey("subtitle_weight")] = -10 }
+        assertEquals(0, repository.settings.first().subtitleWeight)
+    }
+
+    @Test
     fun danmuDefaultsFollowOfficialPlayer() = runTest {
         val repository = createRepository()
 
@@ -94,7 +120,7 @@ class DataStoreSettingsRepositoryTest {
         assertFalse("弹幕默认关（对齐官方网页播放器）", settings.danmuEnabled)
         assertEquals("透明度默认 0.7", 0.7f, settings.danmuOpacity)
         assertEquals("密度默认 0.7", 0.7f, settings.danmuDensity)
-        assertFalse("默认上半屏", settings.danmuAreaFull)
+        assertEquals("默认上半屏", DanmuArea.Half, settings.danmuArea)
         assertEquals("默认中号字", 2, settings.danmuSize)
         assertEquals("默认标准速", 2, settings.danmuSpeed)
     }
@@ -103,13 +129,43 @@ class DataStoreSettingsRepositoryTest {
     fun persistsDanmuValues() = runTest {
         val repository = createRepository()
 
-        repository.update { it.copy(danmuEnabled = true, danmuAreaFull = true, danmuSize = 3, danmuSpeed = 1) }
+        repository.update { it.copy(danmuEnabled = true, danmuArea = DanmuArea.Full, danmuSize = 3, danmuSpeed = 1) }
 
         val settings = repository.settings.first()
         assertTrue(settings.danmuEnabled)
-        assertTrue(settings.danmuAreaFull)
+        assertEquals(DanmuArea.Full, settings.danmuArea)
         assertEquals(3, settings.danmuSize)
         assertEquals(1, settings.danmuSpeed)
+    }
+
+    @Test
+    fun legacyDanmuRegionSurvivesAnUnrelatedSettingsWrite() = runTest {
+        val dataStore = createDataStore()
+        val repository = DataStoreSettingsRepository(dataStore)
+        val legacyArea = booleanPreferencesKey("danmu_area_full")
+        dataStore.edit { it[legacyArea] = false }
+        assertEquals(DanmuArea.Half, repository.settings.first().danmuConfig().area)
+
+        dataStore.edit { it[legacyArea] = true }
+        assertEquals(DanmuArea.Full, repository.settings.first().danmuConfig().area)
+        repository.update { it.copy(audioPassthrough = false) }
+
+        assertEquals(DanmuArea.Full, repository.settings.first().danmuArea)
+        assertNull(dataStore.data.first()[legacyArea])
+        assertEquals("Full", dataStore.data.first()[stringPreferencesKey("danmu_area")])
+    }
+
+    @Test
+    fun topRegionPersistsWithoutFallingBackToTheLegacyFullScreenValue() = runTest {
+        val dataStore = createDataStore()
+        val repository = DataStoreSettingsRepository(dataStore)
+        repository.update { it.copy(danmuArea = DanmuArea.Top) }
+        dataStore.edit { it[booleanPreferencesKey("danmu_area_full")] = true }
+
+        assertEquals(DanmuArea.Top, repository.settings.first().danmuArea)
+        assertEquals(0.25f, repository.settings.first().danmuConfig().area.fraction)
+        repository.update { it.copy(danmuEnabled = true) }
+        assertEquals(DanmuArea.Top, repository.settings.first().danmuConfig().area)
     }
 
     @Test
@@ -123,5 +179,55 @@ class DataStoreSettingsRepositoryTest {
         assertEquals("密度下限 0.1", 0.1f, settings.danmuDensity)
         assertEquals("字号档位收敛 1–3", 3, settings.danmuSize)
         assertEquals("速度档位收敛 1–3", 1, settings.danmuSpeed)
+    }
+
+    @Test
+    fun persistsPinnedLineOwnerWithoutChangingOtherSettings() = runTest {
+        val repository = createRepository()
+        repository.update {
+            it.copy(preferDirect = false, subtitleSize = 3, playbackSpeed = 1.5f, danmuEnabled = true)
+        }
+        val previous = repository.settings.first()
+
+        repository.update {
+            it.copy(
+                pinnedLineUrl = "https://line-a.example",
+                pinnedLineName = "线路 A",
+                pinnedLineAccountKey = "account-a-hash",
+            )
+        }
+
+        val settings = repository.settings.first()
+        assertEquals(
+            previous.copy(
+                pinnedLineUrl = "https://line-a.example",
+                pinnedLineName = "线路 A",
+                pinnedLineAccountKey = "account-a-hash",
+            ),
+            settings,
+        )
+        assertEquals("https://line-a.example", settings.pinnedLineUrlFor("account-a-hash"))
+        assertNull(settings.pinnedLineUrlFor("account-b-hash"))
+    }
+
+    @Test
+    fun legacyPinWithoutOwnerIsNotAssignedToTheNextAccount() = runTest {
+        val dataStore = createDataStore()
+        dataStore.edit {
+            it[stringPreferencesKey("pinned_line_url")] = "https://legacy-line.example"
+            it[stringPreferencesKey("pinned_line_name")] = "旧线路"
+        }
+        val repository = DataStoreSettingsRepository(dataStore)
+        val legacy = repository.settings.first()
+        assertEquals("https://legacy-line.example", legacy.pinnedLineUrl)
+        assertEquals("旧线路", legacy.pinnedLineName)
+        assertEquals("", legacy.pinnedLineAccountKey)
+        assertNull(legacy.pinnedLineUrlFor("account-a-hash"))
+
+        repository.update { it.copy(subtitleSize = 4) }
+
+        val updated = repository.settings.first()
+        assertEquals(legacy.copy(subtitleSize = 4), updated)
+        assertNull(updated.pinnedLineUrlFor("account-b-hash"))
     }
 }

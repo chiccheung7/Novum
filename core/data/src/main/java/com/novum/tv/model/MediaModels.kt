@@ -15,7 +15,11 @@ data class MediaLibrary(
     val kind: String?,
     val itemCount: Int?,
     val imageUrl: String?,
-)
+) {
+    /** 服务端追新聚合库标识，兼容库名中的装饰文字。 */
+    val isRecentUpdatesSource: Boolean
+        get() = name.contains("全库追新")
+}
 
 /**
  * 可展示的媒体条目。
@@ -109,6 +113,8 @@ data class HomeEntry(
     val audioProfile: String? = null,
     val isFavorite: Boolean = false,
     val isPlayed: Boolean = false,
+    /** 首页续播区中的推荐集，而非带播放进度的续播内容。 */
+    val isNextUp: Boolean = false,
 )
 
 /** 首页内容行标识：继续观看。 */
@@ -144,10 +150,10 @@ data class HomeLatestRow(
 /**
  * 首页聚合数据。
  *
- * @param hero Hero 候选：近期上映电影与近期上新剧集，
- *  三级兜底保证服务器正常时必非空；继续观看条目不进 Hero 池）。
+ * @param hero Hero 候选：从「全库追新」最新条目中随机选择有背景图的作品，
+ *  排除继续观看条目；源库不存在或无适合条目时为空。
  * @param resume 继续观看；无未看完内容时为 null。
- * @param libraries 首页分库内容行所需的媒体库目录，只含影片/剧集类库。
+ * @param libraries 首页内容行所需的媒体库目录，包含影片/剧集类库与追新聚合库。
  * @param nextUp 下一集；无在追剧集时为 null。
  * @param latest 各库最新入库。
  */

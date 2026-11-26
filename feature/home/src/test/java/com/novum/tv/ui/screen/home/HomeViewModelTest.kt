@@ -14,9 +14,13 @@ import com.novum.tv.model.MediaItem
 import com.novum.tv.model.MediaPage
 import com.novum.tv.model.Season
 import com.novum.tv.testing.MainDispatcherRule
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.test.runCurrent
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Rule
@@ -84,6 +88,56 @@ class HomeViewModelTest {
         // 用户往往已在顶栏/内容区浏览，重锚会把焦点从手上抢走；「回首页锚 Hero」
         // 由重进组合的初始抓焦天然保证
         assertEquals("静默刷新不递增首焦重锚版本", 1, viewModel.focusEpoch.value)
+    }
+
+    @Test
+    fun olderRefreshCannotReplaceNewerFeed() = runTest {
+        val oldResponse = CompletableDeferred<NovumResult<HomeFeed>>()
+        val newer = testFeed().copy(hero = listOf(HomeEntry(id = "new", title = "新内容")))
+        var calls = 0
+        val viewModel = HomeViewModel(object : FakeMediaRepository(testFeed()) {
+            override suspend fun feed(): NovumResult<HomeFeed> = when (calls++) {
+                0 -> NovumResult.Success(testFeed())
+                1 -> withContext(NonCancellable) { oldResponse.await() }
+                else -> NovumResult.Success(newer)
+            }
+        })
+        advanceUntilIdle()
+
+        viewModel.refresh()
+        runCurrent()
+        viewModel.refresh()
+        runCurrent()
+        assertEquals("new", successFeed(viewModel).hero.single().id)
+
+        oldResponse.complete(NovumResult.Success(testFeed()))
+        advanceUntilIdle()
+        assertEquals("迟到的刷新不能覆盖最新内容", "new", successFeed(viewModel).hero.single().id)
+        assertEquals("静默刷新不重锚焦点", 1, viewModel.focusEpoch.value)
+    }
+
+    @Test
+    fun retryErrorCannotBeOverwrittenByAnEarlierRefresh() = runTest {
+        val oldResponse = CompletableDeferred<NovumResult<HomeFeed>>()
+        var calls = 0
+        val viewModel = HomeViewModel(object : FakeMediaRepository(testFeed()) {
+            override suspend fun feed(): NovumResult<HomeFeed> = when (calls++) {
+                0 -> NovumResult.Success(testFeed())
+                1 -> withContext(NonCancellable) { oldResponse.await() }
+                else -> NovumResult.Failure(com.novum.tv.core.error.NovumError.Network())
+            }
+        })
+        advanceUntilIdle()
+
+        viewModel.refresh()
+        runCurrent()
+        viewModel.load()
+        runCurrent()
+        assertTrue(viewModel.feed.value is UiState.Error)
+
+        oldResponse.complete(NovumResult.Success(testFeed()))
+        advanceUntilIdle()
+        assertTrue("旧刷新不能覆盖重试的错误态", viewModel.feed.value is UiState.Error)
     }
 }
 

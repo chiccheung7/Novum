@@ -1,22 +1,35 @@
 package com.novum.tv.ui.screen.home
 
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.res.stringResource
+import androidx.compose.runtime.withFrameNanos
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.novum.tv.core.designsystem.R
 import com.novum.tv.model.HomeEntry
 import com.novum.tv.model.HomeLatestRow
 import com.novum.tv.model.HomeRow
 import com.novum.tv.ui.component.LANDSCAPE_ASPECT
+import com.novum.tv.ui.component.NovumChip
 import com.novum.tv.ui.component.POSTER_ASPECT
 import com.novum.tv.ui.component.NovumCard
 import com.novum.tv.ui.component.NovumRow
 import com.novum.tv.ui.component.cardRequestSize
+import com.novum.tv.ui.component.rememberMediaCardWidth
 import com.novum.tv.ui.theme.NovumDimens
 
 /**
@@ -43,8 +56,9 @@ internal fun HomeSectionRow(
 ) {
     // 预取尺寸与 EntryCard 显示解码配对：同键直接落内存缓存
     val density = LocalDensity.current
-    val prefetchSize = remember(density) {
-        cardRequestSize(NovumDimens.CardWidth, LANDSCAPE_ASPECT, density)
+    val cardWidth = rememberMediaCardWidth(LANDSCAPE_ASPECT)
+    val prefetchSize = remember(density, cardWidth) {
+        cardRequestSize(cardWidth, LANDSCAPE_ASPECT, density)
     }
     NovumRow(
         elements = row.items,
@@ -60,6 +74,7 @@ internal fun HomeSectionRow(
         // SxxExx · 分集标题 / 电影 年份 · 总时长（数据层 subtitle 已按此拼好）
         EntryCard(
             entry = entry,
+            width = cardWidth,
             showProgress = showProgress,
             showRating = showRating,
             onClick = { onEntryClick(entry) },
@@ -84,22 +99,64 @@ internal fun HomeLatestSection(
     onOpenLibrary: (libraryId: String, libraryName: String) -> Unit,
     firstFocus: FocusRequester?,
 ) {
+    val lifecycleOwner = LocalLifecycleOwner.current
+    val viewAllFocus = remember(row.libraryId) { FocusRequester() }
+    val localFirstCardFocus = remember(row.libraryId) { FocusRequester() }
+    val firstCardFocus = firstFocus ?: localFirstCardFocus
+    var openedLibrary by remember(row.libraryId) { mutableStateOf(false) }
+    var restoreViewAll by remember(row.libraryId) { mutableStateOf(false) }
+
+    // Home stays on the back stack while a library grid is open. Restore the action
+    // focus on return; the row's LazyListState keeps its horizontal position.
+    DisposableEffect(lifecycleOwner, row.libraryId) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME && openedLibrary) {
+                openedLibrary = false
+                restoreViewAll = true
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+    LaunchedEffect(restoreViewAll) {
+        if (restoreViewAll) {
+            withFrameNanos { }
+            runCatching { viewAllFocus.requestFocus() }
+            restoreViewAll = false
+        }
+    }
+
     // 预取尺寸与 EntryCard 显示解码配对：同键直接落内存缓存。
     // 分库行使用 2:3 海报卡。
     val density = LocalDensity.current
-    val prefetchSize = remember(density) {
-        cardRequestSize(NovumDimens.PosterCardWidth, POSTER_ASPECT, density)
+    val cardWidth = rememberMediaCardWidth(POSTER_ASPECT)
+    val prefetchSize = remember(density, cardWidth) {
+        cardRequestSize(cardWidth, POSTER_ASPECT, density)
     }
     NovumRow(
         elements = row.items,
         key = { it.id },
         title = row.libraryName,
+        trailingContent = {
+            NovumChip(
+                label = stringResource(R.string.home_view_all),
+                selected = false,
+                onClick = {
+                    openedLibrary = true
+                    onOpenLibrary(row.libraryId, row.libraryName)
+                },
+                modifier = Modifier
+                    .focusRequester(viewAllFocus)
+                    .focusProperties { down = firstCardFocus },
+            )
+        },
         edgePadding = NovumDimens.SafeHorizontal,
         prefetchUrl = { it.posterUrl ?: it.imageUrl },
         prefetchSize = prefetchSize,
     ) { index, entry ->
         EntryCard(
             entry = entry,
+            width = cardWidth,
             showProgress = false,
             showRating = true,
             usePoster = true,
@@ -109,8 +166,13 @@ internal fun HomeLatestSection(
                 entry.genres.firstOrNull()?.takeIf { it.isNotBlank() }?.let { add(it) }
             }.takeIf { it.isNotEmpty() }?.joinToString(" · "),
             onClick = { onOpenDetail(entry.seriesId ?: entry.id) },
-            modifier = (firstFocus?.takeIf { index == 0 }?.let { Modifier.focusRequester(it) }
-                ?: Modifier),
+            modifier = if (index == 0) {
+                Modifier
+                    .focusRequester(firstCardFocus)
+                    .focusProperties { up = viewAllFocus }
+            } else {
+                Modifier
+            },
         )
     }
 }
@@ -129,6 +191,7 @@ internal fun HomeLatestSection(
 @Composable
 private fun EntryCard(
     entry: HomeEntry,
+    width: Dp,
     showProgress: Boolean,
     showRating: Boolean,
     onClick: () -> Unit,
@@ -145,8 +208,12 @@ private fun EntryCard(
     NovumCard(
         title = entry.title,
         subtitle = subtitle,
-        badge = entry.rating?.let { String.format(java.util.Locale.US, "%.1f", it) }
-            .takeIf { showRating },
+        badge = if (showProgress && entry.isNextUp) {
+            stringResource(R.string.home_next_up)
+        } else {
+            entry.rating?.let { String.format(java.util.Locale.US, "%.1f", it) }
+                .takeIf { showRating }
+        },
         imageUrl = if (usePoster) entry.posterUrl ?: entry.imageUrl else entry.imageUrl ?: entry.posterUrl,
         // 继续观看行（16:9）卡图左上角挂所属剧集 clearlogo
         // 分库行海报卡不挂（只针对继续观看行）
@@ -157,7 +224,7 @@ private fun EntryCard(
         progressText = entry.remainingMinutes
             ?.takeIf { showProgress }
             ?.let { stringResource(R.string.home_remaining_minutes, it) },
-        width = if (usePoster) NovumDimens.PosterCardWidth else NovumDimens.CardWidth,
+        width = width,
         aspectRatio = if (usePoster) POSTER_ASPECT else LANDSCAPE_ASPECT,
         // 继续观看行（16:9）要两行文字；分库行第二行走 subtitleOverride
         showSubtitle = true,

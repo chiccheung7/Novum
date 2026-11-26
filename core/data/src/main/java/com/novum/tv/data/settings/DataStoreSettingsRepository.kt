@@ -8,6 +8,7 @@ import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.emptyPreferences
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
+import com.novum.tv.model.DanmuArea
 import java.io.IOException
 import javax.inject.Inject
 import kotlinx.coroutines.flow.Flow
@@ -43,6 +44,7 @@ class DataStoreSettingsRepository @Inject constructor(
             preferences[SettingsKeys.SubtitleEnabled] = next.subtitleEnabledByDefault
             preferences[SettingsKeys.SubtitleLanguage] = next.subtitleLanguage
             preferences[SettingsKeys.SubtitleSize] = next.subtitleSize
+            preferences[SettingsKeys.SubtitleWeight] = next.subtitleWeight
             preferences[SettingsKeys.SubtitleOffsetLevel] = next.subtitleOffsetLevel
             preferences[SettingsKeys.AudioLanguage] = next.audioLanguage
             preferences[SettingsKeys.VersionStrategy] = next.versionStrategy
@@ -52,12 +54,14 @@ class DataStoreSettingsRepository @Inject constructor(
             preferences[SettingsKeys.SkipIntroSeconds] = next.skipIntroSeconds
             preferences[SettingsKeys.PinnedLineUrl] = next.pinnedLineUrl
             preferences[SettingsKeys.PinnedLineName] = next.pinnedLineName
+            preferences[SettingsKeys.PinnedLineAccountKey] = next.pinnedLineAccountKey
             preferences[SettingsKeys.PlaybackSpeed] = next.playbackSpeed
             preferences[SettingsKeys.AutoPlayNext] = next.autoPlayNext
             preferences[SettingsKeys.DanmuEnabled] = next.danmuEnabled
             preferences[SettingsKeys.DanmuOpacity] = next.danmuOpacity
             preferences[SettingsKeys.DanmuDensity] = next.danmuDensity
-            preferences[SettingsKeys.DanmuAreaFull] = next.danmuAreaFull
+            preferences[SettingsKeys.DanmuArea] = next.danmuArea.name
+            preferences.remove(SettingsKeys.LegacyDanmuAreaFull)
             preferences[SettingsKeys.DanmuSize] = next.danmuSize
             preferences[SettingsKeys.DanmuSpeed] = next.danmuSpeed
             preferences[SettingsKeys.UiScale] = next.uiScale
@@ -72,6 +76,7 @@ private object SettingsKeys {
     val SubtitleEnabled = booleanPreferencesKey("subtitle_enabled")
     val SubtitleLanguage = stringPreferencesKey("subtitle_language")
     val SubtitleSize = intPreferencesKey("subtitle_size")
+    val SubtitleWeight = intPreferencesKey("subtitle_weight")
     val SubtitleOffsetLevel = intPreferencesKey("subtitle_offset_level")
     val AudioLanguage = stringPreferencesKey("audio_language")
     val VersionStrategy = stringPreferencesKey("version_strategy")
@@ -81,12 +86,14 @@ private object SettingsKeys {
     val SkipIntroSeconds = intPreferencesKey("skip_intro_seconds")
     val PinnedLineUrl = stringPreferencesKey("pinned_line_url")
     val PinnedLineName = stringPreferencesKey("pinned_line_name")
+    val PinnedLineAccountKey = stringPreferencesKey("pinned_line_account_key")
     val PlaybackSpeed = floatPreferencesKey("playback_speed")
     val AutoPlayNext = booleanPreferencesKey("auto_play_next")
     val DanmuEnabled = booleanPreferencesKey("danmu_enabled")
     val DanmuOpacity = floatPreferencesKey("danmu_opacity")
     val DanmuDensity = floatPreferencesKey("danmu_density")
-    val DanmuAreaFull = booleanPreferencesKey("danmu_area_full")
+    val DanmuArea = stringPreferencesKey("danmu_area")
+    val LegacyDanmuAreaFull = booleanPreferencesKey("danmu_area_full")
     val DanmuSize = intPreferencesKey("danmu_size")
     val DanmuSpeed = intPreferencesKey("danmu_speed")
     val UiScale = floatPreferencesKey("ui_scale")
@@ -102,6 +109,7 @@ private fun Preferences.toAppSettings(): AppSettings {
             ?: defaults.subtitleEnabledByDefault,
         subtitleLanguage = this[SettingsKeys.SubtitleLanguage] ?: defaults.subtitleLanguage,
         subtitleSize = this[SettingsKeys.SubtitleSize] ?: defaults.subtitleSize,
+        subtitleWeight = (this[SettingsKeys.SubtitleWeight] ?: defaults.subtitleWeight).coerceIn(0, 2),
         subtitleOffsetLevel = this[SettingsKeys.SubtitleOffsetLevel] ?: defaults.subtitleOffsetLevel,
         audioLanguage = this[SettingsKeys.AudioLanguage] ?: defaults.audioLanguage,
         versionStrategy = this[SettingsKeys.VersionStrategy] ?: defaults.versionStrategy,
@@ -111,12 +119,14 @@ private fun Preferences.toAppSettings(): AppSettings {
         skipIntroSeconds = this[SettingsKeys.SkipIntroSeconds] ?: defaults.skipIntroSeconds,
         pinnedLineUrl = this[SettingsKeys.PinnedLineUrl] ?: defaults.pinnedLineUrl,
         pinnedLineName = this[SettingsKeys.PinnedLineName] ?: defaults.pinnedLineName,
+        pinnedLineAccountKey = this[SettingsKeys.PinnedLineAccountKey] ?: defaults.pinnedLineAccountKey,
         playbackSpeed = this[SettingsKeys.PlaybackSpeed] ?: defaults.playbackSpeed,
         autoPlayNext = this[SettingsKeys.AutoPlayNext] ?: defaults.autoPlayNext,
         danmuEnabled = this[SettingsKeys.DanmuEnabled] ?: defaults.danmuEnabled,
         danmuOpacity = this[SettingsKeys.DanmuOpacity] ?: defaults.danmuOpacity,
         danmuDensity = this[SettingsKeys.DanmuDensity] ?: defaults.danmuDensity,
-        danmuAreaFull = this[SettingsKeys.DanmuAreaFull] ?: defaults.danmuAreaFull,
+        danmuArea = DanmuArea.entries.firstOrNull { it.name == this[SettingsKeys.DanmuArea] }
+            ?: if (this[SettingsKeys.LegacyDanmuAreaFull] == true) DanmuArea.Full else defaults.danmuArea,
         danmuSize = this[SettingsKeys.DanmuSize] ?: defaults.danmuSize,
         danmuSpeed = this[SettingsKeys.DanmuSpeed] ?: defaults.danmuSpeed,
         uiScale = this[SettingsKeys.UiScale] ?: defaults.uiScale,
@@ -126,6 +136,7 @@ private fun Preferences.toAppSettings(): AppSettings {
 /** 把设置项约束到合法区间，防止越界值写入磁盘。 */
 private fun AppSettings.sanitized(): AppSettings = copy(
     subtitleSize = subtitleSize.coerceIn(1, 4),
+    subtitleWeight = subtitleWeight.coerceIn(0, 2),
     subtitleOffsetLevel = subtitleOffsetLevel.coerceIn(0, 4),
     skipIntroSeconds = skipIntroSeconds.coerceIn(15, 600),
     danmuOpacity = danmuOpacity.coerceIn(0.1f, 1f),

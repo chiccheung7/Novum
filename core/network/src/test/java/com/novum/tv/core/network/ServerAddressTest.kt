@@ -68,6 +68,25 @@ class ServerAddressTest {
     }
 
     @Test
+    fun resolvesMediaUrlsAgainstReverseProxyBasePath() {
+        val server = "https://media.example/emby"
+        assertEquals("https://media.example/emby/Videos/one", ServerAddress.resolveUrl(server, "Videos/one"))
+        assertEquals("https://media.example/emby/Videos/one", ServerAddress.resolveUrl(server, "/Videos/one"))
+        assertEquals("https://media.example/emby/Videos/one", ServerAddress.resolveUrl(server, "/emby/Videos/one"))
+        assertEquals("https://media.example/emby/emby2/Videos/one", ServerAddress.resolveUrl(server, "/emby2/Videos/one"))
+        assertEquals(
+            "https://media.example/proxy/emby/Videos/one?api_key=signed",
+            ServerAddress.resolveUrl("https://media.example/proxy/emby", "/Videos/one?api_key=signed"),
+        )
+        assertEquals(
+            "https://media.example/proxy/emby/Videos/one",
+            ServerAddress.resolveUrl("https://media.example/proxy/emby", "/proxy/emby/Videos/one"),
+        )
+        assertEquals("https://cdn.example/Videos/one", ServerAddress.resolveUrl(server, "//cdn.example/Videos/one"))
+        assertEquals("https://cdn.example/Videos/one", ServerAddress.resolveUrl(server, "https://cdn.example/Videos/one"))
+    }
+
+    @Test
     fun explicitSchemeDecidesCleartext() {
         assertTrue(ServerAddress.usesCleartext("http://demo.example.com"))
         assertFalse(ServerAddress.usesCleartext("https://demo.example.com"))

@@ -25,10 +25,9 @@ interface AuthRepository {
         username: String,
         password: String,
         /**
-         * 是否记住登录：true 持久化 token 下次自动登录；false 只存服务器+用户名
-         * 供预填、不落盘 token（下次仍需登录）。默认 true 保持既有调用兼容。
+         * 是否记住凭证：true 加密保存 token 与密码；false 只保留服务器和用户名预填。
          */
-        remember: Boolean = true,
+        remember: Boolean = false,
     ): NovumResult<Session>
 
     /**
@@ -46,4 +45,14 @@ interface AuthRepository {
 
     /** 上次登录的用户名，用于登录页预填；没有记录时返回空串。 */
     suspend fun lastUsername(): String = ""
+
+    /** Saved password is returned only after secure storage decrypts it. */
+    suspend fun lastPassword(): String? = null
+
+    /** User's remembered-credentials choice, defaulting to false on first use. */
+    suspend fun shouldRememberCredentials(): Boolean = false
+
+    /** Persists the current choice and immediately removes secrets when disabled. */
+    suspend fun setRememberCredentials(remember: Boolean) = Unit
+
 }

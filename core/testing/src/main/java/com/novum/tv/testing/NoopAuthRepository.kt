@@ -42,6 +42,7 @@ object NoopSessionStore : SessionStore {
         userId: String,
         userName: String,
         serverName: String,
+        rememberedPassword: String?,
     ) = Unit
 
     override suspend fun saveIdentity(server: String, username: String) = Unit

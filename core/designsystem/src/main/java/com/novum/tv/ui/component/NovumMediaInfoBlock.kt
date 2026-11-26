@@ -13,6 +13,10 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -46,13 +50,17 @@ fun NovumMediaInfoBlock(
     titleMaxLines: Int = 1,
     overviewLines: Int = MEDIA_INFO_OVERVIEW_LINES,
 ) {
+    var logoFailed by remember(logoUrl) { mutableStateOf(false) }
+    val showLogo = !logoUrl.isNullOrBlank() && !logoFailed
     Column(modifier = modifier) {
-        if (logoUrl != null) {
+        if (showLogo) {
             NovumImage(
                 url = logoUrl,
                 contentDescription = title,
                 contentScale = ContentScale.Fit,
                 requestSize = logoRequestSize(LocalDensity.current),
+                // 标题图不可用时仍要能识别作品；下一条目/新URL会重新尝试加载。
+                onLoadState = { success -> logoFailed = !success },
                 modifier = Modifier
                     .height(MEDIA_INFO_LOGO_HEIGHT)
                     .aspectRatio(MEDIA_INFO_LOGO_ASPECT),
@@ -67,10 +75,10 @@ fun NovumMediaInfoBlock(
             )
         }
         if (metaParts.isNotEmpty()) {
-            if (logoUrl != null || title != null) {
+            if (showLogo || title != null) {
                 Spacer(
                     modifier = Modifier.height(
-                        if (logoUrl != null) MEDIA_INFO_LOGO_TO_META else MEDIA_INFO_TITLE_TO_META,
+                        if (showLogo) MEDIA_INFO_LOGO_TO_META else MEDIA_INFO_TITLE_TO_META,
                     ),
                 )
             }
@@ -97,8 +105,8 @@ fun NovumMediaInfoBlock(
             Spacer(modifier = Modifier.height(MEDIA_INFO_TAGS_TO_OVERVIEW))
             Text(
                 text = overview,
-                style = NovumType.Body,
-                // 简介颜色比标题暗一档，与元信息保持同层级。
+                style = NovumType.Synopsis,
+                // 标题保持纸白；简介以较小的常规字重和次级灰表达正文层级。
                 color = NovumPalette.PaperFaint,
                 maxLines = overviewLines,
                 overflow = TextOverflow.Ellipsis,

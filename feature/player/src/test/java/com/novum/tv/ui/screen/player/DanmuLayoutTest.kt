@@ -1,6 +1,7 @@
 package com.novum.tv.ui.screen.player
 
 import com.novum.tv.model.DanmuComment
+import com.novum.tv.model.DanmuArea
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -31,7 +32,28 @@ class DanmuLayoutTest {
 
     private fun measure(text: String) = text.length * 30f
 
+    @Test
+    fun topRegionKeepsEveryCommentModeInsideTheUpperQuarter() {
+        val heightPx = 720f
+        val quarterHeight = heightPx / 4f
+        val layoutSpec = spec(laneCount = danmuLaneCount(heightPx, DanmuArea.Top, 45f, 8f))
+        val comments = (0 until 20).map { comment(0L, mode = listOf(1, 4, 5)[it % 3], text = "t$it") }
+        val items = danmuLayout(comments, 1_000L, layoutSpec, 1_280f, ::measure)
+
+        assertTrue(items.isNotEmpty())
+        assertTrue(items.all { it.y >= 8f && it.y + layoutSpec.laneHeightPx <= quarterHeight })
+        assertTrue(danmuLaneCount(heightPx, DanmuArea.Half, 45f, 8f) > layoutSpec.laneCount)
+    }
+
     // ---- 密度采样 ----
+
+    @Test
+    fun regionTooShortForACompleteLaneDoesNotOverflow() {
+        val count = danmuLaneCount(120f, DanmuArea.Top, 45f, 8f)
+        assertEquals(0, count)
+        val items = danmuLayout(listOf(comment(0)), 100L, spec(laneCount = count), 200f, ::measure)
+        assertTrue(items.isEmpty())
+    }
 
     @Test
     fun densitySamplingIsDeterministic() {
@@ -42,6 +64,19 @@ class DanmuLayoutTest {
             assertEquals(first, danmuKeptByDensity(sample, 0.7f))
         }
         assertTrue(danmuKeptByDensity(sample, 1f))
+    }
+
+    @Test
+    fun largerDisplayAreaIncreasesCommentDensityWithoutExceedingAllComments() {
+        val density = 0.6f
+        val top = danmuEffectiveDensity(density, DanmuArea.Top)
+        val half = danmuEffectiveDensity(density, DanmuArea.Half)
+        val full = danmuEffectiveDensity(density, DanmuArea.Full)
+
+        assertTrue(top < half)
+        assertEquals(density, half, 0.001f)
+        assertTrue(full > half)
+        assertEquals(1f, danmuEffectiveDensity(1f, DanmuArea.Full), 0.001f)
     }
 
     @Test
@@ -136,6 +171,34 @@ class DanmuLayoutTest {
         // 单车道：第二条因碰撞被丢弃
         assertEquals(1, items.size)
         assertEquals(first.text, items.single().text)
+    }
+
+    @Test
+    fun fasterLongCommentCannotCatchTheShortCommentAhead() {
+        val first = comment(0, text = "a")
+        val second = comment(1_000, text = "b".repeat(30))
+
+        val items = danmuLayout(
+            listOf(first, second), positionMs = 2_000,
+            spec = spec(laneCount = 1), widthPx = 1_000f, measure = ::measure,
+        )
+
+        // 仅检查入场间隙时，两条会在 2 秒处重叠：短条右缘 772.5，长条左缘 762.5。
+        assertEquals(listOf(first.text), items.map { it.text })
+    }
+
+    @Test
+    fun longerCommentCanEnterOnceThePredecessorCanLeaveSafely() {
+        val first = comment(0, text = "a")
+        val second = comment(5_000, text = "b".repeat(30))
+
+        val items = danmuLayout(
+            listOf(first, second), positionMs = 6_000,
+            spec = spec(laneCount = 1), widthPx = 1_000f, measure = ::measure,
+        )
+
+        assertEquals(2, items.size)
+        assertTrue(items.first().x + measure(first.text) < items.last().x)
     }
 
     @Test

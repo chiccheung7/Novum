@@ -16,15 +16,10 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/**
- * 搜索测试：本地目录负责"任意位置命中"，不依赖服务端 SearchTerm 的中文前缀语义。
- *
- * 背景：Emby 的 SearchTerm 对中文只认从头匹配（官方 FAQ：至少两个字符、
- * 从第一个字开始），搜「大明」拿不到「大明王朝1566」，而「1566」这种数字
- * 片段反而能命中——实机反馈正是这个现象。
- */
+/** 搜索直接使用服务器响应，包括服务端排序、总数和分页。 */
 @OptIn(ExperimentalCoroutinesApi::class)
 class DefaultMediaRepositorySearchTest {
 
@@ -36,87 +31,65 @@ class DefaultMediaRepositorySearchTest {
         override val main = dispatcher
     }
 
-    /** 搜「大明」：服务端返回空，本地目录要能命中「大明王朝1566」。 */
     @Test
-    fun matchesAnywhereInTitle() = runTest(dispatcher) {
-        val api = CatalogApi(
-            listOf(
-                item("series-1", "大明王朝1566", "Series"),
-                item("movie-1", "顺流逆流", "Movie"),
+    fun forwardsSearchAndPreservesServerOrderAndTotal() = runTest(dispatcher) {
+        val api = SearchApi(
+            results = listOf(
+                item("first", "海大明", "Movie"),
+                item("second", "大明王朝1566", "Series"),
+            ),
+            totalCount = 17,
+        )
+        val repository = repository(api)
+
+        val page = success(
+            repository.items(
+                parentId = null,
+                startIndex = 0,
+                limit = 60,
+                searchTerm = "大明",
+                includeItemTypes = "Movie,Series",
+            ),
+        )
+
+        assertEquals(listOf("海大明", "大明王朝1566"), page.items.map { it.title })
+        assertEquals(17, page.total)
+        assertEquals(listOf(SearchRequest("大明", "Movie,Series", 0, 60)), api.searchRequests)
+        assertEquals(0, api.unfilteredRequests)
+    }
+
+    @Test
+    fun forwardsServerPaginationWithoutLocalCatalogFallback() = runTest(dispatcher) {
+        val api = SearchApi(
+            results = listOf(
+                item("m-1", "第一部", "Movie"),
+                item("m-2", "第二部", "Movie"),
+                item("m-3", "第三部", "Movie"),
             ),
         )
         val repository = repository(api)
 
-        val page = success(repository.items(parentId = null, startIndex = 0, limit = 60, searchTerm = "大明"))
+        val first = success(repository.items(null, 0, 2, searchTerm = "部"))
+        val second = success(repository.items(null, 2, 2, searchTerm = "部"))
 
-        assertEquals(listOf("大明王朝1566"), page.items.map { it.title })
-        // 服务端 SearchTerm 从头到尾没被用来做关键词检索
-        assertEquals(0, api.searchTermCalls)
+        assertEquals(listOf("第一部", "第二部"), first.items.map { it.title })
+        assertEquals(listOf("第三部"), second.items.map { it.title })
+        assertEquals(3, second.total)
+        assertEquals(listOf(0, 2), api.searchRequests.map { it.startIndex })
+        assertEquals(0, api.unfilteredRequests)
     }
 
-    /** 相关度：完全相同 > 前缀 > 中间包含。 */
     @Test
-    fun ranksExactThenPrefixThenContains() = runTest(dispatcher) {
-        val api = CatalogApi(
-            listOf(
-                item("m-3", "海大明", "Movie"),
-                item("m-2", "大明王朝1566", "Series"),
-                item("m-1", "大明", "Movie"),
-            ),
-        )
+    fun serverEmptyResultStaysEmpty() = runTest(dispatcher) {
+        val api = SearchApi(results = emptyList())
         val repository = repository(api)
 
-        val page = success(repository.items(parentId = null, startIndex = 0, limit = 60, searchTerm = "大明"))
+        val page = success(repository.items(null, 0, 60, searchTerm = "不存在"))
 
-        assertEquals(listOf("大明", "大明王朝1566", "海大明"), page.items.map { it.title })
-    }
-
-    /** 分页：total 是全部命中数，按 startIndex/limit 切片。 */
-    @Test
-    fun pagesThroughLocalMatches() = runTest(dispatcher) {
-        val api = CatalogApi(
-            listOf(
-                item("s-1", "大明王朝1566", "Series"),
-                item("s-2", "大明风华", "Series"),
-                item("s-3", "大明宫词", "Series"),
-            ),
-        )
-        val repository = repository(api)
-
-        val first = success(repository.items(parentId = null, startIndex = 0, limit = 2, searchTerm = "大明"))
-        val second = success(repository.items(parentId = null, startIndex = 2, limit = 2, searchTerm = "大明"))
-
-        assertEquals(3, first.total)
-        assertEquals(2, first.items.size)
-        assertEquals(1, second.items.size)
-    }
-
-    /** 类型过滤：剧集筛选不返回同名电影。 */
-    @Test
-    fun filtersByItemType() = runTest(dispatcher) {
-        val api = CatalogApi(
-            listOf(
-                item("s-1", "大明王朝1566", "Series"),
-                item("m-1", "大明劫", "Movie"),
-            ),
-        )
-        val repository = repository(api)
-
-        val page = success(repository.items(parentId = null, startIndex = 0, limit = 60, searchTerm = "大明", includeItemTypes = "Series"))
-
-        assertEquals(listOf("大明王朝1566"), page.items.map { it.title })
-    }
-
-    /** 目录只拉一次：连续搜索不重复请求全库。 */
-    @Test
-    fun catalogIsFetchedOnce() = runTest(dispatcher) {
-        val api = CatalogApi(listOf(item("s-1", "大明王朝1566", "Series")))
-        val repository = repository(api)
-
-        repository.items(parentId = null, startIndex = 0, limit = 60, searchTerm = "大明")
-        repository.items(parentId = null, startIndex = 0, limit = 60, searchTerm = "王朝")
-
-        assertEquals(1, api.catalogCalls)
+        assertTrue(page.items.isEmpty())
+        assertEquals(0, page.total)
+        assertEquals(1, api.searchRequests.size)
+        assertEquals(0, api.unfilteredRequests)
     }
 
     private fun success(result: NovumResult<com.novum.tv.model.MediaPage>) =
@@ -135,16 +108,10 @@ class DefaultMediaRepositorySearchTest {
                 ),
             )
         }
-        val clients = CatalogProvider(api)
         return DefaultMediaRepository(
-            clients = clients,
+            clients = SearchApiProvider(api),
             sessionHolder = holder,
             dispatchers = dispatchers,
-            personIndex = PersonIndexStore(
-                kotlin.io.path.createTempFile("person_index").toFile(),
-                ioDispatcher = dispatcher,
-            ),
-            searchCatalog = testSearchCatalog(clients, holder, dispatchers),
             strings = FakeMediaStrings,
             logger = NoopNovumLogger,
         )
@@ -159,23 +126,23 @@ class DefaultMediaRepositorySearchTest {
     )
 }
 
-/** 固定提供者。 */
-private class CatalogProvider(private val api: EmbyApi) : EmbyApiProvider {
+private data class SearchRequest(
+    val term: String?,
+    val itemTypes: String?,
+    val startIndex: Int,
+    val limit: Int,
+)
+
+private class SearchApiProvider(private val api: EmbyApi) : EmbyApiProvider {
     override fun api(baseUrl: String): EmbyApi = api
 }
 
-/**
- * 模拟 Emby：`SearchTerm` 只做"从头匹配"（搜「大明」返回空），
- * 无关键词的列表请求则返回全库。
- */
-private class CatalogApi(private val catalog: List<ItemDto>) : EmbyApiStub() {
-
-    /** 目录（无关键词）请求次数。 */
-    var catalogCalls = 0
-        private set
-
-    /** 带关键词的请求次数（应当为 0：搜索不再依赖服务端语义）。 */
-    var searchTermCalls = 0
+private class SearchApi(
+    private val results: List<ItemDto>,
+    private val totalCount: Int = results.size,
+) : EmbyApiStub() {
+    val searchRequests = mutableListOf<SearchRequest>()
+    var unfilteredRequests = 0
         private set
 
     override suspend fun items(
@@ -197,13 +164,14 @@ private class CatalogApi(private val catalog: List<ItemDto>) : EmbyApiStub() {
         minDateCreated: String?,
         fields: String,
     ): QueryResultDto<ItemDto> {
-        if (searchTerm != null) {
-            searchTermCalls++
-            // Emby 行为：中文只从头匹配，这里直接返回空模拟「搜不到」
+        if (searchTerm == null) {
+            unfilteredRequests++
             return QueryResultDto(Items = emptyList(), TotalRecordCount = 0)
         }
-        catalogCalls++
-        val slice = catalog.drop(startIndex).take(limit)
-        return QueryResultDto(Items = slice, TotalRecordCount = catalog.size)
+        searchRequests += SearchRequest(searchTerm, includeItemTypes, startIndex, limit)
+        return QueryResultDto(
+            Items = results.drop(startIndex).take(limit),
+            TotalRecordCount = totalCount,
+        )
     }
 }

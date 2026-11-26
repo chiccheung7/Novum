@@ -9,7 +9,7 @@ import com.novum.tv.model.PlaybackPlan
  *
  * 与播放器本身解耦，便于在 JVM 测试中验证地址选择策略与进度换算。
  */
-interface PlaybackRepository {
+interface PlaybackRepository : PlaybackReporter {
 
     /**
      * 为条目生成播放计划。
@@ -29,6 +29,13 @@ interface PlaybackRepository {
         excludeLine: String? = null,
         mediaSourceId: String? = null,
     ): NovumResult<PlaybackPlan>
+
+    /** Bind queued playback events to the account that owns this player. */
+    fun sessionReporter(): PlaybackReporter = this
+}
+
+/** Playback events may outlive the screen, but must never move to another account. */
+interface PlaybackReporter {
 
     /**
      * 上报「开始播放」。

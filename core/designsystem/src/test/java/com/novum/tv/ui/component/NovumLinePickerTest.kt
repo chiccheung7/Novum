@@ -2,6 +2,8 @@ package com.novum.tv.ui.component
 
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsFocused
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
@@ -69,6 +71,45 @@ class NovumLinePickerTest {
 
         // 未锁线时当前项 = 延迟最低线路（香港 45ms），无「自动」行
         composeRule.onNodeWithContentDescription("香港线路（当前）").assertIsDisplayed()
+    }
+
+    @Test
+    fun arrivingLinesReceiveFocusAfterLoading() {
+        val loading = mutableStateOf(true)
+        composeRule.setContent {
+            NovumTheme {
+                NovumLinePickerPanel(
+                    lines = sampleLines.takeUnless { loading.value },
+                    pinnedUrl = sampleLines[1].baseUrl,
+                    onSelectLine = {},
+                    loading = loading.value,
+                    failed = false,
+                )
+            }
+        }
+        composeRule.onNodeWithText("正在获取线路…").assertIsDisplayed()
+        composeRule.runOnIdle { loading.value = false }
+        composeRule.waitForIdle()
+
+        composeRule.onNodeWithContentDescription("美国线路（当前）").assertIsFocused()
+    }
+
+    @Test
+    fun missingPinnedLineFallsBackToAnAvailableFocusTarget() {
+        composeRule.setContent {
+            NovumTheme {
+                NovumLinePickerPanel(
+                    lines = sampleLines,
+                    pinnedUrl = "https://removed.example.com",
+                    onSelectLine = {},
+                    loading = false,
+                    failed = false,
+                )
+            }
+        }
+        composeRule.waitForIdle()
+
+        composeRule.onNodeWithContentDescription("香港线路（当前）").assertIsFocused()
     }
 
     @Test

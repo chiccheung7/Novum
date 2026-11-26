@@ -6,6 +6,9 @@ package com.novum.tv.model
  * @param fraction 画面高度占比（弹幕只落在该区域内）。
  */
 enum class DanmuArea(val fraction: Float) {
+    /** 顶部四分之一屏。 */
+    Top(0.25f),
+
     /** 上半屏（默认，不挡字幕）。 */
     Half(0.5f),
 

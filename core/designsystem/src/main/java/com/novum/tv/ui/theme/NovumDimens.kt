@@ -7,11 +7,11 @@ import androidx.compose.ui.unit.dp
  * 尺寸与动效令牌。
  *
  * 背景铺满视口；标题、静止首尾卡与关键按钮共用 [SafeHorizontal] 对齐线。
- * 横卡与海报卡分别使用 [CardWidth]、[PosterCardWidth]，间距由宿主布局选择。
+ * 横卡与海报卡分别使用 [CardWidth]、[PosterCardWidth] 目标宽度。
  * 横向滚动行通过 contentPadding 留出安全边距，焦点滚动同时计入缩放溢出。
  *
- * **所有数值都是 1280×720dp 设计画布口径**（令牌的标定基准：六列海报卡
- * 177dp、Hero 信息区 420dp 都是按这个画布算出来的）。
+ * **所有数值都是1280×720dp设计画布口径**。卡宽为目标值，布局统一按内容宽
+ * 计算列数和实际宽度：该画布下六列海报约174dp、四列横卡约271dp。
  * 应用根节点 `TvViewport` 会把过小的画布收敛到该基准，并叠加用户在设置里的
  * 「界面大小」档位——这里不需要、也不应该再按某台机器的"实际画布"换算或写像素值。
  */
@@ -59,12 +59,12 @@ object NovumDimens {
      * 16:9 标准卡宽度：首页继续观看行、分类页库卡与选集行共用。
      * 2:3 海报卡使用 [PosterCardWidth]。
      */
-    val CardWidth = 320.dp
+    val CardWidth = 280.dp
 
     /**
-     * 2:3 海报卡宽度。固定六列时，1280dp 画布下的卡宽约为 177dp。
+     * 2:3 海报卡目标宽度；与网格共用计算，1280dp 画布下六列实际约174dp。
      */
-    val PosterCardWidth = 177.dp
+    val PosterCardWidth = 180.dp
 
     /**
      * 标准卡图区 → 下方文字区的间距（官方标准卡规格图标注 8dp）。
@@ -92,12 +92,12 @@ object NovumDimens {
      *
      * 必须与 [com.novum.tv.ui.component.NovumCard] 的文字区保持一致：
      * 间距 8dp + CardTitle 20sp（27 行高）+ Label 14sp（18 行高）× 行数。
-     * 1 行 = 53dp，取 54dp 留余量；2 行简介使用 72dp。
+     * 1 行元数据取54dp；两行简介使用Caption的21dp行高，取80dp留余量。
      * 全站副题 [subtitleLines] 上限 2（subtitleMaxLines）。
      */
     fun CardTextBlockMaxHeight(subtitleLines: Int): Dp = when (subtitleLines) {
         1 -> 54.dp
-        else -> 72.dp
+        else -> 80.dp
     }
 
     /** 焦点动画时长 150ms（焦点缩放）。 */
@@ -107,12 +107,15 @@ object NovumDimens {
      * 全站文本按钮统一高度（60dp）。
      *
      * 官方 48dp 焦点目标 @960 画布，换算到 1280 画布 = 64dp；60dp 保证
-     * 26sp 按钮文案上下各留 13dp 内边距，同时不把整页撑高。
+     * 22sp 按钮文案有充足上下内边距，同时不把整页撑高。
      */
     val ButtonHeight = 60.dp
 
     /**
-     * 全站文本按钮统一宽度（200dp），首页双 CTA 与详情页操作按钮共用。
+     * 登录等较宽的表单操作按钮宽度；首页与详情使用 ActionButtonWidth。
      */
     val ButtonWidth = 200.dp
+
+    /** 首页和详情操作按钮共用的紧凑宽度，四字文案与24dp两侧内边距均可容纳。 */
+    val ActionButtonWidth = 144.dp
 }

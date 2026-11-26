@@ -114,16 +114,6 @@ class GridViewModel @Inject constructor(
     }
 
     /**
-     * 预热搜索目录（搜索页打开即调）。
-     *
-     * 搜索走本地目录做任意位置匹配，目录首次拉取要几秒；把它挪到
-     * 用户打字之前，第一次搜索结果基本不用等。
-     */
-    fun warmSearch() {
-        viewModelScope.launch { repository.warmSearchCatalog() }
-    }
-
-    /**
      * 切换收藏页的类型筛选（全部/电影/剧集），回到第一页重新取数。
      *
      * @param type 目标类型。
@@ -168,7 +158,8 @@ class GridViewModel @Inject constructor(
         if (source !is GridSource.Favorites) return
         // 与首屏/分页共用同一请求队列：返回页时若还有在途 loadMore，
         // 不能让两个协程同时改 total/startIndex 和列表状态。
-        load(reset = true, silent = true)
+        val hasContent = _state.value is UiState.Success || _state.value is UiState.Empty
+        load(reset = true, silent = hasContent)
     }
 
     /** 错误态重试。 */
@@ -200,16 +191,13 @@ class GridViewModel @Inject constructor(
         loadJob?.cancel()
         val seq = ++requestSeq
         val start = if (reset) 0 else startIndex
-        // 静默刷新失败要还原分页游标：列表内容还在，游标却被清零会让
-        // 「滚动到底加载更多」永久失效（startIndex >= total）。
-        val previousStart = startIndex
-        val previousTotal = total
-        val previousCount = _totalCount.value
         loading = true
-        if (reset) {
+        // 静默刷新保留现有列表及游标，等成功后一起替换。否则连续刷新取消
+        // 前一次请求后，第二次失败只能恢复到已被清零的游标。
+        if (reset && !silent) {
             startIndex = 0
             total = 0
-            if (!silent) _state.value = UiState.Loading
+            _state.value = UiState.Loading
         }
         loadJob = viewModelScope.launch {
             when (val result = fetch(current, start)) {
@@ -217,9 +205,12 @@ class GridViewModel @Inject constructor(
                     if (seq != requestSeq) return@launch
                     val page = result.value
                     total = page.total
-                    startIndex = start + page.items.size
+                    // 总数可能晚于媒体删除更新；空页已没有可继续请求的内容。
+                    startIndex = if (page.items.isEmpty()) total else start + page.items.size
                     _totalCount.value = page.total
-                    val merged = if (reset) page.items else currentItems() + page.items
+                    // 列表在分页之间可能发生新增/重排，重叠条目不能产生重复 LazyGrid key。
+                    // 游标仍按服务器返回数推进，而不是去重后的可见卡片数。
+                    val merged = (if (reset) page.items else currentItems() + page.items).distinctBy { it.id }
                     _state.value = if (merged.isEmpty()) UiState.Empty() else UiState.Success(merged)
                 }
 
@@ -228,11 +219,7 @@ class GridViewModel @Inject constructor(
                     when {
                         reset && !silent -> _state.value = UiState.Error(result.error)
                         !reset -> _state.value = UiState.Success(currentItems())
-                        else -> {
-                            startIndex = previousStart
-                            total = previousTotal
-                            _totalCount.value = previousCount
-                        }
+                        else -> Unit
                     }
                 }
             }

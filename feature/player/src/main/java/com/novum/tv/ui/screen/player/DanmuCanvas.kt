@@ -15,7 +15,9 @@ import androidx.compose.ui.unit.dp
 import androidx.media3.exoplayer.ExoPlayer
 import com.novum.tv.model.DanmuComment
 import com.novum.tv.model.DanmuConfig
+import com.novum.tv.model.DanmuArea
 import kotlinx.coroutines.isActive
+import kotlin.math.sqrt
 
 /**
  * 弹幕渲染引擎：布局纯函数 + Canvas 绘制。
@@ -48,7 +50,7 @@ internal data class DanmuLayoutSpec(
     val density: Float,
 ) {
     init {
-        require(laneCount >= 1) { "laneCount must be positive" }
+        require(laneCount >= 0) { "laneCount must not be negative" }
         require(density in 0f..1f) { "density out of range: $density" }
     }
 }
@@ -64,6 +66,14 @@ internal const val DANMU_MAX_VISIBLE = 60
 
 /** 新弹幕进入车道时与同车道上一条尾部的最小间隙（像素）。 */
 internal const val DANMU_LANE_GAP_PX = 24f
+
+/** 只在所选显示区域分配完整车道，顶部区域为画面高度的四分之一。 */
+internal fun danmuLaneCount(heightPx: Float, area: DanmuArea, laneHeightPx: Float, topInsetPx: Float): Int =
+    ((heightPx * area.fraction - topInsetPx) / laneHeightPx).toInt().coerceAtLeast(0)
+
+/** Increase the sampled comment volume as the display area grows from the default half screen. */
+internal fun danmuEffectiveDensity(density: Float, area: DanmuArea): Float =
+    (density.coerceIn(0f, 1f) * sqrt(area.fraction / DanmuArea.Half.fraction)).coerceIn(0f, 1f)
 
 /**
  * 密度采样：确定性丢弃——同一条弹幕在任何帧、任何密度下的去留一致
@@ -91,6 +101,7 @@ internal fun danmuLayout(
     widthPx: Float,
     measure: (String) -> Float,
 ): List<DanmuItem> {
+    if (spec.laneCount == 0) return emptyList()
     val maxDuration = maxOf(spec.scrollDurationMs, spec.fixedDurationMs)
     // 重放窗口比「可见范围」再往前整整一个生命周期：车道状态要靠这段历史预热。
     // 只从「可见起点」开始重放的话，窗口每滑动一帧就少掉一批历史，同一条弹幕
@@ -104,6 +115,7 @@ internal fun danmuLayout(
     }
     // 车道状态：重放窗口重建
     val scrollLaneFreeAt = LongArray(spec.laneCount) // 每车道上一条滚动弹幕尾部让出进入间隙的时间
+    val scrollLaneExitAt = LongArray(spec.laneCount)
     val topLaneBusyUntil = LongArray(spec.laneCount)
     val bottomLaneBusyUntil = LongArray(spec.laneCount)
     val items = ArrayList<DanmuItem>(32)
@@ -124,13 +136,21 @@ internal fun danmuLayout(
         val textWidth = measure(comment.text)
         when (comment.mode) {
             1 -> {
-                val lane = pickScrollLane(scrollLaneFreeAt, comment.timeMs)
+                val lane = pickScrollLane(
+                    scrollLaneFreeAt,
+                    scrollLaneExitAt,
+                    comment.timeMs,
+                    widthPx,
+                    textWidth,
+                    spec.scrollDurationMs,
+                )
                 if (lane >= 0) {
                     // 尾部完全进入画面（右边缘退回 widthPx-gap）的时刻；
                     // 过期弹幕的占用早已结束，直接记成它自己的时间即可
                     val enterProgress = (textWidth + DANMU_LANE_GAP_PX) / (widthPx + textWidth)
                     scrollLaneFreeAt[lane] =
                         comment.timeMs + (spec.scrollDurationMs * enterProgress).toLong()
+                    scrollLaneExitAt[lane] = comment.timeMs + spec.scrollDurationMs
                 }
                 if (lane < 0 || elapsed > spec.scrollDurationMs) continue
                 val progress = elapsed.toFloat() / spec.scrollDurationMs
@@ -165,7 +185,14 @@ internal fun danmuLayout(
  * @param atMs 弹幕进入时间（**不是**当前播放位置），保证同一批弹幕的分道结果
  *   与查询时刻无关。
  */
-private fun pickScrollLane(laneFreeAt: LongArray, atMs: Long): Int {
+private fun pickScrollLane(
+    laneFreeAt: LongArray,
+    laneExitAt: LongArray,
+    atMs: Long,
+    widthPx: Float,
+    textWidth: Float,
+    scrollDurationMs: Long,
+): Int {
     // 扫描起点按**弹幕自身时间**轮转：
     // - 只用"是否空闲"判断（不看历史占用早晚），重放窗口滑动不会改变结论 → 不跳行；
     // - 但固定从 0 号车道开始扫会让所有弹幕挤在头一两行（0 号车道上一旦让出间隙，
@@ -177,7 +204,13 @@ private fun pickScrollLane(laneFreeAt: LongArray, atMs: Long): Int {
     val start = laneStartIndex(atMs, laneCount)
     for (offset in 0 until laneCount) {
         val lane = (start + offset) % laneCount
-        if (laneFreeAt[lane] <= atMs) return lane
+        if (laneFreeAt[lane] > atMs) continue
+        // 全部文本使用同一存活时长，长文本横移更快。仅看入场间隙会让后来的
+        // 长文本追上短文本；还要保证前一条离场时，新文本的左缘仍在其右侧。
+        val safeTravelMs = scrollDurationMs *
+            (widthPx - DANMU_LANE_GAP_PX).coerceAtLeast(0f) /
+            (widthPx + textWidth).coerceAtLeast(1f)
+        if (laneExitAt[lane] - atMs <= safeTravelMs) return lane
     }
     return -1
 }
@@ -262,8 +295,7 @@ internal fun DanmuOverlay(
         val fontPx = with(density) { DANMU_BASE_FONT_SP.dp.toPx() } * config.size.scale
         val laneHeightPx = fontPx * 1.5f
         val topInsetPx = with(density) { 8.dp.toPx() }
-        val areaHeight = heightPx * config.area.fraction
-        val laneCount = ((areaHeight - topInsetPx) / laneHeightPx).toInt().coerceAtLeast(1)
+        val laneCount = danmuLaneCount(heightPx, config.area, laneHeightPx, topInsetPx)
         val scrollDurationMs = (DANMU_SCROLL_DURATION_MS * config.speed.durationScale).toLong()
         val spec = DanmuLayoutSpec(
             laneCount = laneCount,
@@ -272,7 +304,7 @@ internal fun DanmuOverlay(
             topInsetPx = topInsetPx,
             scrollDurationMs = scrollDurationMs,
             fixedDurationMs = DANMU_FIXED_DURATION_MS,
-            density = config.density,
+            density = danmuEffectiveDensity(config.density, config.area),
         )
         // 填充与描边各一支 Paint：先描边后填充，避免 shadow layer 的软件绘制路径
         val fillPaint = remember(fontPx) {
@@ -322,8 +354,8 @@ private class TextWidthCache(private val paint: android.graphics.Paint) {
     }
 }
 
-/** 弹幕重绘间隔：30fps（60fps 会把 GPU 绘制占满，抢视频解码与 UI 的帧预算）。 */
-private const val DANMU_TICK_MS = 33L
+/** Smooth animation at up to 60fps while avoiding redundant layout work on 120Hz displays. */
+private const val DANMU_TICK_MS = 16L
 
 /** 车道起扫位置的轮转步长：每 1 秒把起点后移一条车道。 */
 private const val LANE_ROTATE_STEP_MS = 1_000L

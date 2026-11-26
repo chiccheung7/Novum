@@ -15,7 +15,7 @@ import kotlinx.coroutines.delay
  *
  * 用法：页面内容首项挂 [FocusRequester]，本副作用在组合后反复尝试抓焦
  * （每帧一查 + 100ms 兜底，最多 5 次）：目标可能晚于副作用完成组合
- * （异步加载的首卡、focusRequester 延迟挂接），runCatching 吞掉未挂接帧。
+ * （异步加载的首卡、focusRequester 延迟挂接），未挂接或未接受焦点时继续重试。
  *
  * 默认 `requester` 实例跨重组稳定，因此每次进入组合只抓一次；
  * 需要「数据到位后再抓」的场景传显式 key（如 PosterGrid 的 items 非空）。
@@ -28,7 +28,7 @@ fun NovumInitialFocus(requester: FocusRequester, key: Any? = requester) {
     LaunchedEffect(key) {
         repeat(5) {
             withFrameNanos { }
-            if (runCatching { requester.requestFocus() }.isSuccess) return@LaunchedEffect
+            if (runCatching { requester.requestFocus() }.getOrDefault(false)) return@LaunchedEffect
             delay(100)
         }
     }

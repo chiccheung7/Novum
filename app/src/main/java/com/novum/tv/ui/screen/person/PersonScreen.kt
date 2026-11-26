@@ -96,7 +96,7 @@ fun PersonScreen(
                     state = current,
                     onRetry = viewModel::load,
                     emptyMessage = androidx.compose.ui.res.stringResource(
-                        com.novum.tv.core.designsystem.R.string.favorites_empty,
+                        com.novum.tv.core.designsystem.R.string.person_works_empty,
                     ),
                 )
 

@@ -31,6 +31,7 @@ interface SessionStore {
         userId: String,
         userName: String,
         serverName: String,
+        rememberedPassword: String? = null,
     )
 
     /**
@@ -51,6 +52,15 @@ interface SessionStore {
 
     /** 上次登录的用户名，用于登录页预填。 */
     suspend fun lastUsername(): String
+
+    /** Returns the saved password after decrypting it with the device Keystore, if present. */
+    suspend fun rememberedPassword(): String? = null
+
+    /** Whether the user last enabled credential remembering. */
+    suspend fun shouldRememberCredentials(): Boolean = false
+
+    /** Persists the user's choice before a login attempt. */
+    suspend fun setRememberCredentials(remember: Boolean) = Unit
 
     /** 获取稳定的设备 id，不存在时生成并持久化。 */
     suspend fun deviceId(): String

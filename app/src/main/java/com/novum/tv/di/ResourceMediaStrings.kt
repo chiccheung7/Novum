@@ -16,6 +16,8 @@ class ResourceMediaStrings @Inject constructor(
     @ApplicationContext private val context: Context,
 ) : MediaStrings {
 
+    override fun recentBroadcastsTitle(): String = context.getString(R.string.home_row_recent_broadcasts)
+
     override fun typeMovie(): String = context.getString(R.string.media_type_movie)
 
     override fun typeSeries(): String = context.getString(R.string.media_type_series)

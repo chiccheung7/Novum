@@ -72,6 +72,15 @@ object NovumType {
         letterSpacing = 0.2.sp,
     )
 
+    /** 简介正文：比主标题和卡名更轻，18/26保留电视阅读所需的行距。 */
+    val Synopsis: TextStyle = TextStyle(
+        fontFamily = NovumFontFamily,
+        fontSize = 18.sp,
+        lineHeight = 26.sp,
+        fontWeight = FontWeight.Normal,
+        letterSpacing = 0.2.sp,
+    )
+
     /** 卡片标题/设置项强调 22/29 Medium（10ft 糊块顾虑保留 500）。 */
     val BodyStrong: TextStyle = TextStyle(
         fontFamily = NovumFontFamily,

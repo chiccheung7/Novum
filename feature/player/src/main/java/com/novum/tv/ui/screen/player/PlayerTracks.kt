@@ -5,8 +5,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.input.key.type
 import androidx.media3.common.C
 import androidx.media3.common.Format
+import androidx.media3.common.Player
 import androidx.media3.common.TrackSelectionOverride
-import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.common.Tracks
 import com.novum.tv.data.repository.ItemPlaybackPrefsStore
 import java.util.Locale
 
@@ -17,7 +18,7 @@ import java.util.Locale
  * @return 字幕是否由记忆接管（接管则语言偏好/zhdual 不再介入）。
  */
 internal fun applyRememberedSubtitle(
-    player: ExoPlayer,
+    player: Player,
     remembered: ItemPlaybackPrefsStore.ItemPrefs?,
 ): Boolean {
     if (remembered == null) return false
@@ -40,7 +41,7 @@ internal fun applyRememberedSubtitle(
 }
 
 /** 恢复条目记忆的音轨；无记忆或轨不匹配（换版本后轨道变了）时不动。 */
-internal fun applyRememberedAudio(player: ExoPlayer, remembered: ItemPlaybackPrefsStore.ItemPrefs?) {
+internal fun applyRememberedAudio(player: Player, remembered: ItemPlaybackPrefsStore.ItemPrefs?) {
     remembered?.audioTrack?.let { overrideTrackByRef(player, C.TRACK_TYPE_AUDIO, it) }
 }
 
@@ -51,17 +52,17 @@ internal fun applyRememberedAudio(player: ExoPlayer, remembered: ItemPlaybackPre
  * 找不到匹配组返回 false（回落语言偏好路径）。
  */
 private fun overrideTrackByRef(
-    player: ExoPlayer,
+    player: Player,
     type: Int,
     ref: ItemPlaybackPrefsStore.TrackRef,
 ): Boolean {
-    val target = player.currentTracks.groups.firstOrNull { group ->
-        group.type == type && trackMatchesRef(group.getTrackFormat(0), ref)
-    } ?: return false
-    if (target.isTrackSelected(0)) return true
+    val target = player.currentTracks.groups
+        .filter { it.type == type }
+        .firstMatchingTrack { trackMatchesRef(it, ref) } ?: return false
+    if (target.group.isTrackSelected(target.index)) return true
     player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
         .clearOverridesOfType(type)
-        .setOverrideForType(TrackSelectionOverride(target.mediaTrackGroup, 0))
+        .setOverrideForType(TrackSelectionOverride(target.group.mediaTrackGroup, target.index))
         .build()
     return true
 }
@@ -96,16 +97,15 @@ internal fun trackMatchesRef(
  * 用 [TrackSelectionOverride] 钉住目标组（与手动切轨同机制）；目标组已
  * 选中时直接返回，防 onTracksChanged 回写参数造成的事件循环。
  */
-internal fun applyDualSubtitlePreference(player: ExoPlayer) {
+internal fun applyDualSubtitlePreference(player: Player) {
     val groups = player.currentTracks.groups.filter { it.type == C.TRACK_TYPE_TEXT }
-    val target = groups.firstOrNull { group ->
-        val format = group.getTrackFormat(0)
+    val target = groups.firstMatchingTrack { format ->
         DUAL_SUBTITLE_TITLE_KEYWORDS.any { format.label?.contains(it) == true }
-    } ?: groups.firstOrNull { group -> group.getTrackFormat(0).language == "chi" } ?: return
-    if (target.isTrackSelected(0)) return
+    } ?: groups.firstMatchingTrack { it.language == "chi" } ?: return
+    if (target.group.isTrackSelected(target.index)) return
     player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
         .clearOverridesOfType(C.TRACK_TYPE_TEXT)
-        .setOverrideForType(TrackSelectionOverride(target.mediaTrackGroup, 0))
+        .setOverrideForType(TrackSelectionOverride(target.group.mediaTrackGroup, target.index))
         .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false)
         .build()
 }
@@ -117,7 +117,7 @@ internal fun applyDualSubtitlePreference(player: ExoPlayer) {
  * @param option 目标轨道；[TEXT_OFF_ID] 表示关闭字幕。
  * @param isText true=字幕，false=音轨。
  */
-internal fun selectTrack(player: ExoPlayer, option: TrackOption, isText: Boolean) {
+internal fun selectTrack(player: Player, option: TrackOption, isText: Boolean) {
     val params = player.trackSelectionParameters.buildUpon()
     if (option.id == TEXT_OFF_ID) {
         params.setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true)
@@ -128,11 +128,51 @@ internal fun selectTrack(player: ExoPlayer, option: TrackOption, isText: Boolean
     val groupIndex = parts.getOrNull(0)?.toIntOrNull() ?: return
     val trackIndex = parts.getOrNull(1)?.toIntOrNull() ?: return
     val group = player.currentTracks.groups.getOrNull(groupIndex) ?: return
+    val expectedType = if (isText) C.TRACK_TYPE_TEXT else C.TRACK_TYPE_AUDIO
+    if (group.type != expectedType || trackIndex !in 0 until group.length) return
     params.setOverrideForType(
         TrackSelectionOverride(group.mediaTrackGroup, trackIndex),
     )
     if (isText) params.setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false)
     player.trackSelectionParameters = params.build()
+}
+
+private data class TrackTarget(val group: Tracks.Group, val index: Int)
+
+/** 自适应轨道组可以包含多个格式，选项与记忆都必须定位到组内实际索引。 */
+private fun List<Tracks.Group>.firstMatchingTrack(predicate: (Format) -> Boolean): TrackTarget? {
+    for (group in this) {
+        for (index in 0 until group.length) {
+            if (predicate(group.getTrackFormat(index))) return TrackTarget(group, index)
+        }
+    }
+    return null
+}
+
+internal fun buildTrackOptions(
+    tracks: Tracks,
+    type: Int,
+    audioFallback: String,
+    textFallback: String,
+    channelsTemplate: String,
+): List<TrackOption> = buildList {
+    tracks.groups.forEachIndexed { groupIndex, group ->
+        if (group.type != type) return@forEachIndexed
+        for (trackIndex in 0 until group.length) {
+            val format = group.getTrackFormat(trackIndex)
+            add(
+                TrackOption(
+                    id = "$groupIndex:$trackIndex",
+                    label = buildTrackLabel(format, type, audioFallback, textFallback, channelsTemplate),
+                    selected = group.isTrackSelected(trackIndex),
+                    language = format.language,
+                    rawLabel = format.label.orEmpty(),
+                    channels = if (type == C.TRACK_TYPE_AUDIO) format.channelCount.takeIf { it > 0 } else null,
+                    codec = if (type == C.TRACK_TYPE_AUDIO) audioCodecLabel(format) else null,
+                ),
+            )
+        }
+    }
 }
 
 /**

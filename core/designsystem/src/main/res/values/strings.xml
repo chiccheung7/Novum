@@ -12,8 +12,8 @@
     <string name="login_server_placeholder">192.168.1.10:8096</string>
     <string name="login_username">用户名</string>
     <string name="login_password">密码</string>
-    <string name="login_remember">记住登录</string>
-    <string name="login_remember_hint">勾选后保存登录状态，下次自动登录</string>
+    <string name="login_remember">记住凭证</string>
+    <string name="login_remember_hint">安全保存 Token 和密码，下次自动登录</string>
     <string name="login_action">登录</string>
     <string name="login_action_loading">正在登录…</string>
     <string name="login_error_server">请填写服务器地址</string>
@@ -28,6 +28,9 @@
 
     <!-- 首页 -->
     <string name="home_row_resume">继续观看</string>
+    <string name="home_row_recent_broadcasts">近期热播</string>
+    <string name="home_next_up">下一集</string>
+    <string name="home_view_all">查看全部</string>
     <string name="library_title">媒体库</string>
     <string name="home_entry_movie">电影</string>
     <string name="home_entry_series">剧集</string>
@@ -59,6 +62,16 @@
     <string name="search_person_section">人物</string>
     <string name="search_hint">输入关键词后点「搜索」</string>
     <string name="search_empty">没有找到相关内容</string>
+    <string name="search_category_all">全部</string>
+    <string name="search_category_movies">电影</string>
+    <string name="search_category_series">剧集</string>
+    <string name="search_category_people">人物</string>
+    <string name="search_history_title">最近搜索</string>
+    <string name="search_history_clear">清除</string>
+    <string name="search_history_empty">搜索记录会显示在这里</string>
+    <string name="search_person_all">全部人物</string>
+    <string name="search_person_count">人物 · %1$d</string>
+    <string name="person_works_empty">还没有找到这位人物的作品</string>
 
     <!-- 通用状态 -->
     <string name="state_empty_message">这里还没有内容</string>
@@ -82,10 +95,10 @@
     <string name="player_drawer_subtitle_height">字幕高度</string>
     <!-- 字幕高度五档：默认居中，两档上移、两档下移。 -->
     <string name="subtitle_height_default">默认</string>
-    <string name="subtitle_height_up1">高一档</string>
-    <string name="subtitle_height_up2">高两档</string>
-    <string name="subtitle_height_down1">低一档</string>
-    <string name="subtitle_height_down2">低两档</string>
+    <string name="subtitle_height_up1">较高</string>
+    <string name="subtitle_height_up2">高</string>
+    <string name="subtitle_height_down1">较低</string>
+    <string name="subtitle_height_down2">低</string>
     <string name="settings_pref_subtitle">首选字幕语言</string>
     <string name="settings_pref_audio">首选音频语言</string>
     <string name="settings_pref_quality">优先视频质量</string>
@@ -176,13 +189,18 @@
     <string name="player_drawer_no_overview">暂无简介</string>
     <string name="player_drawer_quality">信息</string>
     <string name="player_drawer_title">播放设置</string>
+    <string name="player_drawer_tabs_more_left">标签栏左侧还有更多项目</string>
+    <string name="player_drawer_tabs_more_right">标签栏右侧还有更多项目</string>
     <string name="player_drawer_passthrough">音频直通（杜比 / DTS）</string>
     <string name="player_drawer_audio">音轨</string>
     <string name="player_drawer_subtitle">字幕</string>
-    <string name="player_drawer_empty">暂无可切换轨道</string>
+    <string name="player_drawer_empty">暂无音轨</string>
+    <string name="player_drawer_no_episodes">暂无分集</string>
+    <string name="player_drawer_no_chapters">暂无章节</string>
     <string name="player_drawer_subtitle_off">关闭字幕</string>
     <string name="player_drawer_subtitle_switch">字幕开关</string>
-    <string name="player_drawer_no_subtitle">此片源没有字幕</string>
+    <string name="player_drawer_no_subtitle">此片源不支持字幕操作</string>
+    <string name="player_drawer_no_audio_operations">此片源不支持音轨操作</string>
     <string name="player_drawer_reloading">正在按新音频设置重新加载…</string>
 
     <!-- 弹幕（UHDNOW 原生能力；播放抽屉 + 设置页共用） -->
@@ -190,6 +208,7 @@
     <string name="player_drawer_danmaku">弹幕</string>
     <string name="danmu_enabled">弹幕开关</string>
     <string name="danmu_area">显示区域</string>
+    <string name="danmu_area_top">仅顶部</string>
     <string name="danmu_area_half">上半屏</string>
     <string name="danmu_area_full">全屏</string>
     <string name="danmu_size">弹幕大小</string>
@@ -234,18 +253,23 @@
     <!-- 设置 -->
     <string name="settings_group_appearance">外观与界面</string>
     <string name="settings_ui_scale">界面大小</string>
-    <string name="settings_ui_scale_hint">画面显示不全就调小，字太小就调大</string>
     <string name="settings_group_playback">播放与续播</string>
     <string name="settings_prefer_direct">优先直连播放</string>
     <string name="settings_audio_passthrough">音频直通（杜比 / DTS）</string>
     <string name="settings_skip_intro">自动跳过片头</string>
     <string name="settings_skip_intro_seconds">片头时长</string>
     <string name="settings_seconds">%1$d 秒</string>
+    <string name="settings_subsection_playback">播放行为</string>
+    <string name="settings_subsection_danmu">弹幕显示</string>
 
     <string name="settings_group_subtitle">字幕与音轨</string>
     <string name="settings_subtitle_default">默认开启字幕</string>
     <string name="settings_subtitle_ass_burn_in">ASS 字幕烧录保样式</string>
     <string name="settings_subtitle_size">字幕字号</string>
+    <string name="settings_subtitle_weight">字幕粗细</string>
+    <string name="subtitle_weight_thin">细</string>
+    <string name="subtitle_weight_normal">标准</string>
+    <string name="subtitle_weight_bold">粗</string>
     <string name="settings_group_data">数据与缓存</string>
     <string name="settings_clear_cache">清除图片缓存</string>
     <string name="settings_group_account">账号</string>
@@ -299,7 +323,6 @@
     <string name="media_runtime_minutes">%1$d 分钟</string>
     <string name="media_runtime_hours">%1$d 小时</string>
     <string name="media_runtime_hours_minutes">%1$d 小时 %2$d 分钟</string>
-    <string name="player_delay_off">关</string>
 
     <!-- 数据层展示文案 -->
     <string name="media_type_movie">电影</string>
