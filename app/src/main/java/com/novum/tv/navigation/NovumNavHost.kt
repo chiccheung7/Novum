@@ -12,7 +12,6 @@ import androidx.compose.animation.scaleOut
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.IntOffset
@@ -47,7 +46,6 @@ import com.novum.tv.ui.screen.settings.SettingsScreen
  * 缩放仅作用于绘制，不改变布局和焦点，时长由 DETAIL_TRANSITION_MS 控制。
  *
  * @param navController 可注入的导航控制器，测试时可替换。
- * @param userMenuViewModel 提供会话用户名与退出登录动作。
  * @param modifier 作用于 NavHost 的修饰符。
  */
 @Composable

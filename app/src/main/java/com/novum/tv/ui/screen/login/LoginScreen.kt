@@ -268,7 +268,8 @@ fun LoginScreen(
                         onClick = submit,
                         enabled = !state.loading,
                         centerContent = true,
-                        modifier = Modifier.width(NovumDimens.ButtonWidth).focusRequester(loginFocus)
+                        modifier = Modifier.width(NovumDimens.ButtonWidth)
+                            .focusRequester(loginFocus)
                             .fieldNavigation(up = passwordFocus, left = rememberFocus)
                             .bringIntoViewRequester(loginBringIntoView)
                             .onFocusChanged {
@@ -330,7 +331,7 @@ private fun ProtocolSelector(protocol: String, onClick: () -> Unit, modifier: Mo
             .background(NovumPalette.Surface)
             .border(
                 if (focused) 2.dp else 1.dp,
-                if (focused) NovumPalette.Paper else NovumPalette.Border,
+                if (focused) NovumPalette.Paper else NovumPalette.ControlOutline,
                 NovumShapes.Card,
             )
             .onFocusChanged { focused = it.isFocused }

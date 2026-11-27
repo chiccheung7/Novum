@@ -1,5 +1,7 @@
 package com.novum.tv.ui.screen.login
 
+import com.novum.tv.core.network.ServerAddress
+
 /** The three editable parts of a login server, including a reverse-proxy path if present. */
 data class LoginServerInput(
     val protocol: String = "https",
@@ -34,7 +36,11 @@ data class LoginServerInput(
     }
 
     companion object {
-        fun defaultPort(protocol: String): String = if (protocol.equals("http", ignoreCase = true)) "8080" else "443"
+        fun defaultPort(protocol: String): String = if (protocol.equals("http", ignoreCase = true)) {
+            ServerAddress.DEFAULT_HTTP_PORT.toString()
+        } else {
+            ServerAddress.DEFAULT_HTTPS_PORT.toString()
+        }
 
         private val SCHEME = Regex("^(https?)://", RegexOption.IGNORE_CASE)
 

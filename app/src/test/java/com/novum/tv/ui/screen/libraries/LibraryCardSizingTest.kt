@@ -33,21 +33,25 @@ class LibraryCardSizingTest {
     @get:Rule val composeRule = createComposeRule()
 
     @Test
-    fun directoryUsesThreeFixed304DpColumnsAndLoadingCardsMatch() {
+    fun directoryFillsThreeLandscapeCardsAcrossThePageAndLoadingCardsMatch() {
         val loading = mutableStateOf(false)
         mount(1280.dp, loading)
-        composeRule.onNodeWithContentDescription("测试库1").assertIsDisplayed().assertWidthIsEqualTo(304.dp)
+        composeRule.onNodeWithContentDescription("测试库1").assertIsDisplayed().assertWidthIsEqualTo(368.dp)
         val first = composeRule.onNodeWithContentDescription("测试库1").fetchSemanticsNode().boundsInRoot
         val third = composeRule.onNodeWithContentDescription("测试库3").fetchSemanticsNode().boundsInRoot
         val fourth = composeRule.onNodeWithContentDescription("测试库4").fetchSemanticsNode().boundsInRoot
+        val host = composeRule.onNodeWithTag("library-sizing-host").fetchSemanticsNode().boundsInRoot
         assertEquals("前三张库卡同一行", first.top, third.top, 1f)
-        assertTrue("第四张卡应换行而非把四列挤回271dp", fourth.top > first.top)
+        assertEquals("第三张库卡与右侧安全边距对齐", host.right - (first.left - host.left), third.right, 1f)
+        assertTrue("第四张卡应进入下一行", fourth.top > first.top)
 
         composeRule.runOnIdle { loading.value = true }
-        composeRule.onNodeWithTag("media-skeleton-card-0").assertIsDisplayed().assertWidthIsEqualTo(304.dp)
+        composeRule.onNodeWithTag("media-skeleton-card-0").assertIsDisplayed().assertWidthIsEqualTo(368.dp)
         val skeletonFirst = composeRule.onNodeWithTag("media-skeleton-card-0").fetchSemanticsNode().boundsInRoot
         val skeletonFourth = composeRule.onNodeWithTag("media-skeleton-card-3").fetchSemanticsNode().boundsInRoot
         assertEquals("加载与完成态首卡对齐", first.left, skeletonFirst.left, 1f)
+        assertEquals("骨架第三张卡也铺到右侧安全边距", third.right, composeRule
+            .onNodeWithTag("media-skeleton-card-2").fetchSemanticsNode().boundsInRoot.right, 1f)
         assertTrue("骨架按相同三列规格换行", skeletonFourth.top > skeletonFirst.top)
     }
 
@@ -73,7 +77,7 @@ class LibraryCardSizingTest {
             NovumTheme {
                 Box(Modifier.requiredSize(width, 720.dp).testTag("library-sizing-host")) {
                     if (loading.value) {
-                        NovumSkeletonCardGrid(aspectRatio = LANDSCAPE_ASPECT)
+                        NovumSkeletonCardGrid(aspectRatio = LANDSCAPE_ASPECT, maxColumns = 3)
                     } else {
                         LibraryGrid(libraries, remember { FocusRequester() }, { _, _ -> }, Modifier.fillMaxSize())
                     }

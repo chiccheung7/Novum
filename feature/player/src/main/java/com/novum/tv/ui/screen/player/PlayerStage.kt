@@ -215,6 +215,7 @@ internal fun PlayerStage(
     var interactionTick by remember { mutableIntStateOf(0) }
     var confirmExit by remember { mutableStateOf(false) }
     var scrubTarget by remember { mutableStateOf<Long?>(null) }
+    var submittedSeekTarget by remember { mutableStateOf<Long?>(null) }
     // 播放设置抽屉（· M4；tab 化）
     // 文案在组合期解析（供回调里使用，避免在非组合上下文读资源）
     val reloadingNotice = stringResource(R.string.player_drawer_reloading)
@@ -231,9 +232,7 @@ internal fun PlayerStage(
         VideoScaleMode.Crop -> stringResource(R.string.player_scale_crop)
     }
     var drawerVisible by remember { mutableStateOf(false) }
-    // 控制条「字幕/音轨」按钮直达对应分区；「播放设置」保持上次所在 tab
-    // 抽屉默认「选集」页（用户打开播放设置时最常见意图是换集）
-    // 控制条的字幕/音轨按钮仍直达各自 tab
+    // 播放设置默认打开「选集」，字幕与音轨通过抽屉 tab 切换。
     var drawerTab by remember { mutableStateOf(DrawerTab.Episodes) }
     // 抽屉换集待选版本的集（多版本 + 每次询问）
     var versionPickEpisode by remember { mutableStateOf<Episode?>(null) }
@@ -640,40 +639,64 @@ internal fun PlayerStage(
     }
 
     /**
-     * 粗调 seek：隐藏态左右键使用，10 秒起、按住 30 秒。
-     *
-     * @param deltaMs 相对位移，正数前进。
-     */
-    fun seekBy(deltaMs: Long) {
-        val total = duration.longValue
-        val target = (player.mediaPositionMs() + deltaMs).coerceAtLeast(0L)
-        val clamped = if (total > 0) target.coerceAtMost(total) else target
-        player.seekToMediaPosition(clamped, onRebuildServerStream)
-        // 立刻回写显示位置，等下一次 500ms 轮询会有明显延迟感
-        position.longValue = clamped
-    }
-
-    /**
-     * 精细 seek：进度条聚焦时使用，先改 UI 再节流落地，保证「按一下动一格」。
+     * 快进/快退共用待跳转位置，连续按键先累计目标再合并请求。
+     * 服务端重建期间播放器仍在旧位置，不能再以旧位置计算下一次跳转。
      *
      * @param deltaMs 相对位移。
      */
-    fun scrubBy(deltaMs: Long) {
-        val total = duration.longValue
-        val base = scrubTarget ?: player.mediaPositionMs()
-        val target = (base + deltaMs).coerceAtLeast(0L)
-        scrubTarget = if (total > 0) target.coerceAtMost(total) else target
+    fun seekBy(deltaMs: Long) {
+        scrubTarget = playbackSeekTarget(player.mediaPositionMs(), scrubTarget, deltaMs, duration.longValue)
         interactionTick++
     }
 
-    // 精细 seek 的节流落地：连续按键只发一次 seekTo，停手后把显示权交回播放器
+    // 较旧请求完成时保留用户刚排队的新目标，不能把后一次按键吃掉。
+    LaunchedEffect(activePlan) {
+        val submitted = submittedSeekTarget ?: return@LaunchedEffect
+        if (activePlan.startPositionMs == submitted) {
+            if (scrubTarget == submitted) scrubTarget = null
+            submittedSeekTarget = null
+        }
+    }
+    LaunchedEffect(subtitleSwitchError) {
+        if (subtitleSwitchError == null) return@LaunchedEffect
+        notice = subtitleSwitchError
+        if (scrubTarget == submittedSeekTarget) scrubTarget = null
+        submittedSeekTarget = null
+    }
+
+    // 连续按键只发一次 seek；服务器重建较慢时保留目标，避免时钟轮询把进度条拉回去。
     LaunchedEffect(scrubTarget) {
         val target = scrubTarget ?: return@LaunchedEffect
         delay(SCRUB_THROTTLE_MS)
-        player.seekToMediaPosition(target, onRebuildServerStream)
+        if (submittedSeekTarget != null) {
+            submittedSeekTarget = target
+            onRebuildServerStream(target)
+            return@LaunchedEffect
+        }
+        val positionBeforeSeek = player.mediaPositionMs()
+        var rebuilding = false
+        player.seekToMediaPosition(target) {
+            rebuilding = true
+            submittedSeekTarget = it
+            onRebuildServerStream(it)
+        }
+        if (rebuilding) return@LaunchedEffect
         position.longValue = target
-        delay(SCRUB_SETTLE_MS)
-        if (scrubTarget == target) scrubTarget = null
+        // A seekable flag does not guarantee that every server/device stream actually
+        // honors seekTo. Keep the optimistic thumb until the absolute timeline confirms it.
+        delay(LOCAL_SEEK_CONFIRM_MS)
+        if (scrubTarget != target) return@LaunchedEffect
+        if (playbackSeekReached(player.mediaPositionMs(), target)) {
+            scrubTarget = null
+        } else {
+            android.util.Log.w(
+                "NovumPlayer",
+                "Local seek did not reach target=$target; actual=${player.mediaPositionMs()}, " +
+                    "before=$positionBeforeSeek. Rebuilding server stream.",
+            )
+            submittedSeekTarget = target
+            onRebuildServerStream(target)
+        }
     }
 
     /** 隐藏态按 OK / 左右键：控制条亮一下但不抢焦点。 */
@@ -717,16 +740,6 @@ internal fun PlayerStage(
             // 画面比例：OK 循环 适应 → 拉伸 → 裁剪
             ControlItem.Scale -> {
                 scaleMode = scaleMode.next()
-            }
-
-            ControlItem.Subtitles -> {
-                drawerTab = DrawerTab.Subtitle
-                openDrawer()
-            }
-
-            ControlItem.Audio -> {
-                drawerTab = DrawerTab.Audio
-                openDrawer()
             }
 
             ControlItem.Settings -> {
@@ -868,7 +881,7 @@ internal fun PlayerStage(
                     PlayerCommand.ShowControls -> showControls()
                     PlayerCommand.OpenSettings -> openDrawer()
 
-                    is PlayerCommand.FineSeek -> scrubBy(command.deltaMs)
+                    is PlayerCommand.FineSeek -> seekBy(command.deltaMs)
                 }
                 true
             },
@@ -950,10 +963,8 @@ internal fun PlayerStage(
 
         BufferingIndicator(
             visible = buffering,
-            // 网速只在有估计值时显示（起播首轮/本地无数据时不挂空文案）
-            // 缓冲网速按网络传输习惯用 MB/s（÷8 字节口径）
-            // 抽屉画质 tab 的规格行仍用 Mbps 码率口径（formatBitrate）
-            speedText = bandwidthBps.longValue.takeIf { it >= 0L }?.let(::formatSpeed),
+            // 将 State 交给叶子节点读取，避免 500ms 网速样本使整个 PlayerStage 重组。
+            speedBps = bandwidthBps,
             modifier = Modifier.align(Alignment.Center),
         )
 
@@ -1312,8 +1323,8 @@ private const val CONTROLS_FADE_MS = 200
 /** 精细 seek 的合并窗口：连续按键只发一次 seekTo。 */
 private const val SCRUB_THROTTLE_MS = 120L
 
-/** seek 落地后把显示权交回播放器的等待时间。 */
-private const val SCRUB_SETTLE_MS = 400L
+/** 等待播放器时间轴确认 seek；未到位时改用服务端重建流。 */
+private const val LOCAL_SEEK_CONFIRM_MS = 750L
 
 /** 起播超时：超过该时间仍未 READY 就尝试兜底地址。 */
 private const val PLAYBACK_START_TIMEOUT_MS = 8_000L

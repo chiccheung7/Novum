@@ -9,8 +9,13 @@ import com.novum.tv.model.MediaItem
 import com.novum.tv.testing.MainDispatcherRule
 import com.novum.tv.testing.NoopMediaRepository
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.test.advanceUntilIdle
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -42,6 +47,31 @@ class PersonViewModelTest {
         advanceUntilIdle()
 
         assertTrue(viewModel.state.value.detail is UiState.Error)
+    }
+
+    @Test
+    fun lateInitialRequestCannotReplaceTheLatestRetry() = runTest {
+        val first = CompletableDeferred<NovumResult<List<MediaItem>>>()
+        val second = CompletableDeferred<NovumResult<List<MediaItem>>>()
+        var calls = 0
+        val repository = object : MediaRepository by NoopMediaRepository {
+            override suspend fun personWorks(personId: String): NovumResult<List<MediaItem>> {
+                val response = if (calls++ == 0) first else second
+                return withContext(NonCancellable) { response.await() }
+            }
+        }
+        val viewModel = PersonViewModel(repository, route())
+        runCurrent()
+        viewModel.load()
+        runCurrent()
+        assertEquals(2, calls)
+
+        second.complete(NovumResult.Success(emptyList()))
+        runCurrent()
+        assertTrue(viewModel.state.value.detail is UiState.Empty)
+        first.complete(NovumResult.Failure(NovumError.NotFound()))
+        advanceUntilIdle()
+        assertTrue("An older request must not overwrite the successful retry", viewModel.state.value.detail is UiState.Empty)
     }
 
     private fun route() = SavedStateHandle(mapOf("personId" to "person-1", "personName" to "人物"))

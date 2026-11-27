@@ -4,7 +4,6 @@ import android.app.Activity
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -17,7 +16,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalContext
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -43,7 +41,6 @@ import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import okhttp3.OkHttpClient
-import androidx.compose.foundation.layout.height
 
 /**
  * 播放页入口：准备播放器实例、拉取播放计划、渲染播放舞台。
@@ -122,8 +119,7 @@ fun PlayerScreen(
                         .build(),
                     /* handleAudioFocus = */ true,
                 )
-                // 画面比例：满屏 Surface + 驱动等比
-                // 缩放（信箱式留黑边），不做缩放方式切换入口
+                // 解码帧先等比适配 Surface；最终缩放模式由 PlayerStage 控制。
                 videoScalingMode = C.VIDEO_SCALING_MODE_SCALE_TO_FIT
                 playWhenReady = true
             }
@@ -158,7 +154,7 @@ fun PlayerScreen(
     var videoAspectRatio by remember { mutableStateOf<Float?>(null) }
     DisposableEffect(player) {
         val listener = object : Player.Listener {
-            // 比例只用于字幕黑边定位（画面呈现交给驱动等比缩放，见 PlayerStage）。
+            // 比例同时用于 Surface 定型与字幕黑边定位（见 PlayerStage）。
             // 来源用 onVideoSizeChanged（解码器上报帧尺寸 + SAR/DAR），
             // onTracksChanged 的 format 可能还没带尺寸。
             override fun onTracksChanged(tracks: Tracks) {

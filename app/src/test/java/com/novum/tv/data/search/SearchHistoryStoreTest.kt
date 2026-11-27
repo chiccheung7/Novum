@@ -1,9 +1,15 @@
 package com.novum.tv.data.search
 
 import androidx.datastore.preferences.core.PreferenceDataStoreFactory
+import androidx.datastore.core.DataStore
+import androidx.datastore.preferences.core.Preferences
+import androidx.datastore.preferences.core.emptyPreferences
 import java.io.File
+import java.io.IOException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
@@ -55,5 +61,35 @@ class SearchHistoryStoreTest {
             (12 downTo 3).map { "query $it" },
             store.recentSearches.first(),
         )
+    }
+
+    @Test
+    fun readIoFailureProducesEmptyHistory() = runTest {
+        val store = SearchHistoryStore(FailingDataStore(readFailure = IOException("read failed")))
+
+        assertEquals(emptyList<String>(), store.recentSearches.first())
+    }
+
+    @Test
+    fun writeIoFailuresDoNotEscapeSearchHistoryActions() = runTest {
+        val store = SearchHistoryStore(FailingDataStore(writeFailure = IOException("write failed")))
+
+        store.record("Dune")
+        store.clear()
+    }
+
+    private class FailingDataStore(
+        private val readFailure: IOException? = null,
+        private val writeFailure: IOException? = null,
+    ) : DataStore<Preferences> {
+        override val data: Flow<Preferences> = flow {
+            readFailure?.let { throw it }
+            emit(emptyPreferences())
+        }
+
+        override suspend fun updateData(transform: suspend (t: Preferences) -> Preferences): Preferences {
+            writeFailure?.let { throw it }
+            return transform(emptyPreferences())
+        }
     }
 }

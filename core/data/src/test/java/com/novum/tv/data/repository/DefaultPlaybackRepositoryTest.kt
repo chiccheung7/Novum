@@ -14,6 +14,7 @@ import com.novum.tv.data.remote.emby.SessionHolder
 import com.novum.tv.data.session.Session
 import com.novum.tv.core.capability.DeviceCapabilities
 import com.novum.tv.model.PlayMethod
+import com.novum.tv.model.PlaybackPlan
 import com.novum.tv.testing.FakeCapabilityProvider
 import com.novum.tv.testing.EmbyApiStub
 import com.novum.tv.testing.FakeMediaStrings
@@ -206,6 +207,69 @@ class DefaultPlaybackRepositoryTest {
     }
 
     @Test
+    fun positionedForcedTranscodeSendsTheTargetEvenWithoutAServerSubtitleSelection() = runTest(dispatcher) {
+        val api = StubPlaybackApi(info = PlaybackInfoDto(MediaSources = listOf(MediaSourceDto(
+            Id = "source", TranscodingUrl = "/stream.ts?StartTimeTicks=1234500000",
+        ))))
+
+        val plan = (repository(api).plan("movie", startPositionMs = 123_450L, forceTranscode = true)
+            as NovumResult.Success).value
+
+        assertEquals(1_234_500_000L, api.requests.single().StartTimeTicks)
+        assertNull(api.requests.single().SubtitleStreamIndex)
+        assertEquals(false, api.requests.single().EnableDirectPlay)
+        assertEquals(PlayMethod.Transcode, plan.method)
+        assertEquals(123_450L, plan.startPositionMs)
+        assertEquals(123_450L, plan.streamStartPositionMs)
+    }
+
+    @Test
+    fun positionedForcedTranscodeReportsPlaybackInfoFailureInsteadOfReturningStatic() = runTest(dispatcher) {
+        val result = repository(StubPlaybackApi(error = IOException("offline")))
+            .plan("movie", startPositionMs = 45_000L, forceTranscode = true)
+
+        assertTrue(result is NovumResult.Failure)
+        assertTrue((result as NovumResult.Failure).error is NovumError.Network)
+    }
+
+    @Test
+    fun positionedForcedTranscodeRejectsAnEmptySourceListInsteadOfReturningStatic() = runTest(dispatcher) {
+        val result = repository(StubPlaybackApi(info = PlaybackInfoDto()))
+            .plan("movie", startPositionMs = 45_000L, forceTranscode = true)
+
+        assertTrue(result is NovumResult.Failure)
+        assertTrue((result as NovumResult.Failure).error is NovumError.Server)
+    }
+
+    @Test
+    fun positionedForcedTranscodeRejectsMissingOrInvalidTranscodingUrls() = runTest(dispatcher) {
+        for (url in listOf(null, "", " ", "http://")) {
+            val api = StubPlaybackApi(info = PlaybackInfoDto(MediaSources = listOf(MediaSourceDto(
+                Id = "source", SupportsDirectPlay = true, DirectStreamUrl = "/old-static", TranscodingUrl = url,
+            ))))
+            val result = repository(api).plan("movie", startPositionMs = 45_000L, forceTranscode = true)
+
+            assertTrue("Must reject missing transcode URL: $url", result is NovumResult.Failure)
+            assertTrue((result as NovumResult.Failure).error is NovumError.Server)
+        }
+    }
+
+    @Test
+    fun forcedTranscodeAtZeroKeepsTheExistingStaticStartupFallback() = runTest(dispatcher) {
+        for (api in listOf(
+            StubPlaybackApi(error = IOException("offline")),
+            StubPlaybackApi(info = PlaybackInfoDto()),
+            StubPlaybackApi(info = PlaybackInfoDto(MediaSources = listOf(MediaSourceDto(Id = "source")))),
+        )) {
+            val plan = (repository(api).plan("movie", startPositionMs = 0L, forceTranscode = true)
+                as NovumResult.Success).value
+
+            assertEquals(PlayMethod.DirectPlay, plan.method)
+            assertTrue(plan.url.contains("/Videos/movie/stream?Static=true"))
+        }
+    }
+
+    @Test
     fun serverSubtitleCatalogDoesNotInventIndicesForUnidentifiedTracks() = runTest(dispatcher) {
         val source = subtitleSource().copy(MediaStreams = listOf(
             MediaStreamDto(Type = "Subtitle", Index = null, DisplayTitle = "Missing index"),
@@ -244,6 +308,40 @@ class DefaultPlaybackRepositoryTest {
         override val default = dispatcher
         override val io = dispatcher
         override val main = dispatcher
+    }
+
+    @Test
+    fun bitrateStrategyComparesDeclaredAndEstimatedRatesInTheSameUnits() = runTest(dispatcher) {
+        val declared = MediaSourceDto(
+            Id = "declared-8mbps", SupportsDirectPlay = true, DirectStreamUrl = "/declared",
+            MediaStreams = listOf(MediaStreamDto(Type = "Video", Codec = "h264", BitRate = 8_000_000)),
+        )
+        val smaller = MediaSourceDto(
+            Id = "estimated-1mbps", SupportsDirectPlay = true, DirectStreamUrl = "/smaller",
+            Size = 900_000_000L, RunTimeTicks = 72_000_000_000L,
+        )
+        val larger = smaller.copy(Id = "estimated-10mbps", DirectStreamUrl = "/larger", Size = 9_000_000_000L)
+        val settings = FakeSettingsRepository(AppSettings(versionStrategy = "bitrate"))
+        suspend fun selected(vararg sources: MediaSourceDto): PlaybackPlan =
+            (repository(StubPlaybackApi(info = PlaybackInfoDto(MediaSources = sources.toList())), settings)
+                .plan("movie-1") as NovumResult.Success).value
+
+        assertEquals("declared-8mbps", selected(declared, smaller).mediaSourceId)
+        assertEquals("estimated-10mbps", selected(declared, larger).mediaSourceId)
+        assertEquals("declared-8mbps", selected(declared, larger.copy(RunTimeTicks = null)).mediaSourceId)
+    }
+
+    @Test
+    fun bitrateStrategyUsesFileSizeOnlyWhenNoVersionHasAUsableRate() = runTest(dispatcher) {
+        val api = StubPlaybackApi(info = PlaybackInfoDto(MediaSources = listOf(
+            MediaSourceDto(Id = "small", SupportsDirectPlay = true, DirectStreamUrl = "/small", Size = 1_000L),
+            MediaSourceDto(Id = "large", SupportsDirectPlay = true, DirectStreamUrl = "/large", Size = 2_000L),
+        )))
+        val settings = FakeSettingsRepository(AppSettings(versionStrategy = "bitrate"))
+
+        val plan = (repository(api, settings).plan("movie-1") as NovumResult.Success).value
+
+        assertEquals("large", plan.mediaSourceId)
     }
 
     @Test

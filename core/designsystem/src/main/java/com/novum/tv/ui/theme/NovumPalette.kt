@@ -66,6 +66,9 @@ object NovumPalette {
     /** 分隔线与非焦点描边 #3A3A3C。 */
     val Border: Color = Color(0xFF3A3A3C)
 
+    /** 交互按钮未聚焦时的细白描边：Paper 55% 不透明度。 */
+    val ControlOutline: Color = Color(0x8CF5F5F7)
+
     /** 交互控件常态底：烟玻璃 #141418@.62（按钮/芯片未聚焦时的底）。 */
     val Glass: Color = Color(0x9E141418)
 

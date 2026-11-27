@@ -24,6 +24,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.State
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.draw.clipToBounds
@@ -164,15 +165,14 @@ internal fun configureSubtitleView(view: SubtitleView, cues: List<Cue>, style: C
  * 刻意做得小且暗：电视上大号转圈会把注意力从画面上拽走。
  *
  * @param visible 是否显示。
- * @param speedText 当前网速文案（缓冲时在圆弧下方展示
- *   带宽估计，如「12.4 Mbps」）；null/空白不渲染——起播首轮还没有样本。
+ * @param speedBps 网速状态（缓冲时在圆弧下方展示）；负值表示还没有样本。
  * @param modifier 外部修饰符。
  */
 @Composable
 internal fun BufferingIndicator(
     visible: Boolean,
     modifier: Modifier = Modifier,
-    speedText: String? = null,
+    speedBps: State<Long>? = null,
 ) {
     AnimatedVisibility(
         visible = visible,
@@ -205,16 +205,22 @@ internal fun BufferingIndicator(
                     style = Stroke(width = 3.dp.toPx(), cap = StrokeCap.Round),
                 )
             }
-            if (!speedText.isNullOrBlank()) {
-                Text(
-                    text = speedText,
-                    style = NovumType.Caption,
-                    color = NovumPalette.PaperMuted,
-                    modifier = Modifier.padding(top = 12.dp),
-                )
-            }
+            speedBps?.let { BufferingSpeedLabel(it) }
         }
     }
+}
+
+/** Read network samples in this leaf so updates never recompose the player stage. */
+@Composable
+private fun BufferingSpeedLabel(speedBps: State<Long>) {
+    val value = speedBps.value
+    if (value < 0L) return
+    Text(
+        text = formatSpeed(value),
+        style = NovumType.Caption,
+        color = NovumPalette.PaperMuted,
+        modifier = Modifier.padding(top = 12.dp),
+    )
 }
 
 /**

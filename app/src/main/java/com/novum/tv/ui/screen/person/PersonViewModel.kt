@@ -44,19 +44,23 @@ class PersonViewModel @Inject constructor(
     private val _state = MutableStateFlow(PersonUiState())
     val state: StateFlow<PersonUiState> = _state.asStateFlow()
 
+    /** 在途请求：连续点「重试」只保留最后一次，避免旧结果覆盖新状态。 */
+    private var loadJob: Job? = null
+    private var requestSeq = 0L
+
     init {
         load()
     }
 
-    /** 在途请求：连续点「重试」只保留最后一次，避免旧结果覆盖新状态。 */
-    private var loadJob: Job? = null
-
     /** 首次加载或错误态重试。 */
     fun load() {
         loadJob?.cancel()
+        val seq = ++requestSeq
         loadJob = viewModelScope.launch {
             _state.value = PersonUiState(UiState.Loading)
-            _state.value = when (val result = repository.personWorks(personId)) {
+            val result = repository.personWorks(personId)
+            if (seq != requestSeq) return@launch
+            _state.value = when (result) {
                 is NovumResult.Success -> PersonUiState(
                     if (result.value.isEmpty()) UiState.Empty() else UiState.Success(result.value),
                 )

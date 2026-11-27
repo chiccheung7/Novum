@@ -8,6 +8,10 @@
 import socket, struct, hashlib, sys, time, threading, subprocess, http.server, re, os
 from pathlib import Path
 
+# Windows may default to GBK, which cannot encode the success marker below.
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+
 TV_IP      = sys.argv[1] if len(sys.argv) > 1 else "192.168.5.25"
 APK        = sys.argv[2] if len(sys.argv) > 2 else str(
     Path(__file__).resolve().parents[2] / "app/build/outputs/apk/release/app-release.apk")

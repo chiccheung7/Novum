@@ -6,7 +6,7 @@ Novum 是面向 Android TV 的 Emby 客户端。使用 Kotlin、Jetpack Compose 
 
 ## 获取与构建
 
-当前版本 **0.2.4**：[GitHub Release 与 APK](https://github.com/chiccheung7/Novum/releases/tag/v0.2.4)。Release 说明列出本版功能、校验和与许可材料。
+当前版本 **0.2.5**：[GitHub Release 与 APK](https://github.com/chiccheung7/Novum/releases/tag/v0.2.5)。Release 说明列出本版功能、校验和与许可材料。
 
 构建需要 JDK 17、Android SDK Platform 37.1 和 Build Tools 36.0.0。Gradle Wrapper 与依赖版本由仓库固定；Android TV 最低支持 Android 7.0（API 24）。在 Android Studio 配置 SDK，或在本机 `local.properties` 中设置 SDK 路径，然后执行：
 

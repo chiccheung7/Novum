@@ -31,7 +31,6 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.key.KeyEventType
-import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalContext
@@ -165,7 +164,7 @@ fun HomeScreen(
                 }
                 runCatchingSuspend { listState.animateScrollToItem(0) }
                 repeat(FOCUS_REQUEST_FRAMES) {
-                    if (runCatching { firstFocus.requestFocus() }.isSuccess) return@launch
+                    if (runCatching { firstFocus.requestFocus() }.getOrDefault(false)) return@launch
                     withFrameNanos { }
                 }
             }
@@ -356,8 +355,8 @@ fun HomeContent(
         }
     }
 
-    // 首焦落点：Hero 沉浸列第一张卡 → 继续观看第一卡 → 第一个分类行首卡；
-    // 重锚只跟随 focusEpoch（load/refresh 成功）
+    // 首焦落点：Hero 播放按钮 → 继续观看第一卡 → 第一个分类行首卡；
+    // 静默刷新不递增 focusEpoch，避免网络返回时抢走用户焦点。
     val fallbackToResume = feed.hero.isEmpty()
     val fallbackToLatest = feed.hero.isEmpty() && feed.resume == null
 

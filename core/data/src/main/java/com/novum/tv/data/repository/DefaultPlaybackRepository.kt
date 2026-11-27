@@ -84,6 +84,8 @@ class DefaultPlaybackRepository @Inject constructor(
             }
             val forceSubtitleBurnIn = subtitleStreamIndex != null && subtitleStreamIndex >= 0
             val requireTranscode = forceTranscode || forceSubtitleBurnIn
+            // A seek recovery needs a new stream at the target, not the original unseekable static URL.
+            val requiresPositionedTranscode = forceTranscode && startPositionMs > 0L
             val snapshot = runCatchingSuspend { settings.settings.first() }.getOrNull()
             if (!isCurrent(owner)) return@withContext failureOf(NovumError.Unauthorized())
             val preferDirect = snapshot?.preferDirect ?: true
@@ -109,7 +111,7 @@ class DefaultPlaybackRepository @Inject constructor(
                     assBurnIn = snapshot?.assBurnIn ?: false,
                     mediaSourceId = mediaSourceId,
                     subtitleStreamIndex = subtitleStreamIndex,
-                    startPositionMs = if (explicitSubtitle) startPositionMs.coerceAtLeast(0L) else null,
+                    startPositionMs = if (explicitSubtitle || requireTranscode) startPositionMs.coerceAtLeast(0L) else null,
                     forceSubtitleBurnIn = forceSubtitleBurnIn,
                     failedVideoCodecs = snapshot?.failedVideoCodecs
                         ?.split(",")?.filter { it.isNotBlank() }?.toSet() ?: emptySet(),
@@ -122,12 +124,17 @@ class DefaultPlaybackRepository @Inject constructor(
                 val source = if (explicitSubtitle) requestedSource else
                     requestedSource ?: pickVersionByStrategy(info.MediaSources, snapshot?.versionStrategy)
                 if (source == null) {
-                    if (explicitSubtitle) return@withContext failureOf(NovumError.Server(502))
+                    if (explicitSubtitle || requiresPositionedTranscode) {
+                        return@withContext failureOf(NovumError.Server(502))
+                    }
                     successOf(fallbackPlan(server, itemId, startPositionMs, owner.tokenForUrl(server)))
                 } else {
                     if (forceSubtitleBurnIn && source.MediaStreams.none {
                             it.Type == "Subtitle" && it.Index == subtitleStreamIndex
                         }) {
+                        return@withContext failureOf(NovumError.Server(502))
+                    }
+                    if (requiresPositionedTranscode && source.TranscodingUrl.toAbsoluteUrl(mediaServer) == null) {
                         return@withContext failureOf(NovumError.Server(502))
                     }
                     // 服务端按我们声明的能力判断，但它不知道「双层 DV 解不了」这类细节；
@@ -207,7 +214,7 @@ class DefaultPlaybackRepository @Inject constructor(
                 // 播放信息接口失败不等于不能播：仍尝试静态直连兜底，
                 // 但鉴权失败必须显式返回，避免用户对着黑屏猜问题。
                 val error = throwable.toNovumError()
-                if (error is NovumError.Unauthorized || explicitSubtitle) {
+                if (error is NovumError.Unauthorized || explicitSubtitle || requiresPositionedTranscode) {
                     failureOf(error)
                 } else {
                     logger.w(TAG, "PlaybackInfo 失败，回落到静态流", throwable)
@@ -262,7 +269,8 @@ class DefaultPlaybackRepository @Inject constructor(
      * - **默认（空）**= 服务端顺序首个（服务器片源默认版本）；
      * - **dolby / hdr / sdr** = 有对应动态范围的片源时优先选之（HDR 含
      *   HDR10/HDR10+/HLG），没有则回落服务端默认；
-     * - **bitrate** = 取视频流码率最高的版本（缺码率用文件体积兜底）；
+     * - **bitrate** = 优先视频流码率，缺失时按体积与时长估算平均码率；
+     *   所有版本都无法取得码率时才按文件体积兜底；
      * - **ask（每次询问）** = 详情页在点击播放时已弹版本层并把选中版本经路由传入
      *   （mediaSourceId 命中上面第一分支）；走到这里说明入口无法询问（如首页
      *   Hero 播放 CTA），按服务端默认版本处理。
@@ -288,10 +296,11 @@ class DefaultPlaybackRepository @Inject constructor(
                 return matched ?: fallback
             }
 
-            "bitrate" -> return sources.maxByOrNull { source ->
-                source.MediaStreams.firstOrNull { it.Type == "Video" }?.BitRate
-                    ?: source.Size?.takeIf { it > 0 } ?: 0L
-            } ?: fallback
+            "bitrate" -> return sources
+                .mapNotNull { source -> source.selectionBitrate()?.let { source to it } }
+                .maxByOrNull { (_, bitrate) -> bitrate }?.first
+                ?: sources.maxByOrNull { it.Size?.coerceAtLeast(0L) ?: 0L }
+                ?: fallback
 
             else -> return fallback
         }
@@ -573,6 +582,15 @@ private data class ResolvedUrls(
 private fun String?.toAbsoluteUrl(server: String): String? {
     val path = this?.takeIf { it.isNotBlank() } ?: return null
     return ServerAddress.resolveUrl(server, path)
+}
+
+/** Compare rates in bits/second; raw file bytes cannot be compared with a stream's BitRate. */
+private fun MediaSourceDto.selectionBitrate(): Double? {
+    MediaStreams.firstOrNull { it.Type == "Video" }?.BitRate
+        ?.takeIf { it > 0L }?.let { return it.toDouble() }
+    val bytes = Size?.takeIf { it > 0L } ?: return null
+    val ticks = RunTimeTicks?.takeIf { it > 0L } ?: return null
+    return bytes.toDouble() * 80_000_000.0 / ticks
 }
 
 /**

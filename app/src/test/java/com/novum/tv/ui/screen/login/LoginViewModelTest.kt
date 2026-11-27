@@ -86,8 +86,8 @@ class LoginViewModelTest {
 
         runCurrent()
 
-        assertEquals(LoginServerInput("http", "tv.local", "8080"), viewModel.state.value.serverInput)
-        assertEquals("http://tv.local:8080", viewModel.state.value.server)
+        assertEquals(LoginServerInput("http", "tv.local", "8096"), viewModel.state.value.serverInput)
+        assertEquals("http://tv.local:8096", viewModel.state.value.server)
         assertEquals("kid", viewModel.state.value.username)
         assertEquals("pw", viewModel.state.value.password)
         assertTrue(viewModel.state.value.remember)
@@ -261,8 +261,8 @@ class LoginViewModelTest {
 
         viewModel.onProtocolChange("http")
 
-        assertEquals(LoginServerInput("http", "tv.local", "8080"), viewModel.state.value.serverInput)
-        assertEquals("http://tv.local:8080", viewModel.state.value.server)
+        assertEquals(LoginServerInput("http", "tv.local", "8096"), viewModel.state.value.serverInput)
+        assertEquals("http://tv.local:8096", viewModel.state.value.server)
         viewModel.onPortChange("9000")
         viewModel.onProtocolChange("https")
         assertEquals(LoginServerInput("https", "tv.local", "443"), viewModel.state.value.serverInput)
@@ -389,7 +389,7 @@ class LoginViewModelTest {
 
         viewModel.onProtocolChange("http")
 
-        assertEquals("http://saved.local:8080", viewModel.state.value.server)
+        assertEquals("http://saved.local:8096", viewModel.state.value.server)
         assertEquals("", viewModel.state.value.password)
     }
 

@@ -4,7 +4,6 @@ import androidx.core.net.toUri
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
-import androidx.media3.common.TrackSelectionOverride
 import com.novum.tv.model.PlaybackPlan
 
 /**
@@ -117,44 +116,6 @@ private fun Player.trackLabel(type: Int, fallback: String): String {
     val selectedIndex = (0 until selected.length).first { selected.isTrackSelected(it) }
     val format = selected.getTrackFormat(selectedIndex)
     return format.label ?: format.language?.takeIf { it != "und" } ?: "$fallback ${index + 1}"
-}
-
-/** 循环切换音轨。 */
-fun Player.cycleAudioTrack() {
-    val groups = currentTracks.groups.filter { it.type == C.TRACK_TYPE_AUDIO }
-    if (groups.size < 2) return
-    val current = groups.indexOfFirst { group ->
-        (0 until group.length).any { group.isTrackSelected(it) }
-    }
-    val next = if (current < 0) 0 else (current + 1) % groups.size
-    trackSelectionParameters = trackSelectionParameters.buildUpon()
-        .setOverrideForType(TrackSelectionOverride(groups[next].mediaTrackGroup, 0))
-        .build()
-}
-
-/**
- * 循环切换字幕：关闭 → 第 1 条 → 第 2 条 … → 关闭。
- *
- * 关闭状态用 `setTrackTypeDisabled` 表达，而不是清空 override，
- * 否则选择器会按默认规则自动选回第一条字幕。
- */
-fun Player.cycleSubtitleTrack() {
-    val groups = currentTracks.groups.filter { it.type == C.TRACK_TYPE_TEXT }
-    if (groups.isEmpty()) return
-    val current = groups.indexOfFirst { group ->
-        (0 until group.length).any { group.isTrackSelected(it) }
-    }
-    val params = trackSelectionParameters.buildUpon()
-    if (current < 0) {
-        params.setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false)
-            .setOverrideForType(TrackSelectionOverride(groups[0].mediaTrackGroup, 0))
-    } else if (current == groups.size - 1) {
-        params.clearOverridesOfType(C.TRACK_TYPE_TEXT)
-            .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true)
-    } else {
-        params.setOverrideForType(TrackSelectionOverride(groups[current + 1].mediaTrackGroup, 0))
-    }
-    trackSelectionParameters = params.build()
 }
 
 /** 一次快进/快退的步长。 */

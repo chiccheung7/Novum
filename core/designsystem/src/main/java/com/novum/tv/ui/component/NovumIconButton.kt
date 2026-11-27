@@ -2,6 +2,7 @@ package com.novum.tv.ui.component
 
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.size
@@ -74,6 +75,11 @@ fun NovumIconButton(
                     enabled -> NovumPalette.Glass
                     else -> NovumPalette.GlassDisabled
                 },
+            )
+            .border(
+                width = 1.dp,
+                color = if (focused) Color.Transparent else NovumPalette.ControlOutline,
+                shape = NovumShapes.Pill,
             )
             .combinedClickable(
                 enabled = enabled,

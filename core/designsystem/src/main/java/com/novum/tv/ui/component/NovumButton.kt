@@ -1,9 +1,13 @@
 package com.novum.tv.ui.component
 
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.RowScope
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -69,8 +73,11 @@ fun NovumButton(
         onClick = onClick,
         modifier = modifier
             .onFocusChanged { focused = it.isFocused }
-            // 按钮最小高度。
-            .heightIn(min = BUTTON_MIN_HEIGHT),
+            .border(1.dp, NovumPalette.ControlOutline, NovumShapes.Pill)
+            .heightIn(min = BUTTON_MIN_HEIGHT)
+            // Surface 不向内部 Row 传递最小高度；先按内容确定按钮实际高度，
+            // 再由 InnerContent 填满可用高度，使 60dp 下限和外部定高都真正居中。
+            .height(IntrinsicSize.Min),
         onLongClick = onLongClick,
         enabled = enabled,
         scale = scale,
@@ -101,20 +108,17 @@ fun NovumButton(
  * 按钮内容容器：定宽时水平居中（不定宽时不能 fillMaxWidth，否则按钮会被撑满整行）。
  */
 @Composable
-private fun RowScope.InnerContent(
+private fun InnerContent(
     centerContent: Boolean,
     content: @Composable RowScope.() -> Unit,
 ) {
-    if (centerContent) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.Center,
-            verticalAlignment = Alignment.CenterVertically,
-            content = content,
-        )
-    } else {
-        content()
-    }
+    Row(
+        modifier = Modifier.fillMaxHeight()
+            .then(if (centerContent) Modifier.fillMaxWidth() else Modifier),
+        horizontalArrangement = Arrangement.Center,
+        verticalAlignment = Alignment.CenterVertically,
+        content = content,
+    )
 }
 
 /** 胶囊形按钮与全站按钮保持一致。 */

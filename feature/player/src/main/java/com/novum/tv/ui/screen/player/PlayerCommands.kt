@@ -19,8 +19,6 @@ internal enum class ControlItem {
     SeekFwd,
     Speed,
     Scale,
-    Subtitles,
-    Audio,
     Settings,
 }
 
@@ -70,8 +68,8 @@ internal sealed interface PlayerCommand {
 /**
  * 把一次按键翻译成播放页动作。
  *
- * 设计原则：**只在「控制条隐藏」与「进度条聚焦」两种状态下接管按键**，
- * 其余情况一律返回 null，让 Compose 焦点系统自己处理左右上下移动。
+ * 方向键只在「控制条隐藏」与「进度条聚焦」时接管，其余交给 Compose 焦点系统。
+ * 专用媒体快进/快退键不承担焦点导航，控制条显示时也处理。
  * 这样既保住了遥控器上的原生焦点导航，又不会出现「父层把所有方向键都吃掉、
  * 焦点永远停在原地」的经典 TV bug。
  *
@@ -96,6 +94,12 @@ internal fun resolvePlayerCommand(
     if (overlayActionFocused &&
         (key == Key.DirectionCenter || key == Key.Enter || key == Key.NumPadEnter)
     ) return null
+
+    // 专用快进/快退键不承担焦点导航，控制条显示时也应立即跳转。
+    when (key) {
+        Key.MediaRewind -> return PlayerCommand.SeekBy(-seekStepMs(repeatCount))
+        Key.MediaFastForward -> return PlayerCommand.SeekBy(seekStepMs(repeatCount))
+    }
 
     if (!controlsVisible) {
         return when (key) {

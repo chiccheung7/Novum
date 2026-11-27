@@ -76,7 +76,7 @@ class DesignTokenContractTest {
             }
         }
         assertTrue(
-            "白系半透明底只许用档位令牌（Glass/GlassVideo/GlassVideoSoft/GlassDisabled/PanelOverlay）：\n" +
+            "白系半透明色只许用语义令牌（Glass/GlassVideo/GlassVideoSoft/GlassDisabled/PanelOverlay/ControlOutline）：\n" +
                 offenders.joinToString("\n"),
             offenders.isEmpty(),
         )

@@ -1,6 +1,7 @@
 package com.novum.tv.ui.component
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.heightIn
@@ -16,6 +17,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import androidx.tv.material3.Text
 import com.novum.tv.ui.theme.NovumPalette
@@ -29,7 +31,7 @@ import com.novum.tv.ui.theme.NovumType
  * 短线和底色叠在一起反而显脏，底色本身已经足够区分）；聚焦时白底黑字。
  * 芯片使用 Pill 形状且不缩放，焦点反馈由底色表达。
  *
- * 高度固定 [CHIP_MIN_HEIGHT]（56dp）：官方焦点目标 48dp@960 换算到 1280 画布
+ * 最小高度 [CHIP_MIN_HEIGHT]（52dp）：官方焦点目标 48dp@960 换算到 1280 画布
  * 约 64dp，芯片作为页签/筛选条取一档略小的稳定高度，避免筛选行比内容行还抢眼。
  *
  * @param label 芯片文案。
@@ -65,6 +67,11 @@ fun NovumChip(
                     selected -> NovumPalette.RowSelected
                     else -> NovumPalette.Glass
                 },
+            )
+            .border(
+                width = 1.dp,
+                color = if (focused) Color.Transparent else NovumPalette.ControlOutline,
+                shape = NovumShapes.Pill,
             )
             .clickable(onClick = onClick)
             .padding(horizontal = CHIP_H_PADDING, vertical = CHIP_V_PADDING),

@@ -6,11 +6,10 @@ plugins {
     alias(libs.plugins.kotlin.serialization)
     alias(libs.plugins.ksp)
     alias(libs.plugins.hilt)
-    // Baseline Profile：src/main/baseline-prof.txt 由 AGP 内建打包。
     // Baseline Profile 插件当前不用于此构建；AGP 内建打包 src/main/baseline-prof.txt。
 }
 
-// 签名信息放在仓库外的 keystore.properties：不提交密钥，CI 缺失时降级为未签名包
+// 签名信息放在本机未跟踪的 keystore.properties：不提交密钥，CI 缺失时降级为未签名包
 val keystoreProperties = Properties().apply {
     val file = rootProject.file("keystore.properties")
     if (file.exists()) file.inputStream().use { load(it) }
@@ -118,7 +117,7 @@ kotlin {
 
 dependencies {
     // FFmpeg 音频扩展 AAR：支持 AC3/E-AC3/DTS/DTS-HD/TrueHD 软解。
-    // 四 ABI 的 libffmpegJNI.so 共 2.9MB；渲染器见 PassthroughAudioRenderersFactory。
+    // 渲染器见 :core:player 的 OffloadRenderersFactory。
     implementation(fileTree(mapOf("dir" to "libs", "include" to listOf("*.aar"))))
     coreLibraryDesugaring(libs.tools.desugar.jdk.libs)
     // 模块依赖：core 三层 + 三个 feature
@@ -198,7 +197,6 @@ dependencies {
     androidTestImplementation(libs.androidx.test.ext.junit)
     androidTestImplementation(libs.androidx.test.runner)
     androidTestImplementation(libs.androidx.test.espresso.core)
-    debugImplementation(libs.androidx.compose.ui.test.manifest)
 }
 
 // Compose Compiler Metrics

@@ -130,18 +130,21 @@ private fun Preferences.toAppSettings(): AppSettings {
         danmuSize = this[SettingsKeys.DanmuSize] ?: defaults.danmuSize,
         danmuSpeed = this[SettingsKeys.DanmuSpeed] ?: defaults.danmuSpeed,
         uiScale = this[SettingsKeys.UiScale] ?: defaults.uiScale,
-    )
+    ).sanitized()
 }
 
-/** 把设置项约束到合法区间，防止越界值写入磁盘。 */
-private fun AppSettings.sanitized(): AppSettings = copy(
-    subtitleSize = subtitleSize.coerceIn(1, 4),
-    subtitleWeight = subtitleWeight.coerceIn(0, 2),
-    subtitleOffsetLevel = subtitleOffsetLevel.coerceIn(0, 4),
-    skipIntroSeconds = skipIntroSeconds.coerceIn(15, 600),
-    danmuOpacity = danmuOpacity.coerceIn(0.1f, 1f),
-    danmuDensity = danmuDensity.coerceIn(0.1f, 1f),
-    danmuSize = danmuSize.coerceIn(1, 3),
-    danmuSpeed = danmuSpeed.coerceIn(1, 3),
-    uiScale = if (uiScale.isFinite()) uiScale.coerceIn(0.7f, 1.6f) else 1f,
-)
+/** 读写都收敛设置，避免旧数据或非有限浮点值传入渲染配置。 */
+private fun AppSettings.sanitized(): AppSettings {
+    val defaults = AppSettings()
+    return copy(
+        subtitleSize = subtitleSize.coerceIn(1, 4),
+        subtitleWeight = subtitleWeight.coerceIn(0, 2),
+        subtitleOffsetLevel = subtitleOffsetLevel.coerceIn(0, 4),
+        skipIntroSeconds = skipIntroSeconds.coerceIn(15, 600),
+        danmuOpacity = if (danmuOpacity.isFinite()) danmuOpacity.coerceIn(0.1f, 1f) else defaults.danmuOpacity,
+        danmuDensity = if (danmuDensity.isFinite()) danmuDensity.coerceIn(0.1f, 1f) else defaults.danmuDensity,
+        danmuSize = danmuSize.coerceIn(1, 3),
+        danmuSpeed = danmuSpeed.coerceIn(1, 3),
+        uiScale = if (uiScale.isFinite()) uiScale.coerceIn(0.7f, 1.6f) else defaults.uiScale,
+    )
+}

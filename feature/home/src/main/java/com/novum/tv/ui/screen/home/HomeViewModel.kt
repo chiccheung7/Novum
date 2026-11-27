@@ -39,7 +39,7 @@ class HomeViewModel @Inject constructor(
 
     /**
      * 首焦重锚版本号（刷新后首焦副作用重跑，把焦点拽回 Hero）：
-     * load/refresh 成功后递增（进首页/回首页 = 重新锚到 Hero）。
+     * 首次加载或显式重试成功后递增；静默刷新不移动用户焦点。
      */
     private val _focusEpoch = MutableStateFlow(0)
     val focusEpoch: StateFlow<Int> = _focusEpoch.asStateFlow()

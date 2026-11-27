@@ -44,6 +44,18 @@ class MediaCardLayoutTest {
     }
 
     @Test
+    fun cappedLandscapeGridFillsThreeColumnsAndReducesColumnsWhenNeeded() {
+        val baseContent = 1280f - 136f
+        assertEquals(3, mediaGridColumnsForMinimumWidth(baseContent, 304f, 20f, maxColumns = 3))
+        assertEquals(368f, mediaGridCardWidth(baseContent.dp, 3, 20.dp).value, EPSILON)
+
+        val narrowerContent = 1000f - 136f
+        assertEquals(2, mediaGridColumnsForMinimumWidth(narrowerContent, 304f, 20f, maxColumns = 3))
+        assertEquals(422f, mediaGridCardWidth(narrowerContent.dp, 2, 20.dp).value, EPSILON)
+        assertEquals(1, mediaGridColumnsForMinimumWidth(200f, 304f, 20f, maxColumns = 3))
+    }
+
+    @Test
     fun defaultsFollowSharedPosterAndSpacingTokens() {
         val available = 1144.dp
 

@@ -11,6 +11,19 @@ internal fun absolutePlaybackPosition(plan: PlaybackPlan?, localPositionMs: Long
 internal fun localPlaybackPosition(plan: PlaybackPlan, absolutePositionMs: Long): Long =
     (absolutePositionMs - plan.streamStartPositionMs).coerceAtLeast(0L)
 
+/** Pending requests remain the base for repeated keys while a server seek is still loading. */
+internal fun playbackSeekTarget(currentPositionMs: Long, pendingTargetMs: Long?, deltaMs: Long, durationMs: Long): Long {
+    val target = ((pendingTargetMs ?: currentPositionMs) + deltaMs).coerceAtLeast(0L)
+    return if (durationMs > 0) target.coerceAtMost(durationMs) else target
+}
+
+/** Confirm the player's absolute timeline is close enough to the requested seek target. */
+internal fun playbackSeekReached(
+    currentPositionMs: Long,
+    targetPositionMs: Long,
+    toleranceMs: Long = 3_000L,
+): Boolean = kotlin.math.abs(currentPositionMs - targetPositionMs) <= toleranceMs
+
 internal fun Player.activePlaybackPlan(): PlaybackPlan? =
     currentMediaItem?.localConfiguration?.tag as? PlaybackPlan
 
@@ -25,11 +38,11 @@ internal fun Player.mediaDurationMs(): Long {
         ?: 0L
 }
 
-/** A backward seek before a progressive transcode's origin must rebuild that stream. */
+/** Rebuild streams that cannot seek locally, including positions before a transcode's origin. */
 internal fun Player.seekToMediaPosition(positionMs: Long, rebuildStream: (Long) -> Unit) {
     val target = positionMs.coerceAtLeast(0L)
     val plan = activePlaybackPlan()
-    if (plan != null && target < plan.streamStartPositionMs) {
+    if (plan != null && (target < plan.streamStartPositionMs || !isCurrentMediaItemSeekable)) {
         rebuildStream(target)
     } else {
         seekTo(if (plan == null) target else localPlaybackPosition(plan, target))

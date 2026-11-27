@@ -482,6 +482,27 @@ class PlayerViewModelPlanReloadTest {
     }
 
     @Test
+    fun unseekableDirectPlaybackRebuildRequestsTranscodingAtTheAbsoluteTarget() = runTest {
+        val old = plan().copy(mediaSourceId = "chosen-version", playSessionId = "direct-session")
+        val playback = RecordingPlaybackRepository(old)
+        val vm = viewModel(playback, FakeSettingsRepository())
+        advanceUntilIdle()
+        val next = old.copy(
+            url = "http://line-a/rebuilt.ts", method = PlayMethod.Transcode,
+            startPositionMs = 70_000, streamStartPositionMs = 70_000, playSessionId = "seek-session",
+        )
+        playback.nextPlan = next
+
+        vm.seekServerStream(70_000, old)
+        advanceUntilIdle()
+
+        assertEquals(70_000L, playback.calls.last().startPositionMs)
+        assertEquals("chosen-version", playback.calls.last().mediaSourceId)
+        assertTrue(playback.calls.last().forceTranscode)
+        assertEquals(next, vm.state.value.data)
+    }
+
+    @Test
     fun failedProgressiveRebuildDoesNotStopTheExistingSession() = runTest {
         val old = serverPlan(3).copy(streamStartPositionMs = 60_000, startPositionMs = 60_000)
         val playback = RecordingPlaybackRepository(old)

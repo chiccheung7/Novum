@@ -13,8 +13,7 @@ import com.novum.tv.model.Season
 /**
  * 媒体库浏览仓储。
  *
- * 只负责「读」：媒体库列表、分页条目、最新入库。
- * 收藏 / 用户数据等写操作放到后续的 UserDataRepository。
+ * 负责媒体库列表、条目详情与首页聚合，以及收藏和观看状态更新。
  */
 interface MediaRepository {
 
@@ -132,8 +131,8 @@ interface MediaRepository {
     /**
      * 读取首页聚合数据。
      *
-     * 五个区块（Hero / 继续观看 / 下一集 / 各库最新 / 高分精选）一次并发拉取，
-     * 单个区块失败只让该区块为空，不影响整页。
+     * 并发拉取继续观看、下一集和各库最新，再组装 Hero 与内容行；
+     * 下一集合并到继续观看行，单个区块失败只让该区块为空。
      *
      * @return 成功时返回 [HomeFeed]；未登录返回 `Unauthorized`。
      */

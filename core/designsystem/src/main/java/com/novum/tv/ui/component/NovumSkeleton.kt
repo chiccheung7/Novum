@@ -99,15 +99,28 @@ fun NovumSkeletonCardGrid(
     aspectRatio: Float = POSTER_ASPECT,
     rows: Int = 2,
     header: (@Composable () -> Unit)? = null,
+    maxColumns: Int? = null,
 ) {
     BoxWithConstraints(modifier = modifier.fillMaxSize()) {
         val contentWidth = maxWidth - NovumDimens.SafeHorizontal * 2
         val isPoster = aspectRatio == POSTER_ASPECT
-        val cardWidth = mediaRowCardWidth(contentWidth, aspectRatio)
-        val columns = if (isPoster) {
-            mediaGridColumns(contentWidth.value)
-        } else {
-            ((contentWidth + NovumDimens.CardGap) / (cardWidth + NovumDimens.CardGap)).toInt().coerceAtLeast(1)
+        val (cardWidth, columns) = when {
+            isPoster -> mediaCardWidth(contentWidth) to mediaGridColumns(contentWidth.value)
+            maxColumns != null -> {
+                val count = mediaGridColumnsForMinimumWidth(
+                    contentWidth = contentWidth.value,
+                    preferredWidth = NovumDimens.CardWidth.value,
+                    gap = NovumDimens.CardGap.value,
+                    maxColumns = maxColumns,
+                )
+                mediaGridCardWidth(contentWidth, count) to count
+            }
+            else -> {
+                val width = mediaRowCardWidth(contentWidth, aspectRatio)
+                val count = ((contentWidth + NovumDimens.CardGap) / (width + NovumDimens.CardGap))
+                    .toInt().coerceAtLeast(1)
+                width to count
+            }
         }
         val cardHeight = cardWidth / aspectRatio + NovumDimens.CardTextBlockMaxHeight(1)
         val bleed = NovumFocusTokens.bleed(maxOf(cardWidth, cardHeight))

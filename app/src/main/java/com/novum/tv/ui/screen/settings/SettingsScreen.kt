@@ -620,7 +620,7 @@ private fun SettingRow(
     onAction: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    // 右栏整行可聚焦，焦点态白底黑字，与左栏使用一致的交互语义。
+    // 右栏整行可聚焦，焦点用白色描边表达，文字颜色保持不变。
     var focused by remember { mutableStateOf(false) }
     Row(
         verticalAlignment = Alignment.CenterVertically,

@@ -23,11 +23,11 @@ class LoginServerInputTest {
     }
 
     @Test
-    fun fullHttpUrlSelectsHttpAndPort8080() {
+    fun fullHttpUrlUsesTheStandardEmbyHttpPort() {
         val input = LoginServerInput().withAddress("http://tv.local")
 
-        assertEquals(LoginServerInput("http", "tv.local", "8080"), input)
-        assertEquals("http://tv.local:8080", input.url)
+        assertEquals(LoginServerInput("http", "tv.local", "8096"), input)
+        assertEquals("http://tv.local:8096", input.url)
     }
 
     @Test

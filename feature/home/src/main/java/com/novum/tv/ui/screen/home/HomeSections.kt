@@ -11,7 +11,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
-import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.res.stringResource
@@ -186,7 +185,6 @@ internal fun HomeLatestSection(
  * @param usePoster true 使用 2:3 海报卡并优先取 posterUrl；false 使用 16:9 标准卡。
  * @param onClick 点击回调。
  * @param modifier 外部修饰符（首焦索取器/焦点上报挂这里）。
- * @param onCardFocused 卡片获得焦点时的可选回调。
  */
 @Composable
 private fun EntryCard(
@@ -199,7 +197,6 @@ private fun EntryCard(
     usePoster: Boolean = false,
     /** 副标题覆盖（分库行用「标题 · 发行年份」）；null = 用 entry.subtitle。 */
     subtitleOverride: String? = null,
-    onCardFocused: ((HomeEntry) -> Unit)? = null,
 ) {
     // 副标题：显式覆盖（分库行「标题 · 发行年份」）优先；继续观看行不再把剩余
     // 时间拼进第二行——参考详情页选集卡，移到卡图进度条上方
@@ -229,9 +226,7 @@ private fun EntryCard(
         // 继续观看行（16:9）要两行文字；分库行第二行走 subtitleOverride
         showSubtitle = true,
         onClick = onClick,
-        modifier = modifier.onFocusChanged { state ->
-            if (state.isFocused) onCardFocused?.invoke(entry)
-        },
+        modifier = modifier,
     )
 }
 

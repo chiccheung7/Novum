@@ -846,7 +846,7 @@ class PlayerViewModel @Inject constructor(
         return true
     }
 
-    /** A progressive transcode cannot seek before its stream origin: request a fresh segment. */
+    /** Request a seekable server stream when the current stream cannot reach the target locally. */
     fun seekServerStream(positionMs: Long, activePlan: PlaybackPlan? = null) {
         val plan = activePlan ?: _state.value.data ?: return
         if (_state.value.subtitleSwitching) return
@@ -855,7 +855,7 @@ class PlayerViewModel @Inject constructor(
             val result = playback.plan(
                 itemId = itemId,
                 startPositionMs = targetPositionMs,
-                forceTranscode = plan.method == PlayMethod.Transcode,
+                forceTranscode = true,
                 mediaSourceId = plan.mediaSourceId ?: requestedMediaSourceId,
                 subtitleStreamIndex = requestedSubtitleStreamIndex ?: plan.serverSubtitleStreamIndex ?: plan.burnedInSubtitleIndex,
             )

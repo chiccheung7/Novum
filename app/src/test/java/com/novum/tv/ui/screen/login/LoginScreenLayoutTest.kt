@@ -22,6 +22,7 @@ import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsFocused
 import androidx.compose.ui.test.assertIsNotDisplayed
+import androidx.compose.ui.test.assertIsNotFocused
 import androidx.compose.ui.test.assertIsOn
 import androidx.compose.ui.test.assertTextEquals
 import androidx.compose.ui.test.hasAnyAncestor
@@ -125,14 +126,40 @@ class LoginScreenLayoutTest {
     }
 
     @Test
+    fun unfocusedLoginActionsHaveVisibleLightOutlines() {
+        showLogin(LoginViewModel(NoopAuthRepository))
+        val login = loginButton().assertIsNotFocused().fetchSemanticsNode().boundsInRoot
+        val protocol = protocolSelector().assertIsNotFocused().fetchSemanticsNode().boundsInRoot
+        composeRule.mainClock.advanceTimeBy(800L)
+        composeRule.waitForIdle()
+        shadowOf(Looper.getMainLooper()).idleFor(32L, TimeUnit.MILLISECONDS)
+        composeRule.activityRule.scenario.onActivity { activity ->
+            val view = activity.window.decorView
+            val bitmap = Bitmap.createBitmap(view.width, view.height, Bitmap.Config.ARGB_8888)
+            try {
+                view.draw(Canvas(bitmap))
+                listOf("login" to login, "protocol" to protocol).forEach { (name, bounds) ->
+                    val x = bounds.center.x.toInt()
+                    val top = bounds.top.toInt()
+                    val edge = (top..top + 1).maxOf { y -> android.graphics.Color.red(bitmap.getPixel(x, y)) }
+                    val inside = android.graphics.Color.red(bitmap.getPixel(x, top + 4))
+                    assertTrue("$name has a visible white outline while unfocused: edge=$edge, inside=$inside", edge > inside + 60)
+                }
+            } finally {
+                bitmap.recycle()
+            }
+        }
+    }
+
+    @Test
     fun protocolSelectionChangesDefaultPortsWithoutChangingAddress() {
         val viewModel = LoginViewModel(NoopAuthRepository)
         showLogin(viewModel)
         field(0).performTextInput("media.example/emby")
         chooseProtocol("http")
         field(0).assertTextEquals("media.example/emby")
-        field(1).assertTextEquals("8080")
-        composeRule.runOnIdle { assertEquals("http://media.example:8080/emby", viewModel.state.value.server) }
+        field(1).assertTextEquals("8096")
+        composeRule.runOnIdle { assertEquals("http://media.example:8096/emby", viewModel.state.value.server) }
         chooseProtocol("https")
         field(1).assertTextEquals("443")
         composeRule.runOnIdle { assertEquals("https://media.example:443/emby", viewModel.state.value.server) }

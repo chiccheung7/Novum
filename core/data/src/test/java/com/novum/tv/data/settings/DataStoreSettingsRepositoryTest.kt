@@ -5,6 +5,7 @@ import androidx.datastore.preferences.core.PreferenceDataStoreFactory
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.floatPreferencesKey
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import com.novum.tv.model.DanmuArea
@@ -198,6 +199,48 @@ class DataStoreSettingsRepositoryTest {
         assertEquals("密度下限 0.1", 0.1f, settings.danmuDensity)
         assertEquals("字号档位收敛 1–3", 3, settings.danmuSize)
         assertEquals("速度档位收敛 1–3", 1, settings.danmuSpeed)
+    }
+
+    @Test
+    fun nonFiniteDanmuUpdatesFallBackToUsableDefaults() = runTest {
+        val repository = createRepository()
+        for (invalid in listOf(Float.NaN, Float.POSITIVE_INFINITY, Float.NEGATIVE_INFINITY)) {
+            repository.update { it.copy(danmuOpacity = invalid, danmuDensity = invalid) }
+
+            val settings = repository.settings.first()
+            assertEquals(AppSettings().danmuOpacity, settings.danmuOpacity)
+            assertEquals(AppSettings().danmuDensity, settings.danmuDensity)
+            assertEquals(settings.danmuOpacity, settings.danmuConfig().opacity)
+            assertEquals(settings.danmuDensity, settings.danmuConfig().density)
+        }
+    }
+
+    @Test
+    fun invalidStoredSettingsAreSanitizedBeforeReachingThePlayer() = runTest {
+        val dataStore = createDataStore()
+        dataStore.edit {
+            it[floatPreferencesKey("danmu_opacity")] = Float.NaN
+            it[floatPreferencesKey("danmu_density")] = 5f
+            it[floatPreferencesKey("ui_scale")] = Float.POSITIVE_INFINITY
+            it[intPreferencesKey("subtitle_size")] = 99
+            it[intPreferencesKey("subtitle_offset_level")] = -1
+            it[intPreferencesKey("skip_intro_seconds")] = 0
+            it[intPreferencesKey("danmu_size")] = 0
+            it[intPreferencesKey("danmu_speed")] = 99
+            it[booleanPreferencesKey("prefer_direct")] = false
+        }
+
+        val settings = DataStoreSettingsRepository(dataStore).settings.first()
+
+        assertEquals(AppSettings().danmuOpacity, settings.danmuConfig().opacity)
+        assertEquals(1f, settings.danmuConfig().density)
+        assertEquals(1f, settings.uiScale)
+        assertEquals(4, settings.subtitleSize)
+        assertEquals(0, settings.subtitleOffsetLevel)
+        assertEquals(15, settings.skipIntroSeconds)
+        assertEquals(1, settings.danmuSize)
+        assertEquals(3, settings.danmuSpeed)
+        assertFalse(settings.preferDirect)
     }
 
     @Test

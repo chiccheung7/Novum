@@ -58,6 +58,25 @@ class PlayerCommandsTest {
     }
 
     @Test
+    fun `专用快进快退键在控制条显示和隐藏时都生效`() {
+        for (visible in listOf(false, true)) {
+            for (progress in listOf(false, true)) {
+                assertEquals(PlayerCommand.SeekBy(-10_000L),
+                    resolve(Key.MediaRewind, controlsVisible = visible, progressFocused = progress))
+                assertEquals(PlayerCommand.SeekBy(30_000L),
+                    resolve(Key.MediaFastForward, repeatCount = 4,
+                        controlsVisible = visible, progressFocused = progress))
+            }
+        }
+    }
+
+    @Test
+    fun `确认弹层打开时专用快进快退键不会改动播放位置`() {
+        assertNull(resolve(Key.MediaRewind, confirmVisible = true))
+        assertNull(resolve(Key.MediaFastForward, confirmVisible = true))
+    }
+
+    @Test
     fun `隐藏态上下键呼出控制条`() {
         assertEquals(PlayerCommand.ShowControls, resolve(Key.DirectionUp))
         assertEquals(PlayerCommand.ShowControls, resolve(Key.DirectionDown))

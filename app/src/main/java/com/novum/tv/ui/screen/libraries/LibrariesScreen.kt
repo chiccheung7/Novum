@@ -34,7 +34,8 @@ import com.novum.tv.ui.component.NovumGridFocusScrollScope
 import com.novum.tv.ui.component.NovumInitialFocus
 import com.novum.tv.ui.component.NovumSkeletonCardGrid
 import com.novum.tv.ui.component.NovumStateView
-import com.novum.tv.ui.component.mediaRowCardWidth
+import com.novum.tv.ui.component.mediaGridCardWidth
+import com.novum.tv.ui.component.mediaGridColumnsForMinimumWidth
 import com.novum.tv.ui.theme.NovumDimens
 import com.novum.tv.ui.theme.NovumFocusTokens
 import com.novum.tv.ui.theme.NovumPalette
@@ -77,6 +78,7 @@ fun LibrariesScreen(
                 UiState.Loading -> NovumSkeletonCardGrid(
                     aspectRatio = LANDSCAPE_ASPECT,
                     rows = 2,
+                    maxColumns = LIBRARY_GRID_MAX_COLUMNS,
                     modifier = Modifier.weight(1f),
                 )
 
@@ -99,8 +101,7 @@ fun LibrariesScreen(
     }
 }
 /**
- * 库卡网格：与首页续播、详情选集共用 [NovumDimens.CardWidth] 目标宽度。
- * 与横卡行使用相同的固定卡宽；网格按可用空间容纳完整列，行尾保留余量。
+ * 库卡网格：最多三列，列数按标准卡宽适配，卡片在当前行内均分可用宽度。
  */
 @Composable
 internal fun LibraryGrid(
@@ -111,9 +112,14 @@ internal fun LibraryGrid(
 ) {
     BoxWithConstraints(modifier = modifier.fillMaxWidth()) {
         val gap = NovumDimens.CardGap
-        // 固定 304dp，与续播/选集横卡相同；窄视口夹到实际内容宽度。
         val contentWidth = maxWidth - NovumDimens.SafeHorizontal * 2
-        val cardWidth = mediaRowCardWidth(contentWidth, LANDSCAPE_ASPECT)
+        val columns = mediaGridColumnsForMinimumWidth(
+            contentWidth = contentWidth.value,
+            preferredWidth = NovumDimens.CardWidth.value,
+            gap = gap.value,
+            maxColumns = LIBRARY_GRID_MAX_COLUMNS,
+        )
+        val cardWidth = mediaGridCardWidth(contentWidth, columns, gap)
         // 标准卡实际高度（16:9 图区 + 文字区）→ 出血
         val cardHeight = cardWidth / LANDSCAPE_ASPECT + NovumDimens.CardTextBlockMaxHeight(1)
         val bleed = NovumFocusTokens.bleed(
@@ -163,3 +169,5 @@ internal fun LibraryGrid(
         }
     }
 }
+
+private const val LIBRARY_GRID_MAX_COLUMNS = 3

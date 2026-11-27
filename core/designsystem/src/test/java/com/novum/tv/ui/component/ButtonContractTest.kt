@@ -128,21 +128,26 @@ class ButtonContractTest {
         )
     }
 
-    /** 交互组件不自绘细描边，焦点外观由共享材质组件统一负责。 */
+    /** 所有按钮变体都应统一绘制未聚焦描边。 */
     @Test
-    fun interactiveComponentsMustNotDrawBorders() {
-        val guarded = listOf("NovumButton.kt", "NovumIconButton.kt", "NovumChip.kt")
+    fun buttonVariantsMustDrawTheSharedIdleOutline() {
+        val guarded = listOf(
+            "NovumButton.kt",
+            "NovumIconButton.kt",
+            "NovumChip.kt",
+            "PlayerControls.kt",
+        )
         val offenders = mutableListOf<String>()
         kotlinSources().forEach { file ->
             if (file.name in guarded) {
                 val text = file.readText()
-                if (text.contains(".border(") || text.contains("BorderStroke(")) {
+                if (!text.contains(".border(") || !text.contains("NovumPalette.ControlOutline")) {
                     offenders += file.relativeTo(projectRoot).toString()
                 }
             }
         }
         assertTrue(
-            "交互组件不得自绘描边（小白线已全站退役，玻璃黑底+聚焦白底是唯一语义）：\n" +
+            "按钮未聚焦时需使用统一的细白描边：\n" +
                 offenders.joinToString("\n"),
             offenders.isEmpty(),
         )

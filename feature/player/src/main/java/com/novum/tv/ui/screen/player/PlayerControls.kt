@@ -1,6 +1,7 @@
 package com.novum.tv.ui.screen.player
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -172,7 +173,6 @@ internal fun PlayerControlOverlay(
             Spacer(modifier = Modifier.height(6.dp))
             ActionRow(
                 isPlaying = isPlaying,
-                focusedItem = focusedItem,
                 interactive = interactive,
                 speedText = speedText,
                 scaleText = scaleText,
@@ -222,7 +222,6 @@ private fun ChapterIndicator(chapters: List<Chapter>, position: State<Long>) {
 @Composable
 private fun ActionRow(
     isPlaying: Boolean,
-    focusedItem: ControlItem,
     interactive: Boolean,
     speedText: String,
     scaleText: String,
@@ -311,6 +310,11 @@ private fun PlayPauseButton(
             }
             .clip(CircleShape)
             .background(if (isFocused) NovumPalette.Paper else NovumPalette.GlassVideo)
+            .border(
+                width = 1.dp,
+                color = if (isFocused) Color.Transparent else NovumPalette.ControlOutline,
+                shape = CircleShape,
+            )
             .clickable(onClick = onActivate),
     ) {
         Icon(
@@ -351,6 +355,11 @@ private fun ControlChip(
             }
             .clip(NovumShapes.Pill)
             .background(if (isFocused) NovumPalette.Paper else NovumPalette.GlassVideoSoft)
+            .border(
+                width = 1.dp,
+                color = if (isFocused) Color.Transparent else NovumPalette.ControlOutline,
+                shape = NovumShapes.Pill,
+            )
             .clickable(onClick = onActivate)
             .padding(14.dp),
     ) {

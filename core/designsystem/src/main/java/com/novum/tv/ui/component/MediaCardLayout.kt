@@ -7,6 +7,7 @@ import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.novum.tv.ui.theme.NovumDimens
+import kotlin.math.floor
 import kotlin.math.roundToInt
 
 /** Keep cards close to their preferred size; wide displays add columns instead of enlarging cards. */
@@ -20,6 +21,32 @@ fun mediaGridColumns(
     val spacing = gap.takeIf { it.isFinite() && it >= 0f } ?: 0f
     val fittingColumns = ((contentWidth + spacing) / (1f + spacing)).toInt().coerceAtLeast(1)
     return ((contentWidth + spacing) / (target + spacing)).roundToInt().coerceIn(1, fittingColumns)
+}
+
+/** Select columns that keep cards at least the preferred width, up to [maxColumns]. */
+fun mediaGridColumnsForMinimumWidth(
+    contentWidth: Float,
+    preferredWidth: Float,
+    gap: Float = NovumDimens.CardGap.value,
+    maxColumns: Int = Int.MAX_VALUE,
+): Int {
+    if (!contentWidth.isFinite() || contentWidth <= 0f) return 1
+    val target = preferredWidth.takeIf { it.isFinite() && it > 0f } ?: 1f
+    val spacing = gap.takeIf { it.isFinite() && it >= 0f } ?: 0f
+    val availableColumns = floor((contentWidth + spacing) / (target + spacing)).toInt().coerceAtLeast(1)
+    return availableColumns.coerceAtMost(maxColumns.coerceAtLeast(1))
+}
+
+/** Width that exactly fills [columns] within the available grid content area. */
+fun mediaGridCardWidth(
+    contentWidth: Dp,
+    columns: Int,
+    gap: Dp = NovumDimens.CardGap,
+): Dp {
+    val available = contentWidth.value.takeIf { it.isFinite() && it > 0f } ?: 1f
+    val spacing = gap.value.takeIf { it.isFinite() && it >= 0f } ?: 0f
+    val safeColumns = columns.coerceAtLeast(1)
+    return ((available - spacing * (safeColumns - 1)) / safeColumns).coerceAtLeast(1f).dp
 }
 
 /** Same card width for rows, result grids, their loading states and image requests. */

@@ -11,9 +11,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
@@ -55,11 +53,7 @@ fun NovumConfirmDialog(
         onDismissRequest = onCancel,
         properties = DialogProperties(usePlatformDefaultWidth = false),
     ) {
-        LaunchedEffect(Unit) {
-            // 等一帧，确保按钮已挂到焦点树
-            withFrameNanos { }
-            runCatching { cancelRequester.requestFocus() }
-        }
+        NovumInitialFocus(cancelRequester)
         Box(
             modifier = modifier
                 .fillMaxSize()
