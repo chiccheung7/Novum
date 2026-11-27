@@ -30,7 +30,7 @@ import com.novum.tv.ui.theme.NovumShapes
 /**
  * 品牌按钮：统一 TV 按钮的四态配色。
  *
- * 首页与详情文本按钮使用 [NovumType.ButtonLg]、[NovumDimens.ButtonHeight] 和 [novumActionButtonWidth]，跨页面保持同宽。
+ * 首页与详情文本按钮共用 [NovumDimens.ButtonHeight] 最小高度；播放按钮随图标和文案取宽。
  * 按钮常态使用 [NovumPalette.Glass]，聚焦白底黑字，按压态浅灰，禁用态降低亮度。
  *
  * 定宽按钮必须传 [centerContent]=true；不定宽按钮不能启用，否则会撑满整行。

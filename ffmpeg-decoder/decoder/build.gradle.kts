@@ -6,7 +6,11 @@ val media3Version = rootProject.extra["media3Version"] as String
 
 android {
     namespace = "androidx.media3.decoder.ffmpeg"
-    compileSdk = 37
+    compileSdk {
+        version = release(37) {
+            minorApiLevel = 1
+        }
+    }
 
     defaultConfig {
         minSdk = 24

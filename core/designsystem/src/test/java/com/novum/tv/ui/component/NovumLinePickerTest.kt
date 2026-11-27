@@ -4,6 +4,9 @@ import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsFocused
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.ui.input.InputMode
+import androidx.compose.ui.platform.LocalInputModeManager
 import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
@@ -77,6 +80,8 @@ class NovumLinePickerTest {
     fun arrivingLinesReceiveFocusAfterLoading() {
         val loading = mutableStateOf(true)
         composeRule.setContent {
+            val inputMode = LocalInputModeManager.current
+            LaunchedEffect(inputMode) { inputMode.requestInputMode(InputMode.Keyboard) }
             NovumTheme {
                 NovumLinePickerPanel(
                     lines = sampleLines.takeUnless { loading.value },
@@ -97,6 +102,8 @@ class NovumLinePickerTest {
     @Test
     fun missingPinnedLineFallsBackToAnAvailableFocusTarget() {
         composeRule.setContent {
+            val inputMode = LocalInputModeManager.current
+            LaunchedEffect(inputMode) { inputMode.requestInputMode(InputMode.Keyboard) }
             NovumTheme {
                 NovumLinePickerPanel(
                     lines = sampleLines,

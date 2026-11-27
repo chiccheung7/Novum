@@ -17,6 +17,7 @@ import androidx.compose.ui.test.onFirst
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performKeyPress
 import androidx.compose.ui.test.performSemanticsAction
+import androidx.compose.ui.text.TextLayoutResult
 import com.novum.tv.model.HOME_ROW_RESUME
 import com.novum.tv.model.HomeEntry
 import com.novum.tv.model.HomeFeed
@@ -25,6 +26,7 @@ import com.novum.tv.model.HomeRow
 import com.novum.tv.ui.component.NovumNavTab
 import com.novum.tv.ui.theme.NovumTheme
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -167,8 +169,17 @@ class HomeScreenTest {
         composeRule.onNodeWithText("详情").assertIsDisplayed()
         val playBounds = composeRule.onNodeWithText("立即播放").fetchSemanticsNode().boundsInRoot
         val detailBounds = composeRule.onNodeWithText("详情").fetchSemanticsNode().boundsInRoot
-        assertTrue("四字播放文案对应更宽的按钮", playBounds.width > detailBounds.width)
+        val playText = composeRule.onNodeWithText("立即播放", useUnmergedTree = true)
+        val playTextBounds = playText.fetchSemanticsNode().boundsInRoot
+        val layouts = mutableListOf<TextLayoutResult>()
+        playText.performSemanticsAction(SemanticsActions.GetTextLayoutResult) { it(layouts) }
+        assertTrue("应能获取播放文案的实际布局", layouts.isNotEmpty())
+        val density = layouts.first().layoutInput.density.density
+        assertEquals("播放按钮随文字及图标、间距、内边距取宽", playTextBounds.width + 80f * density, playBounds.width, 1f)
+        assertFalse("播放按钮文案不能截断", layouts.any { it.hasVisualOverflow })
         assertEquals("Hero 按钮保持相同高度", detailBounds.height, playBounds.height, 1f)
+        assertTrue("播放按钮应保留 60dp 的最小高度", playBounds.height >= 60f * density)
+        assertTrue("两个 Hero 操作应保留间距", playBounds.right < detailBounds.left)
         // 片名只在信息块中显示一次。
         // （原 logo 位由放大标题补上）
         composeRule.onAllNodesWithText("顺流逆流").assertCountEquals(1)

@@ -58,6 +58,9 @@ class ItemPlaybackPrefsStore(
         val danmuEpisodeId: String? = null,
         /** 弹幕时间偏移（毫秒，正=延后）；只记用户改过的值，0 不写。 */
         val danmuOffsetMs: Long = 0L,
+        /** Server subtitle indices belong to one MediaSource, never to another version. */
+        val serverSubtitleStreamIndex: Int? = null,
+        val serverSubtitleMediaSourceId: String? = null,
     )
 
     private val mutex = Mutex()
@@ -89,6 +92,9 @@ class ItemPlaybackPrefsStore(
         clearSubtitleTrack: Boolean = false,
         clearAudioTrack: Boolean = false,
         clearDanmuEpisodeId: Boolean = false,
+        serverSubtitleStreamIndex: Int? = null,
+        serverSubtitleMediaSourceId: String? = null,
+        clearServerSubtitle: Boolean = false,
     ) {
         // 挂起等待锁或 IO 前固定账号，切会话不能把旧操作写进新账号。
         val key = storageKey(itemId) ?: return
@@ -104,6 +110,8 @@ class ItemPlaybackPrefsStore(
                 subtitleDisabled = subtitleDisabled ?: old.subtitleDisabled,
                 danmuEpisodeId = if (clearDanmuEpisodeId) null else danmuEpisodeId ?: old.danmuEpisodeId,
                 danmuOffsetMs = danmuOffsetMs ?: old.danmuOffsetMs,
+                serverSubtitleStreamIndex = if (clearServerSubtitle) null else serverSubtitleStreamIndex ?: old.serverSubtitleStreamIndex,
+                serverSubtitleMediaSourceId = if (clearServerSubtitle) null else serverSubtitleMediaSourceId ?: old.serverSubtitleMediaSourceId,
             )
             persistLocked(map)
         }

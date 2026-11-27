@@ -3,6 +3,8 @@ package com.novum.tv.ui.screen.detail
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.key
@@ -21,14 +23,13 @@ import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.tv.material3.Text
+import androidx.tv.material3.Icon
 import com.novum.tv.core.designsystem.R
 import com.novum.tv.model.Episode
 import com.novum.tv.model.MediaDetail
 import com.novum.tv.ui.component.NovumButton
-import com.novum.tv.ui.component.novumActionButtonWidth
 import com.novum.tv.ui.component.NovumIconButton
 import com.novum.tv.ui.icon.NovumIcons
-import com.novum.tv.ui.theme.NovumDimens
 import com.novum.tv.ui.theme.NovumPalette
 import com.novum.tv.ui.theme.NovumType
 
@@ -43,7 +44,7 @@ import com.novum.tv.ui.theme.NovumType
  * 剧级态与集级态共用同一操作行：
  *   播放目标/已看目标 = 当前集（选中集或默认目标集）。
  *
- * 文本按钮与首页共用字号和高度；主播放按钮固定加宽，大字体时按同一比例放宽。
+ * 文本按钮与首页共用字号和高度；宽度跟随图标与文案，仅极长集号缩小文字以保持操作行紧凑。
  *
  * @param data 详情数据。
  * @param episode 当前集（剧集 = 选中集或默认目标集；电影为 null）。
@@ -88,16 +89,19 @@ internal fun ActionRow(
         resume -> stringResource(R.string.detail_resume)
         else -> stringResource(R.string.detail_play)
     }
-    // 电影、续播、加载占位和分集共用固定宽度，文案切换时操作行不会跳动。
+    // 只为实际图标和文字预留空间，电影不再沿用分集按钮的 280dp 固定宽度。
     val density = LocalDensity.current
-    val playButtonWidth = DETAIL_PLAY_BUTTON_WIDTH * density.fontScale.coerceAtLeast(1f)
     val textWidth = rememberTextMeasurer().measure(
         text = playLabel,
         style = NovumType.ButtonLg,
         maxLines = 1,
         softWrap = false,
     ).size.width.coerceAtLeast(1)
-    val textScale = (with(density) { (playButtonWidth - 48.dp).toPx() } / textWidth).coerceAtMost(1f)
+    val measuredTextWidth = with(density) { textWidth.toDp() }
+    val maxTextWidth = DETAIL_PLAY_MAX_TEXT_WIDTH * density.fontScale.coerceAtLeast(1f)
+    val availableTextWidth = measuredTextWidth.coerceAtMost(maxTextWidth)
+    val playButtonWidth = availableTextWidth + ACTION_ICON_SIZE + ACTION_ICON_GAP + ACTION_HORIZONTAL_PADDING
+    val textScale = (with(density) { availableTextWidth.toPx() } / textWidth).coerceAtMost(1f)
     val playTextStyle = NovumType.ButtonLg.copy(
         fontSize = NovumType.ButtonLg.fontSize * textScale,
         letterSpacing = NovumType.ButtonLg.letterSpacing * textScale,
@@ -130,6 +134,8 @@ internal fun ActionRow(
                     .focusRequester(playFocus),
                 centerContent = true,
             ) {
+                Icon(NovumIcons.Play, contentDescription = null, modifier = Modifier.size(ACTION_ICON_SIZE))
+                Spacer(Modifier.width(ACTION_ICON_GAP))
                 Text(
                     text = playLabel,
                     style = playTextStyle,
@@ -145,9 +151,9 @@ internal fun ActionRow(
                     onClick = { onPlay(0L) },
                     onLongClick = onReplayLongClick,
                     enabled = playable,
-                    modifier = Modifier.width(novumActionButtonWidth()),
-                    centerContent = true,
                 ) {
+                    Icon(NovumIcons.Replay, contentDescription = null, modifier = Modifier.size(ACTION_ICON_SIZE))
+                    Spacer(Modifier.width(ACTION_ICON_GAP))
                     Text(
                         text = stringResource(R.string.detail_play_from_head),
                         style = NovumType.ButtonLg,
@@ -263,7 +269,11 @@ internal fun detailMetaParts(
 /** 操作行按钮/图标间距：对齐首页 Hero 双 CTA 的 20dp。 */
 private val ACTION_ROW_GAP = 20.dp
 
-private val DETAIL_PLAY_BUTTON_WIDTH = 280.dp
+/** 图标与实际文案决定宽度；异常长集号仍限制在原有按钮预算内。 */
+private val DETAIL_PLAY_MAX_TEXT_WIDTH = 200.dp
+private val ACTION_ICON_SIZE = 24.dp
+private val ACTION_ICON_GAP = 8.dp
+private val ACTION_HORIZONTAL_PADDING = 48.dp
 
 private val COMPACT_ACTION_ROW_BREAKPOINT = 680.dp
 private val COMPACT_ACTION_ROW_GAP = 12.dp

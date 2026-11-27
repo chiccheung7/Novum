@@ -158,4 +158,15 @@ data class PlaybackPlan(
     /** Only set when the actual playback URL explicitly selects a server-encoded subtitle. */
     val burnedInSubtitleLabel: String? = null,
     val fallbackBurnedInSubtitleLabel: String? = null,
+    /** 实际选中的资源版本，重取烧录字幕时不能重新按默认版本挑选。 */
+    val mediaSourceId: String? = null,
+    val burnedInSubtitleIndex: Int? = null,
+    val fallbackBurnedInSubtitleIndex: Int? = null,
+    /** 此会话使用服务端字幕选择；关闭后仍保留服务器轨列表以便再次开启。 */
+    val serverSubtitleSelection: Boolean = false,
+    /** -1 明确关闭；非负值为服务端字幕流 Index；null 尚未进行服务端选择。 */
+    val serverSubtitleStreamIndex: Int? = null,
+    /** 局部转码流的本地时间 0 对应的全片位置；完整时间轴（含普通 HLS）为 0。 */
+    val streamStartPositionMs: Long = 0L,
+    val fallbackStreamStartPositionMs: Long = 0L,
 )

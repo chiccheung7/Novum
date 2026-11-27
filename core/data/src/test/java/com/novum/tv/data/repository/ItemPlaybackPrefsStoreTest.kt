@@ -38,6 +38,35 @@ class ItemPlaybackPrefsStoreTest {
     )
 
     @Test
+    fun serverSubtitleOffAndItsVersionSurviveDiskRoundTripWithoutChangingOtherPrefs() = runTest {
+        val store = newStore()
+        val audio = ItemPlaybackPrefsStore.TrackRef("English", "en")
+        store.update("item", audioTrack = audio, danmuOffsetMs = 400)
+        store.update("item", mediaSourceId = "source-4k", subtitleDisabled = true,
+            serverSubtitleStreamIndex = -1, serverSubtitleMediaSourceId = "source-4k")
+        val restored = newStore().get("item")
+        assertEquals(-1, restored?.serverSubtitleStreamIndex)
+        assertEquals("source-4k", restored?.serverSubtitleMediaSourceId)
+        assertEquals(true, restored?.subtitleDisabled)
+        assertEquals(audio, restored?.audioTrack)
+        assertEquals(400L, restored?.danmuOffsetMs)
+    }
+
+    @Test
+    fun selectingLocalTextClearsOnlyServerSubtitleMemory() = runTest {
+        val store = newStore()
+        val text = ItemPlaybackPrefsStore.TrackRef("Text", "en")
+        store.update("item", mediaSourceId = "source", serverSubtitleStreamIndex = 0,
+            serverSubtitleMediaSourceId = "source")
+        store.update("item", subtitleTrack = text, subtitleDisabled = false, clearServerSubtitle = true)
+        val restored = newStore().get("item")
+        assertNull(restored?.serverSubtitleStreamIndex)
+        assertNull(restored?.serverSubtitleMediaSourceId)
+        assertEquals("source", restored?.mediaSourceId)
+        assertEquals(text, restored?.subtitleTrack)
+    }
+
+    @Test
     fun mergingKeepsUntouchedFields() = runTest {
         val store = newStore()
         val cn = ItemPlaybackPrefsStore.TrackRef("简体", "chi")

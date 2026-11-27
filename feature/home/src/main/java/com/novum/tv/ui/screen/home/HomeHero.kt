@@ -8,22 +8,25 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.tv.material3.Text
+import androidx.tv.material3.Icon
 import com.novum.tv.core.designsystem.R
 import com.novum.tv.model.HomeEntry
 import com.novum.tv.ui.component.NovumButton
 import com.novum.tv.ui.component.novumActionButtonWidth
 import com.novum.tv.ui.component.NovumMediaInfoBlock
+import com.novum.tv.ui.icon.NovumIcons
 import com.novum.tv.ui.theme.NovumDimens
 import com.novum.tv.ui.theme.NovumType
 
@@ -39,9 +42,6 @@ private val HERO_CTA_GAP = 20.dp
 
 /** Hero 双 CTA 高度（= 全站统一按钮高度 [NovumDimens.ButtonHeight]）。 */
 private val HERO_CTA_HEIGHT = NovumDimens.ButtonHeight
-
-/** 四字播放文案留出与两字详情按钮相称的水平空间。 */
-private val HERO_PLAY_WIDTH = 176.dp
 
 /** Hero 信息区的固定高度，为内容和下方继续观看行预留空间。 */
 private val HERO_INFO_ZONE_H = 420.dp
@@ -157,7 +157,7 @@ private fun HeroInfoBlock(
                 centerContent = true,
                 modifier = Modifier
                     .width(novumActionButtonWidth())
-                    .height(HERO_CTA_HEIGHT),
+                    .heightIn(min = HERO_CTA_HEIGHT),
             ) {
                 Text(
                     text = stringResource(R.string.home_hero_detail),
@@ -170,7 +170,7 @@ private fun HeroInfoBlock(
 }
 
 /**
- * 「立即播放」CTA：沿用统一高度，按四字文案加宽。
+ * 「立即播放」CTA：沿用统一最小高度，宽度由播放图标与文案决定。
  *
  * 电影直接起播；剧集进入详情页选择分集。
  */
@@ -182,10 +182,8 @@ private fun HeroPlayButton(
 ) {
     NovumButton(
         onClick = onClick,
-        centerContent = true,
         modifier = Modifier
-            .width(HERO_PLAY_WIDTH * LocalDensity.current.fontScale.coerceAtLeast(1f))
-            .height(HERO_CTA_HEIGHT)
+            .heightIn(min = HERO_CTA_HEIGHT)
             .then(firstFocus?.let { Modifier.focusRequester(it) } ?: Modifier)
             .then(
                 if (onPlayFocused != null) {
@@ -195,6 +193,8 @@ private fun HeroPlayButton(
                 },
             ),
     ) {
+        Icon(NovumIcons.Play, contentDescription = null, modifier = Modifier.size(24.dp))
+        Spacer(Modifier.width(8.dp))
         Text(
             text = stringResource(R.string.home_hero_play),
             style = NovumType.ButtonLg,

@@ -276,7 +276,7 @@ internal fun DanmuOverlay(
 ) {
     if (!config.enabled || comments.isEmpty()) return
     // 绘制时钟：只在 draw lambda 里读，写它只失效绘制、不触发重组
-    val clockMs = remember(player) { mutableLongStateOf(player.currentPosition) }
+    val clockMs = remember(player) { mutableLongStateOf(player.mediaPositionMs()) }
     LaunchedEffect(player, config.enabled) {
         var lastTickMs = 0L
         while (isActive) {
@@ -285,7 +285,7 @@ internal fun DanmuOverlay(
                 val nowMs = frameNs / 1_000_000L
                 if (nowMs - lastTickMs >= DANMU_TICK_MS) {
                     lastTickMs = nowMs
-                    val position = player.currentPosition
+                    val position = player.mediaPositionMs()
                     // 暂停时位置不变——写相同值不会失效绘制，等于零成本
                     if (position != clockMs.longValue) clockMs.longValue = position
                 }

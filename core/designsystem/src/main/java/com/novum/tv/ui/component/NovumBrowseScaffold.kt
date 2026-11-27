@@ -100,6 +100,7 @@ fun NovumBrowseScaffold(
                         val isNavDown = event.type == KeyEventType.KeyDown &&
                             (event.key == Key.DirectionUp || event.key == Key.DirectionDown)
                         if (isNavDown && event.nativeKeyEvent.repeatCount > 0) {
+                            NovumFastNav.poke()
                             // repeat 逐格即时位移（/4.63）。
                             // **消费事件**——原返回 false 让系统再走一次
                             // bring-into-view，一帧内两次滚动（我们整格 + 系统补差）
@@ -109,7 +110,6 @@ fun NovumBrowseScaffold(
                             syncStep(
                                 if (event.key == Key.DirectionDown) FocusDirection.Down else FocusDirection.Up,
                             )
-                            NovumFastNav.poke()
                             true
                         } else {
                             if (isNavDown) NovumFastNav.onNavKeyDown()

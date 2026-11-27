@@ -13,7 +13,6 @@
     <string name="login_username">用户名</string>
     <string name="login_password">密码</string>
     <string name="login_remember">记住凭证</string>
-    <string name="login_remember_hint">安全保存 Token 和密码，下次自动登录</string>
     <string name="login_action">登录</string>
     <string name="login_action_loading">正在登录…</string>
     <string name="login_error_server">请填写有效的服务器地址</string>
@@ -60,7 +59,6 @@
     <string name="search_title">搜索</string>
     <string name="search_label">关键词</string>
     <string name="search_placeholder">片名 / 剧名</string>
-    <string name="search_hint">输入关键词后点「搜索」</string>
     <string name="search_empty">没有找到相关内容</string>
     <string name="search_category_all">全部</string>
     <string name="search_category_movies">电影</string>
@@ -108,8 +106,6 @@
     <string name="detail_seasons_count">%1$d 季</string>
     <!-- 剧集元信息里的全剧已看聚合（与年份/季数/评分同一行）。 -->
     <string name="detail_watched_progress">已看 %1$d/%2$d 集</string>
-    <!-- 当前集信息区标题。 -->
-    <string name="detail_current_episode">当前集</string>
     <string name="season_name">第 %1$d 季</string>
     <string name="season_special">特别篇</string>
     <string name="season_mark_title">整季标记</string>
@@ -193,11 +189,11 @@
     <string name="player_drawer_passthrough">音频直通（杜比 / DTS）</string>
     <string name="player_drawer_audio">音轨</string>
     <string name="player_drawer_subtitle">字幕</string>
-    <string name="player_drawer_empty">暂无音轨</string>
     <string name="player_drawer_no_episodes">暂无分集</string>
     <string name="player_drawer_no_chapters">暂无章节</string>
     <string name="player_drawer_subtitle_off">关闭字幕</string>
     <string name="player_subtitle_burned_in">服务器烧录字幕</string>
+    <string name="player_subtitle_switching">正在切换字幕…</string>
     <string name="player_drawer_subtitle_switch">字幕开关</string>
     <string name="player_drawer_no_subtitle">此片源不支持字幕操作</string>
     <string name="player_drawer_no_audio_operations">此片源不支持音轨操作</string>

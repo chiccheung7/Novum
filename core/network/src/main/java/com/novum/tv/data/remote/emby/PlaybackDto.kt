@@ -10,6 +10,15 @@ import kotlinx.serialization.Serializable
 @Serializable
 data class PlaybackInfoRequestDto(
     val DeviceProfile: DeviceProfileDto = DeviceProfileDto(),
+    val MediaSourceId: String? = null,
+    val SubtitleStreamIndex: Int? = null,
+    val StartTimeTicks: Long? = null,
+    // Nullable defaults keep explicit false / zero in encodeDefaults=false requests.
+    val EnableDirectPlay: Boolean? = null,
+    val EnableDirectStream: Boolean? = null,
+    val EnableTranscoding: Boolean? = null,
+    val AllowVideoStreamCopy: Boolean? = null,
+    val IsPlayback: Boolean? = null,
 )
 
 /**
@@ -73,10 +82,11 @@ data class DeviceProfileDto(
             videoCodecs: String,
             allowDirectPlay: Boolean = true,
             assBurnIn: Boolean = false,
+            forceSubtitleBurnIn: Boolean = false,
         ): DeviceProfileDto {
             // ASS/SSA 开启烧录时声明 Encode，否则使用外挂字幕。
             val assMethod = if (assBurnIn) "Encode" else "External"
-            return DeviceProfileDto(
+            val profile = DeviceProfileDto(
                 DirectPlayProfiles = if (allowDirectPlay) {
                     listOf(
                         DirectPlayProfileDto(
@@ -98,6 +108,14 @@ data class DeviceProfileDto(
                     SubtitleProfileDto(Format = "vobsub", Method = "Encode"),
                 ),
             )
+            if (!forceSubtitleBurnIn) return profile
+            // Re-selecting an already server-rendered subtitle must create a new encoded stream,
+            // including when the new target would otherwise be delivered as external text.
+            return profile.copy(SubtitleProfiles = (
+                profile.SubtitleProfiles.map { it.copy(Method = "Encode") } +
+                    listOf("vtt", "webvtt", "ttml", "mov_text", "pgs", "hdmv_pgs_subtitle", "dvbsub", "dvdsub")
+                        .map { SubtitleProfileDto(Format = it, Method = "Encode") }
+                ).distinctBy { it.Format })
         }
     }
 }

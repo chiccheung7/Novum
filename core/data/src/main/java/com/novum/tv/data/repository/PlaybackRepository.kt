@@ -21,6 +21,8 @@ interface PlaybackRepository : PlaybackReporter {
      * @param forceTranscode 强制服务端转码。
      * @param excludeLine 排除的线路 baseUrl：换线重试时传入刚失败的那条。
      * @param mediaSourceId 指定版本（详情页版本选择）；null = 按画质策略/服务端默认。
+     * @param subtitleStreamIndex null 保持自动选择；-1 明确关闭字幕；非负值为同一媒体源的
+     * 服务端字幕流 Index，重新请求烧录该轨。显式选择必须同时指定 mediaSourceId。
      */
     suspend fun plan(
         itemId: String,
@@ -28,6 +30,7 @@ interface PlaybackRepository : PlaybackReporter {
         forceTranscode: Boolean = false,
         excludeLine: String? = null,
         mediaSourceId: String? = null,
+        subtitleStreamIndex: Int? = null,
     ): NovumResult<PlaybackPlan>
 
     /** Bind queued playback events to the account that owns this player. */

@@ -4,6 +4,8 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.relocation.BringIntoViewRequester
+import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -14,15 +16,13 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
-import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
@@ -37,8 +37,8 @@ import androidx.tv.material3.Text
 import com.novum.tv.core.designsystem.R
 import com.novum.tv.ui.theme.NovumDimens
 import com.novum.tv.ui.theme.NovumPalette
-import com.novum.tv.ui.theme.NovumShapes
 import com.novum.tv.ui.theme.NovumType
+import kotlinx.coroutines.launch
 
 /**
  * 线路选择界面：从服务端读取线路与延迟，选择后锁定媒体流域名；API 鉴权域不变。
@@ -97,17 +97,14 @@ fun NovumLinePickerPanel(
             ?: available.minByOrNull { it.latencyMs }?.baseUrl
     }
 
-    LaunchedEffect(loading, failed, currentUrl) {
-        if (loading || failed || currentUrl == null) return@LaunchedEffect
-        // 加载完成后再抓焦；保存的线路已不在列表时回落到最快的可用线路。
-        withFrameNanos { }
-        runCatching { firstRowFocus.requestFocus() }
+    if (!loading && !failed && currentUrl != null) {
+        // 数据到位并挂上目标行后抓焦；窗口尚未接受焦点时沿用统一重试。
+        NovumInitialFocus(firstRowFocus, key = currentUrl)
     }
     Column(
         modifier = Modifier
             .width(LINE_PICKER_PANEL_WIDTH)
-            .clip(NovumShapes.Large)
-            .background(NovumPalette.Surface)
+            .novumGlassPanel()
             .padding(vertical = 24.dp)
             .verticalScroll(rememberScrollState()),
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -176,10 +173,13 @@ private fun LineRow(
     onClick: () -> Unit,
 ) {
     var focused by remember { mutableStateOf(false) }
+    val bringIntoView = remember { BringIntoViewRequester() }
+    val scope = rememberCoroutineScope()
     val rowLabel = if (selected) "$title（${stringResource(R.string.line_picker_current)}）" else title
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            .bringIntoViewRequester(bringIntoView)
             .then(
                 if (requestFocus && focusRequester != null) {
                     Modifier.focusRequester(focusRequester)
@@ -187,7 +187,10 @@ private fun LineRow(
                     Modifier
                 },
             )
-            .onFocusChanged { focused = it.isFocused }
+            .onFocusChanged {
+                focused = it.isFocused
+                if (it.isFocused) scope.launch { bringIntoView.bringIntoView() }
+            }
             .background(if (focused) NovumPalette.Paper else Color.Transparent)
             .clickable(onClick = onClick)
             .semantics { contentDescription = rowLabel }

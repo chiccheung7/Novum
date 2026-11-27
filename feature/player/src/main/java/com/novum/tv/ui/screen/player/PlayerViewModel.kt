@@ -8,6 +8,7 @@ import androidx.navigation.toRoute
 import com.novum.tv.core.capability.CapabilityProvider
 import com.novum.tv.core.data.di.ApplicationScope
 import com.novum.tv.core.designsystem.R
+import com.novum.tv.core.error.NovumError
 import com.novum.tv.core.log.NovumLogger
 import com.novum.tv.core.result.NovumResult
 import com.novum.tv.core.result.runCatchingSuspend
@@ -40,6 +41,8 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 
 /**
  * 播放页 UI 状态。
@@ -92,6 +95,8 @@ data class PlayerUiState(
     val autoPlayNext: Boolean = true,
     /** 弹幕会话（配置 + 加载状态 + 数据 + 偏移 + 手动搜索流程）。 */
     val danmu: DanmuSession = DanmuSession(),
+    val subtitleSwitching: Boolean = false,
+    val subtitleSwitchError: NovumError? = null,
 ) {
 
     /** 播放计划数据，非成功态为 null。 */
@@ -154,6 +159,16 @@ class PlayerViewModel @Inject constructor(
      * 兜底重试时悄悄换成别的版本。
      */
     private var requestedMediaSourceId: String? = null
+    private var requestedSubtitleStreamIndex: Int? = null
+    private var subtitleSelectionAdopted = false
+
+    private data class SubtitleSwitch(
+        val previous: PlaybackPlan,
+        val streamIndex: Int,
+        val positionMs: Long,
+        val next: PlaybackPlan? = null,
+    )
+    private var pendingSubtitleSwitch: SubtitleSwitch? = null
 
     /** 手动选定/记忆的弹幕分集（null = 自动匹配）。 */
     private var danmuEpisodeId: String? = null
@@ -186,8 +201,10 @@ class PlayerViewModel @Inject constructor(
     /** 首次读取后沿用当前粗细，重取计划不覆盖尚未落盘的调节值。 */
     private var subtitleWeightAdopted = false
 
-    private fun replan(block: suspend CoroutineScope.() -> Unit) {
+    private fun replan(subtitleSwitching: Boolean = false, block: suspend CoroutineScope.() -> Unit) {
         planJob?.cancel()
+        if (!subtitleSwitching) pendingSubtitleSwitch = null
+        _state.update { it.copy(subtitleSwitching = subtitleSwitching, subtitleSwitchError = null) }
         planJob = viewModelScope.launch(block = block)
     }
 
@@ -262,6 +279,10 @@ class PlayerViewModel @Inject constructor(
         channels: Int? = null,
         formatId: String? = null,
     ) {
+        if (isText) {
+            requestedSubtitleStreamIndex = null
+            subtitleSelectionAdopted = false
+        }
         val ref = ItemPlaybackPrefsStore.TrackRef(label = label, language = language, rawLabel = rawLabel, channels = channels, formatId = formatId)
         // 轨道变更会立即触发 onTracksChanged。先更新恢复策略的快照，
         // 否则监听器还拿着起播时的旧记忆，会把用户刚选的轨道切回去。
@@ -269,7 +290,8 @@ class PlayerViewModel @Inject constructor(
             val previous = state.rememberedPrefs ?: ItemPlaybackPrefsStore.ItemPrefs(itemId = itemId)
             state.copy(
                 rememberedPrefs = if (isText) {
-                    previous.copy(subtitleTrack = ref.takeUnless { disabled }, subtitleDisabled = disabled)
+                    previous.copy(subtitleTrack = ref.takeUnless { disabled }, subtitleDisabled = disabled,
+                        serverSubtitleStreamIndex = null, serverSubtitleMediaSourceId = null)
                 } else {
                     previous.copy(audioTrack = ref)
                 },
@@ -284,6 +306,7 @@ class PlayerViewModel @Inject constructor(
                     subtitleDisabled = if (isText) disabled else null,
                     // 关闭字幕时把旧的手动轨一并清掉，下次开启回到语言偏好默认轨
                     clearSubtitleTrack = isText && disabled,
+                    clearServerSubtitle = isText,
                 )
             }.onFailure { logger.w(TAG, "轨道记忆写入失败", it) }
         }
@@ -526,7 +549,7 @@ class PlayerViewModel @Inject constructor(
             val subtitleOffsetLevel = snapshot?.subtitleOffsetLevel ?: 0
             // 条目级手动记忆：上次手动选过的版本/字幕/音轨
             // 优先于语言偏好与画质策略；读取失败静默（记忆只是增强，不阻塞播放）
-            val remembered = runCatchingSuspend { playbackPrefs.get(itemId) }.getOrNull()
+            var remembered = runCatchingSuspend { playbackPrefs.get(itemId) }.getOrNull()
             // 从头看且开启片头跳过时，直接起播在片头之后；续播位置优先，避免覆盖用户进度
             val startMs = startOverrideMs
                 ?: routeStartMs
@@ -539,16 +562,97 @@ class PlayerViewModel @Inject constructor(
             val speed = if (speedAdopted) _state.value.playbackSpeed else snapshot?.playbackSpeed ?: 1f
 
             // 路由显式版本 > 条目记忆的版本 > 画质策略（null = 交给服务端按策略挑）
-            val versionId = routeMediaSourceId ?: remembered?.mediaSourceId
+            val versionId = if (subtitleSelectionAdopted) requestedMediaSourceId else routeMediaSourceId ?: remembered?.mediaSourceId
+            val storedSubtitleSource = remembered?.serverSubtitleMediaSourceId
+            var serverSubtitle = if (subtitleSelectionAdopted) requestedSubtitleStreamIndex else {
+                remembered?.serverSubtitleStreamIndex?.takeIf {
+                    versionId != null && (it == -1 || versionId == storedSubtitleSource)
+                }
+            }
             requestedMediaSourceId = versionId
-            when (
-                val result = playback.plan(
+            var planResult = playback.plan(
+                itemId = itemId,
+                startPositionMs = startMs,
+                mediaSourceId = versionId,
+                subtitleStreamIndex = serverSubtitle,
+            )
+            val restoreError = (planResult as? NovumResult.Failure)?.error
+            val invalidStoredSelection = restoreError is NovumError.NotFound ||
+                restoreError is NovumError.Server && restoreError.code in setOf(400, 404, 502)
+            val storedSubtitleToRestore = serverSubtitle
+            if (!subtitleSelectionAdopted && storedSubtitleToRestore != null && invalidStoredSelection) {
+                // Stored indices are only an enhancement. Probe the catalog once before dropping
+                // one: a transcoder/network failure alone does not establish that the track vanished.
+                val automatic = playback.plan(
                     itemId = itemId,
                     startPositionMs = startMs,
                     mediaSourceId = versionId,
                 )
-            ) {
+                currentCoroutineContext().ensureActive()
+                val replacement = (automatic as? NovumResult.Success)?.value
+                val replacementSource = replacement?.mediaSourceId?.takeIf { it.isNotBlank() }
+                val trackDisappeared = storedSubtitleToRestore >= 0 && replacement?.subtitleTracks?.none {
+                    it.index == storedSubtitleToRestore
+                } == true
+                if (replacement != null && replacementSource != null && (replacementSource != versionId || trackDisappeared)) {
+                    val keepDisabled = storedSubtitleToRestore == -1
+                    var recovered = if (keepDisabled) {
+                        // Never expose the automatic/default subtitle while migrating an OFF
+                        // preference to a replacement version. First request an explicitly clean stream.
+                        playback.plan(
+                            itemId = itemId,
+                            startPositionMs = startMs,
+                            forceTranscode = replacement.method == PlayMethod.Transcode,
+                            mediaSourceId = replacementSource,
+                            subtitleStreamIndex = -1,
+                        )
+                    } else automatic
+                    currentCoroutineContext().ensureActive()
+                    if (keepDisabled && recovered is NovumResult.Success &&
+                        (recovered.value.serverSubtitleStreamIndex != -1 || recovered.value.burnedInSubtitleIndex != null)
+                    ) recovered = NovumResult.Failure(NovumError.Server(502))
+                    planResult = recovered
+                    if (recovered is NovumResult.Success) {
+                        val recoveredSource = recovered.value.mediaSourceId ?: replacementSource
+                        serverSubtitle = if (keepDisabled) -1 else null
+                        remembered = remembered?.copy(
+                            mediaSourceId = recoveredSource,
+                            subtitleTrack = null,
+                            subtitleDisabled = keepDisabled,
+                            serverSubtitleStreamIndex = if (keepDisabled) -1 else null,
+                            serverSubtitleMediaSourceId = recoveredSource.takeIf { keepDisabled },
+                        )
+                        runCatchingSuspend {
+                            playbackPrefs.update(
+                                itemId = itemId,
+                                mediaSourceId = recoveredSource,
+                                clearSubtitleTrack = true,
+                                subtitleDisabled = keepDisabled,
+                                serverSubtitleStreamIndex = if (keepDisabled) -1 else null,
+                                serverSubtitleMediaSourceId = recoveredSource.takeIf { keepDisabled },
+                                clearServerSubtitle = !keepDisabled,
+                            )
+                        }.onFailure { logger.w(TAG, "失效服务器字幕记忆清理失败", it) }
+                    }
+                } else if (automatic is NovumResult.Failure) {
+                    planResult = automatic
+                }
+            }
+            when (val result = planResult) {
                 is NovumResult.Success -> {
+                    val actualSource = result.value.mediaSourceId
+                    if (!subtitleSelectionAdopted && serverSubtitle == -1 && actualSource != null &&
+                        remembered?.serverSubtitleMediaSourceId != actualSource
+                    ) {
+                        remembered = remembered?.copy(mediaSourceId = actualSource, serverSubtitleMediaSourceId = actualSource)
+                        runCatchingSuspend {
+                            playbackPrefs.update(itemId = itemId, mediaSourceId = actualSource,
+                                serverSubtitleStreamIndex = -1, serverSubtitleMediaSourceId = actualSource)
+                        }.onFailure { logger.w(TAG, "服务器字幕关闭记忆迁移失败", it) }
+                    }
+                    requestedMediaSourceId = result.value.mediaSourceId ?: versionId
+                    requestedSubtitleStreamIndex = serverSubtitle ?: result.value.serverSubtitleStreamIndex
+                    subtitleSelectionAdopted = requestedSubtitleStreamIndex != null
                     method = result.value.method
                     playSessionId = result.value.playSessionId
                     planFileName = result.value.fileName
@@ -649,6 +753,131 @@ class PlayerViewModel @Inject constructor(
         }
     }
 
+    /** Keep the old stream alive until PlaybackInfo accepts a selection for this exact version. */
+    fun selectServerSubtitle(streamIndex: Int, positionMs: Long, activePlan: PlaybackPlan? = null) {
+        val state = _state.value
+        val previous = activePlan ?: state.data ?: return
+        if (state.subtitleSwitching || streamIndex < -1 ||
+            (streamIndex >= 0 && previous.subtitleTracks.none { it.index == streamIndex }) ||
+            (state.subtitleSwitchError == null &&
+                (previous.serverSubtitleStreamIndex ?: previous.burnedInSubtitleIndex) == streamIndex)
+        ) return
+        val sourceId = previous.mediaSourceId ?: requestedMediaSourceId ?: return
+        val change = SubtitleSwitch(previous, streamIndex, positionMs.coerceAtLeast(0L))
+        pendingSubtitleSwitch = change
+        replan(subtitleSwitching = true) {
+            val result = playback.plan(
+                itemId = itemId,
+                startPositionMs = change.positionMs,
+                mediaSourceId = sourceId,
+                // Preserve video-transcoding requirements when disabling burned subtitles too.
+                forceTranscode = previous.method == PlayMethod.Transcode,
+                subtitleStreamIndex = streamIndex,
+            )
+            currentCoroutineContext().ensureActive()
+            when (result) {
+                is NovumResult.Success -> {
+                    val next = result.value
+                    pendingSubtitleSwitch = change.copy(next = next)
+                    method = next.method
+                    playSessionId = next.playSessionId
+                    _state.update { it.copy(plan = UiState.Success(next), subtitle = next.method.label(appContext)) }
+                    // Memory is committed only after this new stream reaches READY.
+                }
+                is NovumResult.Failure -> {
+                    pendingSubtitleSwitch = null
+                    _state.update { it.copy(subtitleSwitching = false, subtitleSwitchError = result.error) }
+                }
+            }
+        }
+    }
+
+    /** Called for the MediaItem that actually reached READY, never for an old buffered callback. */
+    fun onSubtitleStreamReady(plan: PlaybackPlan) {
+        val change = pendingSubtitleSwitch?.takeIf { it.next === plan } ?: return
+        pendingSubtitleSwitch = null
+        requestedMediaSourceId = plan.mediaSourceId ?: change.previous.mediaSourceId ?: requestedMediaSourceId
+        requestedSubtitleStreamIndex = change.streamIndex
+        subtitleSelectionAdopted = true
+        val previousPrefs = _state.value.rememberedPrefs ?: ItemPlaybackPrefsStore.ItemPrefs(itemId)
+        val track = plan.subtitleTracks.firstOrNull { it.index == change.streamIndex }?.let {
+            ItemPlaybackPrefsStore.TrackRef(it.label, it.language, rawLabel = it.label)
+        }
+        val nextPrefs = previousPrefs.copy(
+            mediaSourceId = requestedMediaSourceId,
+            subtitleTrack = track,
+            subtitleDisabled = change.streamIndex == -1,
+            serverSubtitleStreamIndex = change.streamIndex,
+            serverSubtitleMediaSourceId = requestedMediaSourceId,
+        )
+        _state.update { it.copy(subtitleSwitching = false, subtitleSwitchError = null, rememberedPrefs = nextPrefs) }
+        val previous = change.previous
+        appScope.launch {
+            reporter.reportStopped(itemId, change.positionMs, previous.method, previous.playSessionId)
+        }
+        viewModelScope.launch {
+            runCatchingSuspend {
+                playbackPrefs.update(
+                    itemId = itemId,
+                    mediaSourceId = nextPrefs.mediaSourceId,
+                    subtitleTrack = track,
+                    clearSubtitleTrack = track == null,
+                    subtitleDisabled = nextPrefs.subtitleDisabled,
+                    serverSubtitleStreamIndex = nextPrefs.serverSubtitleStreamIndex,
+                    serverSubtitleMediaSourceId = nextPrefs.serverSubtitleMediaSourceId,
+                )
+            }.onFailure { logger.w(TAG, "服务器字幕记忆写入失败", it) }
+        }
+    }
+
+    /** Revert a stream that failed before READY; failed choices must not replace saved preferences. */
+    fun onSubtitleStreamFailed(failedPlan: PlaybackPlan): Boolean {
+        val change = pendingSubtitleSwitch?.takeIf { it.next === failedPlan } ?: return false
+        pendingSubtitleSwitch = null
+        val previous = change.previous.copy(startPositionMs = change.positionMs)
+        method = previous.method
+        playSessionId = previous.playSessionId
+        _state.update { it.copy(
+            plan = UiState.Success(previous), subtitle = previous.method.label(appContext),
+            subtitleSwitching = false, subtitleSwitchError = NovumError.Unknown(),
+        ) }
+        val failed = requireNotNull(change.next)
+        appScope.launch { reporter.reportStopped(itemId, change.positionMs, failed.method, failed.playSessionId) }
+        return true
+    }
+
+    /** A progressive transcode cannot seek before its stream origin: request a fresh segment. */
+    fun seekServerStream(positionMs: Long, activePlan: PlaybackPlan? = null) {
+        val plan = activePlan ?: _state.value.data ?: return
+        if (_state.value.subtitleSwitching) return
+        val targetPositionMs = positionMs.coerceAtLeast(0L)
+        replan {
+            val result = playback.plan(
+                itemId = itemId,
+                startPositionMs = targetPositionMs,
+                forceTranscode = plan.method == PlayMethod.Transcode,
+                mediaSourceId = plan.mediaSourceId ?: requestedMediaSourceId,
+                subtitleStreamIndex = requestedSubtitleStreamIndex ?: plan.serverSubtitleStreamIndex ?: plan.burnedInSubtitleIndex,
+            )
+            currentCoroutineContext().ensureActive()
+            when (result) {
+                is NovumResult.Success -> {
+                    method = result.value.method
+                    playSessionId = result.value.playSessionId
+                    _state.update { it.copy(plan = UiState.Success(result.value), subtitle = result.value.method.label(appContext)) }
+                    // Close only the replaced session, after a live request has succeeded.
+                    // A failed/cancelled rebuild must leave the old stream running.
+                    if (plan.playSessionId != result.value.playSessionId) {
+                        appScope.launch {
+                            reporter.reportStopped(itemId, targetPositionMs, plan.method, plan.playSessionId)
+                        }
+                    }
+                }
+                is NovumResult.Failure -> _state.update { it.copy(subtitleSwitchError = result.error) }
+            }
+        }
+    }
+
     /**
      * 换线重试：排除当前线路，取下一名重新请求播放计划。
      *
@@ -664,6 +893,7 @@ class PlayerViewModel @Inject constructor(
                     excludeLine = currentLine,
                     // 换线只换域名，不换版本：否则重试时悄悄回到默认版本
                     mediaSourceId = requestedMediaSourceId,
+                    subtitleStreamIndex = requestedSubtitleStreamIndex,
                 )
             ) {
                 is NovumResult.Success -> {
@@ -708,6 +938,7 @@ class PlayerViewModel @Inject constructor(
                     forceTranscode = true,
                     // 用户选定的版本必须沿用：强转码是对**同一个版本**转码
                     mediaSourceId = requestedMediaSourceId,
+                    subtitleStreamIndex = requestedSubtitleStreamIndex,
                 )
             ) {
                 is NovumResult.Success -> {
@@ -765,6 +996,11 @@ class PlayerViewModel @Inject constructor(
         // appScope 在 IO 线程执行前可能已经重取计划；事件属于调用瞬间的会话。
         val eventMethod = method
         val eventSessionId = playSessionId
+        val pending = pendingSubtitleSwitch?.takeIf { it.next != null }
+        pendingSubtitleSwitch = null
+        if (pending != null) {
+            appScope.launch { reporter.reportStopped(itemId, positionMs, pending.previous.method, pending.previous.playSessionId) }
+        }
         appScope.launch { reporter.reportStopped(itemId, positionMs, eventMethod, eventSessionId) }
     }
 }

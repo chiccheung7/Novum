@@ -13,11 +13,18 @@ import androidx.compose.foundation.lazy.grid.itemsIndexed
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.snapshotFlow
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
@@ -36,6 +43,8 @@ import com.novum.tv.ui.theme.NovumDimens
 import com.novum.tv.ui.theme.NovumFocusTokens
 import kotlin.math.roundToInt
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.launch
 
 /**
  * 媒体库下钻、收藏与搜索共用的 2:3 海报网格，按可用宽度自适应列数，接近末尾时预加载。
@@ -62,6 +71,14 @@ fun PosterGrid(
 ) {
     val gridState = rememberLazyGridState()
     val firstFocus = remember { FocusRequester() }
+    var focusedIndex by remember { mutableIntStateOf(-1) }
+    // A repeat key can arrive while LazyGrid is still animating the previous
+    // bring-into-view request. Keep a requester per stable media id so the
+    // repeat path can compose the next item, move the viewport immediately,
+    // then restore focus on that item in the same frame.
+    val itemFocus = remember { mutableMapOf<String, FocusRequester>() }
+    val navigationScope = rememberCoroutineScope()
+    var navigationJob by remember { mutableStateOf<Job?>(null) }
 
     // 首焦落首卡：NovumInitialFocus 等帧重试——网格 item 在 measure 期才组合，
     // 数据刚到位的那一帧 requestFocus 会因节点未挂载而静默失败
@@ -176,6 +193,58 @@ fun PosterGrid(
                         if (event.type == KeyEventType.KeyDown && event.key in directionKeys) {
                             if (event.nativeKeyEvent.repeatCount > 0) {
                                 NovumFastNav.poke()
+                                // Once a key is repeating, do not leave focus movement to
+                                // LazyGrid's animated bring-into-view. Its animation can lag
+                                // behind the native repeat stream, leaving the focused card
+                                // outside the viewport (and, after a reversal, no focused node
+                                // at all). Advance one logical grid cell and restore focus
+                                // after composing the target.
+                                val currentLayoutIndex = focusedIndex
+                                val currentContentIndex = currentLayoutIndex - headerOffset
+                                val targetContentIndex = when (event.key) {
+                                    Key.DirectionUp -> currentContentIndex - columns
+                                    Key.DirectionDown -> currentContentIndex + columns
+                                    Key.DirectionLeft ->
+                                        if (currentContentIndex >= 0 && currentContentIndex % columns > 0) {
+                                            currentContentIndex - 1
+                                        } else {
+                                            currentContentIndex
+                                        }
+                                    else -> // DirectionRight
+                                        if (currentContentIndex >= 0 && currentContentIndex % columns < columns - 1) {
+                                            currentContentIndex + 1
+                                        } else {
+                                            currentContentIndex
+                                        }
+                                }
+                                if (currentContentIndex >= 0 &&
+                                    targetContentIndex in items.indices &&
+                                    targetContentIndex != currentContentIndex
+                                ) {
+                                    val targetLayoutIndex = targetContentIndex + headerOffset
+                                    val targetRequester = if (targetContentIndex == 0) {
+                                        firstFocus
+                                    } else {
+                                        itemFocus.getOrPut(items[targetContentIndex].id) { FocusRequester() }
+                                    }
+                                    navigationJob?.cancel()
+                                    navigationJob = navigationScope.launch {
+                                        // Instant positioning avoids stacking one animated
+                                        // scroll per repeat. The target is then guaranteed to
+                                        // be in the composition before requestFocus retries.
+                                        gridState.scrollToItem(targetLayoutIndex)
+                                        repeat(5) {
+                                            withFrameNanos { }
+                                            if (runCatching { targetRequester.requestFocus() }
+                                                    .getOrDefault(false)
+                                            ) return@launch
+                                        }
+                                    }
+                                }
+                                // Consume repeat events, including an edge repeat, so the
+                                // platform focus search cannot perform a second move using a
+                                // stale viewport.
+                                return@onPreviewKeyEvent true
                             } else {
                                 NovumFastNav.onNavKeyDown()
                             }
@@ -202,6 +271,9 @@ fun PosterGrid(
                     // 同构网格：显式 contentType 让 LazyGrid 跨页复用槽位
                     contentType = { _, _ -> "poster-grid-item" },
                 ) { index, item ->
+                    val itemRequester = if (index == 0) firstFocus else remember(item.id) {
+                        itemFocus.getOrPut(item.id) { FocusRequester() }
+                    }
                     NovumCard(
                         title = item.title,
                         subtitle = item.subtitle,
@@ -213,9 +285,8 @@ fun PosterGrid(
                         imageUrl = item.imageUrl,
                         onClick = { onOpenDetail(item.id) },
                         modifier = Modifier
-                            .then(
-                                if (index == 0) Modifier.focusRequester(firstFocus) else Modifier,
-                            ),
+                            .onFocusChanged { if (it.hasFocus) focusedIndex = index + headerOffset }
+                            .focusRequester(itemRequester),
                     )
                 }
             }

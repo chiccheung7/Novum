@@ -52,7 +52,191 @@ class DefaultPlaybackRepositoryTest {
         val plan = (repository(api).plan("movie") as NovumResult.Success).value
         assertTrue(!plan.burnedInSubtitleLabel.isNullOrBlank())
         assertTrue(plan.subtitles.isEmpty())
+        assertEquals("src", plan.mediaSourceId)
+        assertEquals(7, plan.burnedInSubtitleIndex)
+        assertEquals(7, plan.serverSubtitleStreamIndex)
+        assertTrue(plan.serverSubtitleSelection)
     }
+
+    @Test
+    fun changingServerSubtitleRequestsTheExactVersionTrackAndCurrentPosition() = runTest(dispatcher) {
+        val api = StubPlaybackApi(info = PlaybackInfoDto(
+            PlaySessionId = "new-subtitle-session",
+            MediaSources = listOf(
+                subtitleSource().copy(Id = "default-version"),
+                subtitleSource(),
+            ),
+        ))
+        val plan = (repository(api).plan(
+            "movie", startPositionMs = 123_456L, mediaSourceId = "source-4k", subtitleStreamIndex = 7,
+        ) as NovumResult.Success).value
+        val body = api.requests.single()
+
+        assertEquals("source-4k", body.MediaSourceId)
+        assertEquals(7, body.SubtitleStreamIndex)
+        assertEquals(1_234_560_000L, body.StartTimeTicks)
+        assertEquals(false, body.EnableDirectPlay)
+        assertEquals(false, body.EnableDirectStream)
+        assertEquals(false, body.AllowVideoStreamCopy)
+        assertEquals(true, body.EnableTranscoding)
+        assertTrue(body.DeviceProfile.DirectPlayProfiles.isEmpty())
+        assertTrue(body.DeviceProfile.SubtitleProfiles.all { it.Method == "Encode" })
+        assertEquals(PlayMethod.Transcode, plan.method)
+        assertEquals("source-4k", plan.mediaSourceId)
+        assertEquals("new-subtitle-session", plan.playSessionId)
+        assertEquals(123_456L, plan.startPositionMs)
+        assertEquals(0L, plan.streamStartPositionMs)
+        assertEquals(7, plan.burnedInSubtitleIndex)
+        assertTrue(plan.serverSubtitleSelection)
+        assertEquals(7, plan.serverSubtitleStreamIndex)
+        assertEquals(listOf(3, 7), plan.subtitleTracks.map { it.index })
+        assertTrue(plan.subtitles.isEmpty())
+        assertNull(plan.fallbackUrl)
+    }
+
+    @Test
+    fun switchingOffBurnedSubtitlesRestoresDirectStreamAndDropsAnOldEncodedFallback() = runTest(dispatcher) {
+        val api = StubPlaybackApi(info = PlaybackInfoDto(MediaSources = listOf(subtitleSource())))
+
+        val plan = (repository(api).plan(
+            "movie", startPositionMs = 71_000L, mediaSourceId = "source-4k", subtitleStreamIndex = -1,
+        ) as NovumResult.Success).value
+
+        assertEquals(-1, api.requests.single().SubtitleStreamIndex)
+        assertEquals(710_000_000L, api.requests.single().StartTimeTicks)
+        assertEquals(PlayMethod.DirectPlay, plan.method)
+        assertEquals("https://smart.uhdnow.com/provider/movie?api_key=fixture", plan.url)
+        assertNull(plan.burnedInSubtitleLabel)
+        assertNull(plan.burnedInSubtitleIndex)
+        assertNull(plan.fallbackUrl)
+        assertTrue(plan.serverSubtitleSelection)
+        assertEquals(-1, plan.serverSubtitleStreamIndex)
+        assertEquals(listOf(3, 7), plan.subtitleTracks.map { it.index })
+    }
+
+    @Test
+    fun switchingOffCanUseANewTranscodeWithoutSubtitlesWhenDirectIsUnavailable() = runTest(dispatcher) {
+        val source = subtitleSource().copy(
+            SupportsDirectPlay = false,
+            DirectStreamUrl = null,
+            TranscodingUrl = "/provider/master.m3u8?SubtitleStreamIndex=-1&SubtitleMethod=Encode",
+        )
+        val api = StubPlaybackApi(info = PlaybackInfoDto(MediaSources = listOf(source)))
+        val plan = (repository(api).plan(
+            "movie", startPositionMs = 60_000, mediaSourceId = "source-4k", subtitleStreamIndex = -1,
+        ) as NovumResult.Success).value
+
+        assertEquals(PlayMethod.Transcode, plan.method)
+        assertEquals(-1, plan.serverSubtitleStreamIndex)
+        assertNull(plan.burnedInSubtitleLabel)
+        assertEquals(0L, plan.streamStartPositionMs)
+    }
+
+    @Test
+    fun slicedTranscodeCarriesTheActualServerStartOffsetWithoutChangingAbsoluteResumePosition() = runTest(dispatcher) {
+        val source = subtitleSource().copy(
+            TranscodingUrl = "/provider/stream.ts?SubtitleStreamIndex=7&SubtitleMethod=Encode&StartTimeTicks=1200000000",
+        )
+        val api = StubPlaybackApi(info = PlaybackInfoDto(MediaSources = listOf(source)))
+        val plan = (repository(api).plan(
+            "movie", startPositionMs = 120_000, mediaSourceId = "source-4k", subtitleStreamIndex = 7,
+        ) as NovumResult.Success).value
+
+        assertEquals(120_000L, plan.startPositionMs)
+        assertEquals(120_000L, plan.streamStartPositionMs)
+        assertTrue(plan.url.endsWith("StartTimeTicks=1200000000"))
+    }
+
+    @Test
+    fun explicitSubtitleChoiceNeverFallsBackToStaticAfterAPlaybackInfoFailure() = runTest(dispatcher) {
+        val result = repository(StubPlaybackApi(error = IOException("offline"))).plan(
+            "movie", mediaSourceId = "source-4k", subtitleStreamIndex = 7,
+        )
+        assertTrue(result is NovumResult.Failure)
+        assertTrue((result as NovumResult.Failure).error is NovumError.Network)
+    }
+
+    @Test
+    fun subtitleSwitchRejectsMissingVersionAndWrongOrMissingSubtitleInsteadOfUsingDefaults() = runTest(dispatcher) {
+        val rejectedSources = listOf(
+            subtitleSource().copy(Id = "different-version"),
+            subtitleSource().copy(MediaStreams = emptyList()),
+            subtitleSource().copy(TranscodingUrl = "/provider/master.m3u8?SubtitleStreamIndex=3&SubtitleMethod=Encode"),
+            subtitleSource().copy(TranscodingUrl = "/provider/master.m3u8?SubtitleStreamIndex=7&SubtitleMethod=External"),
+            subtitleSource().copy(TranscodingUrl = "/provider/master.m3u8?SubtitleStreamIndex=7&SubtitleMethod=Encode&MediaSourceId=wrong-version"),
+            subtitleSource().copy(TranscodingUrl = "/provider/master.m3u8?SubtitleStreamIndex=7&SubtitleStreamIndex=3&SubtitleMethod=Encode"),
+            subtitleSource().copy(TranscodingUrl = null),
+        )
+        for (source in rejectedSources) {
+            val result = repository(StubPlaybackApi(info = PlaybackInfoDto(MediaSources = listOf(source)))).plan(
+                "movie", mediaSourceId = "source-4k", subtitleStreamIndex = 7,
+            )
+            assertTrue("Must reject an unfulfilled subtitle switch: $source", result is NovumResult.Failure)
+        }
+    }
+
+    @Test
+    fun disablingSubtitlesRejectsTheOldBurnedStreamWhenNoCleanUrlIsReturned() = runTest(dispatcher) {
+        val api = StubPlaybackApi(info = PlaybackInfoDto(MediaSources = listOf(
+            subtitleSource().copy(SupportsDirectPlay = false, DirectStreamUrl = null),
+        )))
+        val result = repository(api).plan("movie", mediaSourceId = "source-4k", subtitleStreamIndex = -1)
+        assertTrue(result is NovumResult.Failure)
+    }
+
+    @Test
+    fun explicitSubtitleNeedsAValidMediaSourceAndStreamIndexBeforeMakingARequest() = runTest(dispatcher) {
+        val api = StubPlaybackApi(info = PlaybackInfoDto(MediaSources = listOf(subtitleSource())))
+        for ((sourceId, index) in listOf(null to 7, "" to -1, "source-4k" to -2)) {
+            val result = repository(api).plan("movie", mediaSourceId = sourceId, subtitleStreamIndex = index)
+            assertTrue(result is NovumResult.Failure)
+        }
+        assertTrue(api.requests.isEmpty())
+    }
+
+    @Test
+    fun automaticPlansKeepTheExistingProtocolAndExposeTheRealVersionForLaterSwitches() = runTest(dispatcher) {
+        val api = StubPlaybackApi(info = PlaybackInfoDto(MediaSources = listOf(subtitleSource())))
+        val plan = (repository(api).plan("movie") as NovumResult.Success).value
+        assertNull(api.requests.single().SubtitleStreamIndex)
+        assertNull(api.requests.single().StartTimeTicks)
+        assertEquals("source-4k", plan.mediaSourceId)
+        assertTrue(!plan.serverSubtitleSelection)
+        assertEquals(7, plan.fallbackBurnedInSubtitleIndex)
+    }
+
+    @Test
+    fun serverSubtitleCatalogDoesNotInventIndicesForUnidentifiedTracks() = runTest(dispatcher) {
+        val source = subtitleSource().copy(MediaStreams = listOf(
+            MediaStreamDto(Type = "Subtitle", Index = null, DisplayTitle = "Missing index"),
+            MediaStreamDto(Type = "Subtitle", Index = -1, DisplayTitle = "Invalid index"),
+            MediaStreamDto(Type = "Subtitle", Index = 7, DisplayTitle = "Identified subtitle"),
+        ))
+        val api = StubPlaybackApi(info = PlaybackInfoDto(MediaSources = listOf(source)))
+        val plan = (repository(api).plan("movie") as NovumResult.Success).value
+        assertEquals(listOf(7), plan.subtitleTracks.map { it.index })
+    }
+
+    @Test
+    fun localTimelineOffsetOnlyAppliesToSlicedNonHlsTranscoding() {
+        val query = "?StartTimeTicks=1234500000"
+        assertEquals(123_450L, transcodeStreamStartPositionMs("https://media/stream.ts$query", PlayMethod.Transcode))
+        assertEquals(0L, transcodeStreamStartPositionMs("https://media/master.m3u8$query", PlayMethod.Transcode))
+        assertEquals(0L, transcodeStreamStartPositionMs("https://media/stream$query&Protocol=hls", PlayMethod.Transcode))
+        assertEquals(0L, transcodeStreamStartPositionMs("https://media/stream.ts$query&CopyTimestamps=true", PlayMethod.Transcode))
+        assertEquals(0L, transcodeStreamStartPositionMs("https://media/stream.ts$query", PlayMethod.DirectPlay))
+        assertEquals(0L, transcodeStreamStartPositionMs("https://media/stream.ts?StartTimeTicks=-1", PlayMethod.Transcode))
+    }
+
+    private fun subtitleSource() = MediaSourceDto(
+        Id = "source-4k", SupportsDirectPlay = true,
+        DirectStreamUrl = "/provider/movie?api_key=fixture",
+        TranscodingUrl = "/provider/master.m3u8?SubtitleStreamIndex=7&SubtitleMethod=Encode",
+        MediaStreams = listOf(
+            MediaStreamDto(Type = "Subtitle", Index = 3, Codec = "ass", Language = "zh-Hant", DisplayTitle = "繁体"),
+            MediaStreamDto(Type = "Subtitle", Index = 7, Codec = "subrip", Language = "zh-Hans", DisplayTitle = "简体"),
+        ),
+    )
 
     private val dispatcher: CoroutineDispatcher = StandardTestDispatcher()
 
@@ -666,11 +850,14 @@ private class StubPlaybackApi(
     private val error: Throwable? = null,
 ) : EmbyApiStub() {
 
+    val requests = mutableListOf<PlaybackInfoRequestDto>()
+
     override suspend fun playbackInfo(
         itemId: String,
         userId: String,
         body: PlaybackInfoRequestDto,
     ): PlaybackInfoDto {
+        requests += body
         error?.let { throw it }
         return info
     }

@@ -30,8 +30,11 @@ internal fun applySubtitleEnabledState(
 }
 
 /** The media item's tag follows actual playback, including fallback and same-player plan replacement. */
-internal fun currentSubtitleLabel(player: Player): String =
-    (player.currentMediaItem?.localConfiguration?.tag as? PlaybackPlan)?.burnedInSubtitleLabel ?: player.subtitleLabel()
+internal fun currentSubtitleLabel(player: Player): String {
+    val plan = player.currentMediaItem?.localConfiguration?.tag as? PlaybackPlan
+    return if (plan?.serverSubtitleSelection == true && plan.serverSubtitleStreamIndex == -1) "关闭"
+        else plan?.burnedInSubtitleLabel ?: player.subtitleLabel()
+}
 
 internal fun canSelectTrack(player: Player, option: TrackOption, isText: Boolean): Boolean {
     if (!option.supported) return false

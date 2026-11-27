@@ -179,6 +179,11 @@ internal fun PlayerStage(
     danmuActions: DanmuActions? = null,
     /** 弹幕手动搜索的预填关键词（当前标题）。 */
     danmuSearchPrefill: String = "",
+    onSelectServerSubtitle: (Int) -> Unit = {},
+    subtitleSwitching: Boolean = false,
+    subtitleSwitchError: String? = null,
+    onSubtitleSwitchFailed: (PlaybackPlan) -> Boolean = { false },
+    onRebuildServerStream: (Long) -> Unit = {},
 ) {
     var isPlaying by remember { mutableStateOf(true) }
     var buffering by remember { mutableStateOf(false) }
@@ -199,7 +204,7 @@ internal fun PlayerStage(
         player.setPlaybackSpeed(initialSpeed)
     }
     // 画面缩放模式：按片源重置——切集/换片回到默认「适应」
-    var scaleMode by remember(plan.url) { mutableStateOf(VideoScaleMode.Fit) }
+    var scaleMode by remember { mutableStateOf(VideoScaleMode.Fit) }
     var speedPickerVisible by remember { mutableStateOf(false) }
     var notice by remember { mutableStateOf<String?>(null) }
 
@@ -241,12 +246,14 @@ internal fun PlayerStage(
     var audioTracks by remember { mutableStateOf<List<TrackOption>>(emptyList()) }
     var textTracks by remember { mutableStateOf<List<TrackOption>>(emptyList()) }
     var activeBurnedInLabel by remember(plan.url) { mutableStateOf(plan.burnedInSubtitleLabel) }
+    var activePlan by remember(plan) { mutableStateOf(plan) }
 
     // 兜底状态：一旦切过转码就不再切回，避免在两个地址之间反复横跳
     var fallbackUsed by remember(plan.url) { mutableStateOf(false) }
     var transcodeRequested by remember(plan.url) { mutableStateOf(false) }
     var playbackFailed by remember(plan.url) { mutableStateOf(false) }
     var playerErrorTick by remember { mutableIntStateOf(0) }
+    var failedPlan by remember { mutableStateOf<PlaybackPlan?>(null) }
 
     // 播放时钟：只在这里写入，读取点下沉到进度条 / 章节名，避免整页每 500ms 重组
     val position = remember { mutableLongStateOf(plan.startPositionMs) }
@@ -268,8 +275,8 @@ internal fun PlayerStage(
     // nextEpisodeId 由 ViewModel 按同季分集推导、季末为 null → 无倒计时 → 播放
     // 结束走既有退出链路回详情页。归零换集走 onOpenEpisode（与浮钮/抽屉选集同
     // 链路，替换当前播放页）；任意键取消且键照常生效。
-    var autoNextCancelled by remember(plan.url) { mutableStateOf(false) }
-    var autoNextFired by remember(plan.url) { mutableStateOf(false) }
+    var autoNextCancelled by remember { mutableStateOf(false) }
+    var autoNextFired by remember { mutableStateOf(false) }
 
     /** 倒计时剩余秒数（0 = 不在场）。由播放位置驱动——暂停即冻结，不偷跑。 */
     val autoNextSecondsLeft = remember { mutableIntStateOf(0) }
@@ -340,6 +347,7 @@ internal fun PlayerStage(
      * @param positionMs 切换瞬间的播放位置。
      */
     fun switchToFallback(positionMs: Long) {
+        if (onSubtitleSwitchFailed(player.activePlaybackPlan() ?: plan)) return
         when (resolvePlaybackRecovery(plan, fallbackUsed, transcodeRequested)) {
             PlaybackRecoveryAction.RequestTranscode -> {
                 transcodeRequested = true
@@ -354,10 +362,18 @@ internal fun PlayerStage(
             PlaybackRecoveryAction.UseFallback -> {
                 fallbackUsed = true
                 activeBurnedInLabel = plan.fallbackBurnedInSubtitleLabel
+                activePlan = plan.copy(
+                    url = requireNotNull(plan.fallbackUrl), method = plan.fallbackMethod ?: PlayMethod.Transcode,
+                    burnedInSubtitleLabel = activeBurnedInLabel,
+                    burnedInSubtitleIndex = plan.fallbackBurnedInSubtitleIndex,
+                    serverSubtitleSelection = plan.serverSubtitleSelection || activeBurnedInLabel != null,
+                    serverSubtitleStreamIndex = plan.fallbackBurnedInSubtitleIndex ?: plan.serverSubtitleStreamIndex,
+                    streamStartPositionMs = plan.fallbackStreamStartPositionMs,
+                    fallbackUrl = null, fallbackMethod = null,
+                )
                 player.setMediaItem(
-                    buildMediaItem(plan.copy(url = requireNotNull(plan.fallbackUrl),
-                        burnedInSubtitleLabel = activeBurnedInLabel), subtitlesEnabled),
-                    positionMs.coerceAtLeast(0L),
+                    buildMediaItem(activePlan, subtitlesEnabled),
+                    localPlaybackPosition(activePlan, positionMs),
                 )
                 player.prepare()
                 // setMediaItem/prepare 保留播放意图，错误恢复不能解除用户主动暂停。
@@ -372,6 +388,12 @@ internal fun PlayerStage(
     val exitCallback by rememberUpdatedState(onExit)
     DisposableEffect(player) {
         val listener = object : Player.Listener {
+            override fun onMediaItemTransition(mediaItem: androidx.media3.common.MediaItem?, reason: Int) {
+                cueScheduler.cancel()
+                subtitleCues = emptyList()
+                subtitleLabel = currentSubtitleLabel(player)
+            }
+
             override fun onIsPlayingChanged(playing: Boolean) {
                 isPlaying = playing
             }
@@ -422,7 +444,13 @@ internal fun PlayerStage(
                 )
                 // 只记录错误次数，真正切换放到 LaunchedEffect：listener 里读不到最新的兜底状态。
                 // 播放器回调不保证在主线程，Compose State 统一投递到主线程再写。
-                cueHandler.post { playerErrorTick++ }
+                val eventPlan = player.activePlaybackPlan()
+                cueHandler.post {
+                    if (eventPlan === player.activePlaybackPlan()) {
+                        failedPlan = eventPlan
+                        playerErrorTick++
+                    }
+                }
             }
 
             // 实时状态的画面尺寸（画质 tab）：与 PlayerScreen 里算显示比例的
@@ -462,7 +490,9 @@ internal fun PlayerStage(
 
     // 播放器报错即尝试兜底
     LaunchedEffect(playerErrorTick) {
-        if (playerErrorTick > 0) switchToFallback(player.currentPosition)
+        if (playerErrorTick > 0 && failedPlan === player.activePlaybackPlan()) {
+            switchToFallback(player.mediaPositionMs())
+        }
     }
 
     // 起播超时：直连地址不动声色地卡住时，等满 8 秒主动切转码，比让用户盯着黑屏好
@@ -471,7 +501,7 @@ internal fun PlayerStage(
             // 已经切过兜底/转码/失败时不再重复触发：fallback 流自身缓冲慢是正常现象，
             // 旧定时器到点误判会把正在加载的 fallback 顶掉，无谓再走一次转码。
             if (!fallbackUsed && !transcodeRequested && !playbackFailed) {
-                switchToFallback(player.currentPosition)
+                switchToFallback(player.mediaPositionMs())
             }
         }
     }
@@ -479,9 +509,9 @@ internal fun PlayerStage(
     // 位置与时长轮询：Compose 不订阅播放器内部时钟，用 500ms 采样换来稳定的重组频率
     LaunchedEffect(player) {
         while (isActive) {
-            position.longValue = player.currentPosition.coerceAtLeast(0L)
-            duration.longValue = player.duration.takeIf { it != C.TIME_UNSET && it > 0 } ?: 0L
-            buffered.longValue = player.bufferedPosition.coerceAtLeast(0L)
+            position.longValue = player.mediaPositionMs()
+            duration.longValue = player.mediaDurationMs()
+            buffered.longValue = player.mediaBufferedPositionMs()
             bandwidthBps.longValue = bandwidthEstimateLive()
             // 实时状态（画质 tab）：显示模式切换异步生效，500ms 轮询正好捕捉落地
             liveStats.bufferedPercentage = player.bufferedPercentage
@@ -616,9 +646,9 @@ internal fun PlayerStage(
      */
     fun seekBy(deltaMs: Long) {
         val total = duration.longValue
-        val target = (player.currentPosition + deltaMs).coerceAtLeast(0L)
+        val target = (player.mediaPositionMs() + deltaMs).coerceAtLeast(0L)
         val clamped = if (total > 0) target.coerceAtMost(total) else target
-        player.seekTo(clamped)
+        player.seekToMediaPosition(clamped, onRebuildServerStream)
         // 立刻回写显示位置，等下一次 500ms 轮询会有明显延迟感
         position.longValue = clamped
     }
@@ -630,7 +660,7 @@ internal fun PlayerStage(
      */
     fun scrubBy(deltaMs: Long) {
         val total = duration.longValue
-        val base = scrubTarget ?: player.currentPosition
+        val base = scrubTarget ?: player.mediaPositionMs()
         val target = (base + deltaMs).coerceAtLeast(0L)
         scrubTarget = if (total > 0) target.coerceAtMost(total) else target
         interactionTick++
@@ -640,7 +670,7 @@ internal fun PlayerStage(
     LaunchedEffect(scrubTarget) {
         val target = scrubTarget ?: return@LaunchedEffect
         delay(SCRUB_THROTTLE_MS)
-        player.seekTo(target)
+        player.seekToMediaPosition(target, onRebuildServerStream)
         position.longValue = target
         delay(SCRUB_SETTLE_MS)
         if (scrubTarget == target) scrubTarget = null
@@ -997,7 +1027,7 @@ internal fun PlayerStage(
             val target = skipTarget.value
             NovumButton(
                 onClick = {
-                    target?.let { player.seekTo(it.seekToMs) }
+                    target?.let { player.seekToMediaPosition(it.seekToMs, onRebuildServerStream) }
                     skipDismissed = true
                     runCatching { rootRequester.requestFocus() }
                 },
@@ -1078,7 +1108,7 @@ internal fun PlayerStage(
                 audioTracks = audioTracks,
                 textTracks = textTracks,
                 passthrough = audioPassthrough,
-                plan = plan.copy(burnedInSubtitleLabel = activeBurnedInLabel),
+                plan = activePlan,
                 title = title,
                 subtitle = subtitle,
                 overview = overview,
@@ -1107,6 +1137,9 @@ internal fun PlayerStage(
                         selectManualTrack(player, option, isText = true) { onRememberTrack(option, true) }
                     }
                 },
+                onSelectServerSubtitle = onSelectServerSubtitle,
+                subtitleSwitching = subtitleSwitching,
+                subtitleSwitchError = subtitleSwitchError,
                 onTogglePassthrough = {
                     drawerVisible = false
                     onSetPassthrough(!audioPassthrough)
@@ -1114,7 +1147,7 @@ internal fun PlayerStage(
                 },
                 currentPosition = scrubTarget ?: position.longValue,
                 onSelectChapter = { chapter ->
-                    player.seekTo(chapter.startMs)
+                    player.seekToMediaPosition(chapter.startMs, onRebuildServerStream)
                     position.longValue = chapter.startMs
                     drawerVisible = false
                     controlsVisible = true
@@ -1218,7 +1251,7 @@ internal fun PlayerStage(
                     NovumButton(
                         onClick = {
                             playbackFailed = false
-                            onRetryNextLine(player.currentPosition)
+                            onRetryNextLine(player.mediaPositionMs())
                         },
                         modifier = Modifier.focusRequester(retryFocus),
                     ) {

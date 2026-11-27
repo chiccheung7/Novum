@@ -6,7 +6,6 @@ import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.foundation.horizontalScroll
@@ -28,6 +27,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
@@ -71,9 +71,11 @@ import com.novum.tv.model.Episode
 import com.novum.tv.model.PlaybackPlan
 import com.novum.tv.ui.common.userMessage
 import com.novum.tv.ui.component.NovumChip
+import com.novum.tv.ui.component.NovumInitialFocus
 import com.novum.tv.ui.component.NovumOptionRow
 import com.novum.tv.ui.component.NovumSwitchRow
 import com.novum.tv.ui.component.NovumTextField
+import com.novum.tv.ui.component.novumGlassPanel
 import com.novum.tv.ui.theme.NovumPalette
 import com.novum.tv.ui.theme.NovumShapes
 import com.novum.tv.ui.theme.NovumType
@@ -256,6 +258,10 @@ internal fun PlayerSettingsDrawer(
     /** 弹幕手动搜索的预填关键词（当前标题）。 */
     danmuSearchPrefill: String = "",
     currentPosition: Long = 0L,
+    /** 服务端字幕流索引；-1 明确关闭，切换后由新播放计划确认选中态。 */
+    onSelectServerSubtitle: (Int) -> Unit = {},
+    subtitleSwitching: Boolean = false,
+    subtitleSwitchError: String? = null,
 ) {
     AnimatedVisibility(
         visible = visible,
@@ -274,14 +280,21 @@ internal fun PlayerSettingsDrawer(
         }
         val tabFocus = remember { FocusRequester() }
         val tabRowScroll = rememberScrollState()
+        // 滚动每个像素都更新 value，只有越过首尾边界时才需要重组方向提示。
+        val showPreviousTabs by remember(tabRowScroll) {
+            derivedStateOf { hasMoreTabsBefore(tabRowScroll.value, tabRowScroll.maxValue) }
+        }
+        val showNextTabs by remember(tabRowScroll) {
+            derivedStateOf { hasMoreTabsAfter(tabRowScroll.value, tabRowScroll.maxValue) }
+        }
         // 内容区独立滚动：标题与 tab 固定在上方，翻到列表底部也能直接切 tab
         val contentScroll = rememberScrollState()
         val focusManager = LocalFocusManager.current
         val drawerScope = rememberCoroutineScope()
-        LaunchedEffect(Unit) {
-            withFrameNanosCompat()
-            runCatching { tabFocus.requestFocus() }
-        }
+        // AnimatedVisibility can finish its enter transition after the first frame. Keep
+        // trying while the drawer's focus tree is becoming active so the initial tab cannot
+        // fall back to a control behind the drawer.
+        NovumInitialFocus(tabFocus, key = initialTab)
         // 切 tab 内容整页换掉：滚动位置必须归零，否则从长列表底部切到短内容会停在半截
         LaunchedEffect(currentTab) {
             contentScroll.scrollTo(0)
@@ -311,14 +324,8 @@ internal fun PlayerSettingsDrawer(
                 .fillMaxHeight()
                 // 上下内收：抽屉不贴屏幕上下边缘
                 .padding(vertical = DRAWER_VERTICAL_INSET)
-                .clip(NovumShapes.Large)
                 // 深色磨砂玻璃面板，保证白色文字的对比度。
-                .background(NovumPalette.GlassDeep)
-                .border(
-                    width = 1.dp,
-                    color = NovumPalette.Border,
-                    shape = NovumShapes.Large,
-                )
+                .novumGlassPanel()
                 // 四向困焦：列表翻到顶/底、tab 行到头时
                 // 焦点搜索会逃出抽屉落到根节点（高亮凭空消失）——exit 一律取消
                 // 边界处焦点停在原地；抽屉内芯片↔内容的上下移动不受影响
@@ -360,7 +367,7 @@ internal fun PlayerSettingsDrawer(
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     TabOverflowHint(
-                        visible = hasMoreTabsBefore(tabRowScroll.value, tabRowScroll.maxValue),
+                        visible = showPreviousTabs,
                         text = "‹",
                         description = stringResource(R.string.player_drawer_tabs_more_left),
                         modifier = Modifier.width(TAB_OVERFLOW_HINT_WIDTH),
@@ -381,7 +388,7 @@ internal fun PlayerSettingsDrawer(
                         }
                     }
                     TabOverflowHint(
-                        visible = hasMoreTabsAfter(tabRowScroll.value, tabRowScroll.maxValue),
+                        visible = showNextTabs,
                         text = "›",
                         description = stringResource(R.string.player_drawer_tabs_more_right),
                         modifier = Modifier.width(TAB_OVERFLOW_HINT_WIDTH),
@@ -423,7 +430,7 @@ internal fun PlayerSettingsDrawer(
                         )
 
                         DrawerTab.Subtitle -> SubtitleTab(
-                            burnedInLabel = plan.burnedInSubtitleLabel,
+                            plan = plan,
                             textTracks = textTracks,
                             subtitleDelayMs = subtitleDelayMs,
                             onSubtitleDelayChanged = onSubtitleDelayChanged,
@@ -434,6 +441,9 @@ internal fun PlayerSettingsDrawer(
                             subtitleOffsetLevel = subtitleOffsetLevel,
                             onSubtitleOffsetLevelChanged = onSubtitleOffsetLevelChanged,
                             onSelectText = onSelectText,
+                            onSelectServerSubtitle = onSelectServerSubtitle,
+                            subtitleSwitching = subtitleSwitching,
+                            subtitleSwitchError = subtitleSwitchError,
                             onAdjustFocus = ::onAdjustFocus,
                         )
 
@@ -632,7 +642,7 @@ internal fun drawerEpisodeLabel(seasonIndex: Int, episodeIndex: Int, title: Stri
 /** 字幕 tab：字幕延迟微调 + 字幕字号调节 + 字幕高度调节 + 轨道列表（首位「关闭字幕」）。 */
 @Composable
 private fun SubtitleTab(
-    burnedInLabel: String?,
+    plan: PlaybackPlan,
     textTracks: List<TrackOption>,
     subtitleDelayMs: Long,
     onSubtitleDelayChanged: (Long) -> Unit,
@@ -643,11 +653,18 @@ private fun SubtitleTab(
     subtitleOffsetLevel: Int,
     onSubtitleOffsetLevelChanged: (Int) -> Unit,
     onSelectText: (TrackOption) -> Unit,
+    onSelectServerSubtitle: (Int) -> Unit,
+    subtitleSwitching: Boolean,
+    subtitleSwitchError: String?,
     onAdjustFocus: (Boolean) -> Unit,
 ) {
-    if (burnedInLabel != null) {
-        HintRow(stringResource(R.string.player_subtitle_burned_in))
-        DrawerRow(label = burnedInLabel, value = null, selected = true, enabled = false, onClick = {})
+    if (plan.serverSubtitleSelection || plan.burnedInSubtitleLabel != null) {
+        ServerSubtitleTracks(
+            plan = plan,
+            switching = subtitleSwitching,
+            error = subtitleSwitchError,
+            onSelect = onSelectServerSubtitle,
+        )
         return
     }
     // 页签就叫「字幕」，页内不再重复小标题。
@@ -742,6 +759,58 @@ private fun SubtitleTab(
             // 但不进焦点链、不显得可操作
             enabled = option.supported && (tracks.size > 1 || !option.selected),
         )
+    }
+}
+
+/** 烧录字幕必须重建服务器播放流，不能通过本地 TEXT 开关伪装切换。 */
+@Composable
+private fun ServerSubtitleTracks(
+    plan: PlaybackPlan,
+    switching: Boolean,
+    error: String?,
+    onSelect: (Int) -> Unit,
+) {
+    val tracks = plan.subtitleTracks.filter { it.index >= 0 }.distinctBy { it.index }
+    val selectedIndex = plan.serverSubtitleStreamIndex ?: plan.burnedInSubtitleIndex
+    val enabled = selectedIndex?.let { it >= 0 } ?: (plan.burnedInSubtitleLabel != null)
+    val selectable = !switching && !plan.mediaSourceId.isNullOrBlank()
+    if (plan.burnedInSubtitleLabel != null) {
+        HintRow(stringResource(R.string.player_subtitle_burned_in))
+    }
+    if (switching) HintRow(stringResource(R.string.player_subtitle_switching))
+    error?.takeIf { it.isNotBlank() }?.let { HintRow(it) }
+    if (tracks.isEmpty() && !enabled) {
+        HintRow(stringResource(R.string.player_drawer_no_subtitle))
+        return
+    }
+    if (plan.mediaSourceId.isNullOrBlank()) HintRow(stringResource(R.string.player_drawer_no_subtitle))
+    NovumSwitchRow(
+        text = stringResource(R.string.player_drawer_subtitle_switch),
+        checked = enabled,
+        enabled = selectable && (enabled || tracks.isNotEmpty()),
+        onCheckedChange = { turnOn ->
+            if (selectable) {
+                val targetIndex = if (turnOn) tracks.firstOrNull()?.index else -1
+                if (targetIndex != null && targetIndex != selectedIndex) onSelect(targetIndex)
+            }
+        },
+        consumeAtBoundary = true,
+    )
+    tracks.forEach { option ->
+        val selected = option.index == selectedIndex
+        DrawerRow(
+            label = option.label,
+            value = null,
+            selected = selected,
+            enabled = selectable && !selected,
+            onClick = { if (selectable && !selected) onSelect(option.index) },
+        )
+    }
+    // 缺少服务器轨列表时仍展示实际烧录标签，关闭操作保持可用。
+    if (tracks.isEmpty()) {
+        plan.burnedInSubtitleLabel?.let { label ->
+            DrawerRow(label = label, value = null, selected = true, enabled = false, onClick = {})
+        }
     }
 }
 
@@ -1333,11 +1402,6 @@ private fun HintRow(text: String) {
         color = NovumPalette.PaperMuted,
         modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
     )
-}
-
-/** 等一帧再抢焦点，确保 AnimatedVisibility 内容已进入组合。 */
-private suspend fun withFrameNanosCompat() {
-    androidx.compose.runtime.withFrameNanos { }
 }
 
 /** 头部横向标签的纯滚动边界判断，单测覆盖初始/中段/末端。 */

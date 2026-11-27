@@ -3,21 +3,21 @@ package com.novum.tv.ui.component
 import androidx.compose.foundation.background
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.relocation.BringIntoViewRequester
+import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
-import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEvent
@@ -32,8 +32,8 @@ import androidx.compose.ui.window.DialogProperties
 import androidx.tv.material3.Text
 import com.novum.tv.ui.theme.NovumDimens
 import com.novum.tv.ui.theme.NovumPalette
-import com.novum.tv.ui.theme.NovumShapes
 import com.novum.tv.ui.theme.NovumType
+import kotlinx.coroutines.launch
 
 /**
  * 通用单选列表浮层（详情页版本选择 / 播放页选集换版本共用）：
@@ -67,18 +67,17 @@ fun NovumOptionListDialog(
     width: Dp = OPTION_DIALOG_WIDTH,
 ) {
     val currentRowFocus = remember { FocusRequester() }
+    val scope = rememberCoroutineScope()
+    val focusIndex = selectedIndex?.takeIf { it in options.indices } ?: 0
     // 长按呼出：先不武装焦点，等「松手」那一下过去
     var armed by remember { mutableStateOf(!awaitKeyRelease) }
     Dialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false),
     ) {
-        LaunchedEffect(armed) {
-            if (armed) {
-                // 等一帧确保行挂进焦点树，再把焦点交给当前项
-                withFrameNanos { }
-                runCatching { currentRowFocus.requestFocus() }
-            }
+        if (armed && options.isNotEmpty()) {
+            // 异步选项到达、选中项改变或长按松开后，目标挂载完成才抓焦。
+            NovumInitialFocus(currentRowFocus, key = focusIndex to options[focusIndex])
         }
         Box(
             modifier = Modifier
@@ -99,8 +98,7 @@ fun NovumOptionListDialog(
             Column(
                 modifier = Modifier
                     .width(width)
-                    .clip(NovumShapes.Large)
-                    .background(NovumPalette.Surface)
+                    .novumGlassPanel()
                     .padding(vertical = 12.dp)
                     .verticalScroll(rememberScrollState()),
             ) {
@@ -115,14 +113,19 @@ fun NovumOptionListDialog(
                 )
                 // selectedIndex 为 null / 越界（持久化值不在选项里）时不高亮任何行，
                 // 但初始焦点仍要落到首行——否则没有任何行持有索取器，遥控器按 OK 无处可去
-                val focusIndex = selectedIndex?.takeIf { it in options.indices } ?: 0
                 options.forEachIndexed { index, option ->
+                    val bringIntoView = remember { BringIntoViewRequester() }
                     NovumOptionRow(
                         text = option,
                         selected = index == selectedIndex,
                         onClick = { onSelect(index) },
                         focusRequester = currentRowFocus.takeIf { index == focusIndex },
-                        modifier = Modifier.padding(horizontal = 8.dp),
+                        onFocused = { focused ->
+                            if (focused) scope.launch { bringIntoView.bringIntoView() }
+                        },
+                        modifier = Modifier
+                            .padding(horizontal = 8.dp)
+                            .bringIntoViewRequester(bringIntoView),
                     )
                 }
             }

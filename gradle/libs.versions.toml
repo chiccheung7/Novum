@@ -9,10 +9,10 @@ kotlin = "2.4.21"
 # --- 应用版本（单一来源）---
 # :app 的 versionName 与 :core:network 写进 X-Emby-Authorization 的 VERSION_NAME
 # 都从这里取：两处手写曾经漂移成 0.2.1 vs 0.1.0，少数网关会校验该字段。
-novum = "0.2.4"
+novum = "0.2.5"
 
 # --- AndroidX / Compose ---
-composeBom = "2026.09.00"
+composeBom = "2026.11.01"
 coreKtx = "1.19.1"
 activityCompose = "1.13.0"
 lifecycle = "2.11.0"
@@ -36,13 +36,13 @@ media3 = "1.11.1"
 profileInstaller = "1.4.1"
 benchmarkJunit4 = "1.4.1"
 uiautomator = "2.4.0"
-kotlinxSerialization = "1.12.0"
-desugarJdkLibs = "2.0.4"
+kotlinxSerialization = "1.13.0"
+desugarJdkLibs = "2.1.5"
 coroutines = "1.11.0"
 
 # --- 测试 ---
 junit = "4.13.2"
-robolectric = "4.17"
+robolectric = "4.18.1"
 turbine = "1.2.1"
 androidxTestCore = "1.7.0"
 androidxTestExtJunit = "1.3.0"
@@ -119,7 +119,6 @@ kotlinx-coroutines-test = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-t
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }
 android-test = { id = "com.android.test", version.ref = "agp" }
-baselineprofile = { id = "androidx.baselineprofile", version = "1.4.1" }
 android-library = { id = "com.android.library", version.ref = "agp" }
 kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
 kotlin-serialization = { id = "org.jetbrains.kotlin.plugin.serialization", version.ref = "kotlin" }

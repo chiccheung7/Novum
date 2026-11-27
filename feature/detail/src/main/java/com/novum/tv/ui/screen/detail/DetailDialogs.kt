@@ -3,13 +3,14 @@ package com.novum.tv.ui.screen.detail
 import androidx.compose.foundation.background
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.relocation.BringIntoViewRequester
+import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -20,10 +21,9 @@ import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import com.novum.tv.ui.component.NovumOptionListDialog
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.withFrameNanos
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
@@ -35,10 +35,12 @@ import com.novum.tv.model.MediaVersionOption
 import com.novum.tv.model.displayLine
 import com.novum.tv.model.Season
 import com.novum.tv.ui.component.NovumOptionRow
+import com.novum.tv.ui.component.NovumInitialFocus
+import com.novum.tv.ui.component.novumGlassPanel
 import com.novum.tv.ui.theme.NovumDimens
 import com.novum.tv.ui.theme.NovumPalette
-import com.novum.tv.ui.theme.NovumShapes
 import com.novum.tv.ui.theme.NovumType
+import kotlinx.coroutines.launch
 
 /**
  * 详情页浮层集合：
@@ -104,10 +106,8 @@ internal fun SeasonMenuDialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false),
     ) {
-        LaunchedEffect(focusSeasonId) {
-            // 等一帧确保行挂进焦点树，再把焦点交给当前季所在行
-            withFrameNanos { }
-            runCatching { selectedRowFocus.requestFocus() }
+        if (focusSeasonId != null) {
+            NovumInitialFocus(selectedRowFocus, key = focusSeasonId)
         }
         Box(
             modifier = Modifier
@@ -119,8 +119,7 @@ internal fun SeasonMenuDialog(
             Column(
                 modifier = Modifier
                     .width(SEASON_MENU_WIDTH)
-                    .clip(NovumShapes.Large)
-                    .background(NovumPalette.Surface)
+                    .novumGlassPanel()
                     .padding(vertical = 12.dp)
                     .verticalScroll(rememberScrollState()),
             ) {
@@ -167,11 +166,8 @@ internal fun SeasonMarkDialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false),
     ) {
-        LaunchedEffect(armed) {
-            if (armed) {
-                withFrameNanos { }
-                runCatching { firstRowFocus.requestFocus() }
-            }
+        if (armed) {
+            NovumInitialFocus(firstRowFocus)
         }
         Box(
             modifier = Modifier
@@ -191,8 +187,7 @@ internal fun SeasonMarkDialog(
             Column(
                 modifier = Modifier
                     .width(SEASON_MENU_WIDTH)
-                    .clip(NovumShapes.Large)
-                    .background(NovumPalette.Surface)
+                    .novumGlassPanel()
                     .padding(vertical = 12.dp),
             ) {
                 Text(
@@ -244,13 +239,20 @@ private fun SeasonMenuRow(
 ) {
     // 行尾显示未看集数，便于识别包含未看内容的季。
     val unplayed = season.unplayedCount?.takeIf { it > 0 }
+    val bringIntoView = remember { BringIntoViewRequester() }
+    val scope = rememberCoroutineScope()
     NovumOptionRow(
         text = seasonDisplayName(season),
         selected = selected,
         value = unplayed?.let { stringResource(R.string.detail_season_unplayed, it) },
         onClick = onClick,
         focusRequester = focusRequester,
-        modifier = Modifier.padding(horizontal = 8.dp),
+        onFocused = { focused ->
+            if (focused) scope.launch { bringIntoView.bringIntoView() }
+        },
+        modifier = Modifier
+            .padding(horizontal = 8.dp)
+            .bringIntoViewRequester(bringIntoView),
     )
 }
 

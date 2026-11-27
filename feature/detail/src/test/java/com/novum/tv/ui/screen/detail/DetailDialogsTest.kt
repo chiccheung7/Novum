@@ -11,6 +11,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
+import org.robolectric.shadows.ShadowDialog
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [35], qualifiers = "w1280dp-h720dp-xhdpi")
@@ -31,6 +32,9 @@ class DetailDialogsTest {
                     onDismiss = {},
                 )
             }
+        }
+        composeRule.runOnUiThread {
+            ShadowDialog.getLatestDialog().window!!.decorView.dispatchWindowFocusChanged(true)
         }
         composeRule.waitForIdle()
 

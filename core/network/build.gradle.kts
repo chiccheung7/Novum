@@ -7,7 +7,11 @@ plugins {
 
 android {
     namespace = "com.novum.tv.core.network"
-    compileSdk = 37
+    compileSdk {
+        version = release(37) {
+            minorApiLevel = 1
+        }
+    }
 
     defaultConfig {
         minSdk = 24

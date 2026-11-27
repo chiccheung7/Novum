@@ -7,7 +7,7 @@ plugins {
     alias(libs.plugins.ksp)
     alias(libs.plugins.hilt)
     // Baseline Profile：src/main/baseline-prof.txt 由 AGP 内建打包。
-    // androidx.baselineprofile 1.4.1 与 AGP 9.5 不兼容，不在此应用插件。
+    // Baseline Profile 插件当前不用于此构建；AGP 内建打包 src/main/baseline-prof.txt。
 }
 
 // 签名信息放在仓库外的 keystore.properties：不提交密钥，CI 缺失时降级为未签名包
@@ -19,14 +19,18 @@ val hasReleaseSigning = !keystoreProperties.isEmpty
 
 android {
     namespace = "com.novum.tv"
-    compileSdk = 37
+    compileSdk {
+        version = release(37) {
+            minorApiLevel = 1
+        }
+    }
 
     defaultConfig {
         applicationId = "com.novum.tv"
         // navigation-compose 2.10.x 的 AAR 声明 minSdk 24，故下限锁 24（Android TV 7.0）
         minSdk = 24
         targetSdk = 37
-        versionCode = 6
+        versionCode = 7
         // 与 :core:network 的 BuildConfig.VERSION_NAME 同源（gradle/libs.versions.toml 的 novum）
         versionName = libs.versions.novum.get()
 
@@ -92,6 +96,9 @@ android {
         abortOnError = true
         checkDependencies = true
         warningsAsErrors = false
+        // AGP 9.5.0 is pinned because Kotlin 2.4.21/KSP 2.3.13 support ends at
+        // AGP 9.3.1; the newer-version detector is informational for this toolchain.
+        disable += "AndroidGradlePluginVersion"
         // 忽略 vendored FFmpeg AAR 的 16KB 页对齐告警，以及 API 24–25 所需的 legacy launcher PNG 告警。
         disable += "Aligned16KB"
         disable += "IconLauncherShape"

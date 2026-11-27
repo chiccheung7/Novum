@@ -308,15 +308,15 @@ object NovumIcons {
         }
     }
 
-    /** 从头播放（半球弧 + 箭头，详情页操作）。 */
+    /** 从头播放（逆时针圆弧 + 箭头，详情页操作）。 */
     val Replay: ImageVector by lazy {
         stroked("novum_replay") {
-            moveTo(19f, 12f)
-            arcTo(7f, 7f, 0f, false, false, 5f, 12f)
-            // 箭头顶点在弧终点、指向行进方向（逆时针 → 左端向下）
-            moveTo(2.6f, 9.6f)
-            lineTo(5f, 12f)
-            lineTo(7.4f, 9.6f)
+            moveTo(5f, 12f)
+            arcTo(7f, 7f, 0f, true, false, 12f, 5f)
+            // 圆弧逆时针经过左、下、右侧，终点在顶部，箭头向左。
+            moveTo(14.6f, 2.4f)
+            lineTo(12f, 5f)
+            lineTo(14.6f, 7.6f)
         }
     }
 

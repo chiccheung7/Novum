@@ -23,7 +23,6 @@ import com.novum.tv.ui.theme.NovumTheme
 import org.junit.Rule
 import org.junit.Test
 import org.junit.Assert.assertFalse
-import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -81,10 +80,12 @@ class DetailActionRowTest {
     }
 
     @Test
-    fun playButtonKeepsItsWidthAsMovieAndEpisodeLabelsChange() {
+    fun playButtonFitsMovieAndEpisodeContentAndCapsExtremeEpisodeNumbers() {
         val currentEpisode = mutableStateOf<Episode?>(null)
         val isSeries = mutableStateOf(false)
+        var densityScale = 1f
         composeRule.setContent {
+            densityScale = LocalDensity.current.density
             NovumTheme {
                 ActionRow(
                     data = detail(if (isSeries.value) "Series" else "Movie"),
@@ -102,16 +103,23 @@ class DetailActionRowTest {
         val movieWidth = composeRule.onNodeWithText("继续播放").fetchSemanticsNode().boundsInRoot.width
         composeRule.runOnIdle {
             isSeries.value = true
+            currentEpisode.value = Episode("episode", "测试", 2, 7, false, 0L, 45, null, overview = null)
+        }
+        val episodeWidth = composeRule.onNodeWithText("播放 S02E07").fetchSemanticsNode().boundsInRoot.width
+        composeRule.runOnIdle {
+            assertTrue("四字电影文案不应再占用 280dp", movieWidth < 280f * densityScale)
+            assertTrue("分集按钮应按较长文案增加宽度", episodeWidth > movieWidth)
+            assertTrue("常见分集文案应比原固定 280dp 更紧凑", episodeWidth < 280f * densityScale)
             currentEpisode.value = Episode("episode", "测试", Int.MAX_VALUE, Int.MAX_VALUE, false, 0L, 45, null, overview = null)
         }
         val label = "播放 S2147483647E2147483647"
-        val episodeWidth = composeRule.onNodeWithText(label).fetchSemanticsNode().boundsInRoot.width
+        val extremeWidth = composeRule.onNodeWithText(label).fetchSemanticsNode().boundsInRoot.width
         val layouts = mutableListOf<TextLayoutResult>()
         composeRule.onNodeWithText(label, useUnmergedTree = true)
             .performSemanticsAction(SemanticsActions.GetTextLayoutResult) { action -> action(layouts) }
 
         composeRule.runOnIdle {
-            assertEquals("文字变长时按钮外框应保持固定宽度", movieWidth, episodeWidth, 1f)
+            assertTrue("极长集号也不能超出原 280dp 按钮预算", extremeWidth <= 280f * densityScale + 1f)
             assertTrue(layouts.isNotEmpty())
             assertFalse("极端长集号也必须完整显示", layouts.any { it.hasVisualOverflow })
         }

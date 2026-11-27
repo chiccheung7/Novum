@@ -70,6 +70,7 @@ class DefaultPlaybackRepository @Inject constructor(
         forceTranscode: Boolean,
         excludeLine: String?,
         mediaSourceId: String?,
+        subtitleStreamIndex: Int?,
     ): NovumResult<PlaybackPlan> {
         val owner = sessionHolder.capture()
         return withContext(dispatchers.io) {
@@ -77,6 +78,12 @@ class DefaultPlaybackRepository @Inject constructor(
             if (!isCurrent(owner)) {
                 return@withContext failureOf(NovumError.Unauthorized())
             }
+            val explicitSubtitle = subtitleStreamIndex != null
+            if (explicitSubtitle && (subtitleStreamIndex < -1 || mediaSourceId.isNullOrBlank())) {
+                return@withContext failureOf(NovumError.Server(400))
+            }
+            val forceSubtitleBurnIn = subtitleStreamIndex != null && subtitleStreamIndex >= 0
+            val requireTranscode = forceTranscode || forceSubtitleBurnIn
             val snapshot = runCatchingSuspend { settings.settings.first() }.getOrNull()
             if (!isCurrent(owner)) return@withContext failureOf(NovumError.Unauthorized())
             val preferDirect = snapshot?.preferDirect ?: true
@@ -98,22 +105,34 @@ class DefaultPlaybackRepository @Inject constructor(
                     owner = owner,
                     itemId = itemId,
                     audioPassthrough = audioPassthrough,
-                    forceTranscode = forceTranscode,
+                    forceTranscode = requireTranscode,
                     assBurnIn = snapshot?.assBurnIn ?: false,
+                    mediaSourceId = mediaSourceId,
+                    subtitleStreamIndex = subtitleStreamIndex,
+                    startPositionMs = if (explicitSubtitle) startPositionMs.coerceAtLeast(0L) else null,
+                    forceSubtitleBurnIn = forceSubtitleBurnIn,
                     failedVideoCodecs = snapshot?.failedVideoCodecs
                         ?.split(",")?.filter { it.isNotBlank() }?.toSet() ?: emptySet(),
                 )
                 if (!isCurrent(owner)) return@withContext failureOf(NovumError.Unauthorized())
                 // 版本定位：显式 sourceId（详情页选择）> 画质策略（设置）> 服务端默认
-                val source = mediaSourceId?.let { id ->
+                val requestedSource = mediaSourceId?.let { id ->
                     info.MediaSources.firstOrNull { it.Id == id }
-                } ?: pickVersionByStrategy(info.MediaSources, snapshot?.versionStrategy)
+                }
+                val source = if (explicitSubtitle) requestedSource else
+                    requestedSource ?: pickVersionByStrategy(info.MediaSources, snapshot?.versionStrategy)
                 if (source == null) {
+                    if (explicitSubtitle) return@withContext failureOf(NovumError.Server(502))
                     successOf(fallbackPlan(server, itemId, startPositionMs, owner.tokenForUrl(server)))
                 } else {
+                    if (forceSubtitleBurnIn && source.MediaStreams.none {
+                            it.Type == "Subtitle" && it.Index == subtitleStreamIndex
+                        }) {
+                        return@withContext failureOf(NovumError.Server(502))
+                    }
                     // 服务端按我们声明的能力判断，但它不知道「双层 DV 解不了」这类细节；
                     // 一旦片源超出本机能力，立刻换成「只声明转码」的请求，让服务端给转码流。
-                    val unsupported = if (forceTranscode) null else source.unsupportedReasonForLog(capability.capabilities)
+                    val unsupported = if (requireTranscode) null else source.unsupportedReasonForLog(capability.capabilities)
                     if (unsupported != null) {
                         logger.w(TAG, "片源超出设备能力（$unsupported），改请求服务端转码", null)
                         // 失败回写只针对「编码缺硬解」：Dolby Vision 是刻意转码保色彩，
@@ -136,9 +155,15 @@ class DefaultPlaybackRepository @Inject constructor(
                             forceTranscode = true,
                             excludeLine = excludeLine,
                             mediaSourceId = mediaSourceId,
+                            subtitleStreamIndex = subtitleStreamIndex,
                         )
                     }
-                    val urls = resolveUrls(mediaServer, source, itemId, preferDirect, forceTranscode, owner.tokenForUrl(mediaServer))
+                    val urls = if (explicitSubtitle) {
+                        resolveSubtitleUrls(mediaServer, source, preferDirect, requireTranscode, subtitleStreamIndex)
+                            ?: return@withContext failureOf(NovumError.Server(502))
+                    } else {
+                        resolveUrls(mediaServer, source, itemId, preferDirect, forceTranscode, owner.tokenForUrl(mediaServer))
+                    }
                     fun burnedLabel(url: String?): String? = url?.let(::burnedInSubtitleIndex)?.let { index ->
                         source.MediaStreams.firstOrNull { it.Type == "Subtitle" && it.Index == index }
                             ?.displayLabel("Subtitle", index, strings)
@@ -163,6 +188,15 @@ class DefaultPlaybackRepository @Inject constructor(
                             fileName = source.danmuFileName(),
                             burnedInSubtitleLabel = burnedInLabel,
                             fallbackBurnedInSubtitleLabel = burnedLabel(urls.fallbackUrl),
+                            mediaSourceId = source.Id,
+                            burnedInSubtitleIndex = burnedInSubtitleIndex(urls.primaryUrl),
+                            fallbackBurnedInSubtitleIndex = urls.fallbackUrl?.let(::burnedInSubtitleIndex),
+                            serverSubtitleSelection = explicitSubtitle || burnedInLabel != null,
+                            serverSubtitleStreamIndex = subtitleStreamIndex ?: burnedInSubtitleIndex(urls.primaryUrl),
+                            streamStartPositionMs = transcodeStreamStartPositionMs(urls.primaryUrl, urls.primaryMethod),
+                            fallbackStreamStartPositionMs = urls.fallbackUrl?.let {
+                                transcodeStreamStartPositionMs(it, urls.fallbackMethod ?: PlayMethod.Transcode)
+                            } ?: 0L,
                         ),
                     )
                 }
@@ -173,7 +207,7 @@ class DefaultPlaybackRepository @Inject constructor(
                 // 播放信息接口失败不等于不能播：仍尝试静态直连兜底，
                 // 但鉴权失败必须显式返回，避免用户对着黑屏猜问题。
                 val error = throwable.toNovumError()
-                if (error is NovumError.Unauthorized) {
+                if (error is NovumError.Unauthorized || explicitSubtitle) {
                     failureOf(error)
                 } else {
                     logger.w(TAG, "PlaybackInfo 失败，回落到静态流", throwable)
@@ -195,6 +229,10 @@ class DefaultPlaybackRepository @Inject constructor(
         forceTranscode: Boolean,
         assBurnIn: Boolean,
         failedVideoCodecs: Set<String> = emptySet(),
+        mediaSourceId: String? = null,
+        subtitleStreamIndex: Int? = null,
+        startPositionMs: Long? = null,
+        forceSubtitleBurnIn: Boolean = false,
     ) = clients.api(owner.server, owner).playbackInfo(
         itemId = itemId,
         userId = owner.userId,
@@ -206,7 +244,16 @@ class DefaultPlaybackRepository @Inject constructor(
                 videoCodecs = capability.videoCodecDeclaration(failedVideoCodecs),
                 allowDirectPlay = !forceTranscode,
                 assBurnIn = assBurnIn,
+                forceSubtitleBurnIn = forceSubtitleBurnIn,
             ),
+            MediaSourceId = mediaSourceId,
+            SubtitleStreamIndex = subtitleStreamIndex,
+            StartTimeTicks = startPositionMs?.coerceIn(0L, Long.MAX_VALUE / TICKS_PER_MS)?.times(TICKS_PER_MS),
+            EnableDirectPlay = false.takeIf { forceTranscode },
+            EnableDirectStream = false.takeIf { forceTranscode },
+            EnableTranscoding = true.takeIf { forceTranscode || subtitleStreamIndex != null },
+            AllowVideoStreamCopy = false.takeIf { forceSubtitleBurnIn },
+            IsPlayback = true.takeIf { subtitleStreamIndex != null },
         ),
     )
 
@@ -424,6 +471,38 @@ class DefaultPlaybackRepository @Inject constructor(
         )
     }
 
+    /** An explicit subtitle choice may only use a server URL that honors that exact choice. */
+    private fun resolveSubtitleUrls(
+        server: String,
+        source: MediaSourceDto,
+        preferDirect: Boolean,
+        forceTranscode: Boolean,
+        subtitleIndex: Int,
+    ): ResolvedUrls? {
+        val transcode = source.TranscodingUrl.toAbsoluteUrl(server)?.takeIf { url ->
+            urlMatchesSource(url, source.Id) && if (subtitleIndex >= 0) burnedInSubtitleIndex(url) == subtitleIndex
+            else queryParameter(url, "SubtitleStreamIndex")?.toIntOrNull() == -1
+        }
+        if (subtitleIndex >= 0 || forceTranscode) {
+            return transcode?.let { ResolvedUrls(it, PlayMethod.Transcode, null, null) }
+        }
+        val direct = source.DirectStreamUrl
+            ?.takeIf { source.SupportsDirectPlay || source.SupportsDirectStream }
+            .toAbsoluteUrl(server)
+            ?.takeIf { urlMatchesSource(it, source.Id) &&
+                (!hasQueryParameter(it, "SubtitleMethod") || queryParameter(it, "SubtitleMethod")?.let { method ->
+                    !method.equals("Encode", ignoreCase = true)
+                } == true) }
+        // Disabling a burned subtitle may restore the same source's original static/direct stream.
+        // No synthesized static URL and no old encoded fallback may silently undo the request.
+        val primary = if (preferDirect) direct ?: transcode else transcode ?: direct
+        if (primary == null) return null
+        val method = if (primary == transcode) PlayMethod.Transcode else
+            if (source.SupportsDirectPlay) PlayMethod.DirectPlay else PlayMethod.DirectStream
+        return ResolvedUrls(primary, method, transcode?.takeIf { it != primary },
+            PlayMethod.Transcode.takeIf { transcode != null && transcode != primary })
+    }
+
     private companion object {
         const val TAG = "PlaybackRepo"
 
@@ -587,24 +666,49 @@ internal fun String?.toSubtitleMime(): String? = when (this?.lowercase()) {
 }
 
 internal fun burnedInSubtitleIndex(url: String): Int? {
-    val query = url.substringAfter('?', "").substringBefore('#').split('&').mapNotNull { part ->
-        val key = part.substringBefore('=').lowercase()
-        val value = runCatching { java.net.URLDecoder.decode(part.substringAfter('=', ""), "UTF-8") }.getOrNull()
-        value?.let { key to it }
-    }.toMap()
-    if (!query["subtitlemethod"].equals("Encode", ignoreCase = true)) return null
-    return query["subtitlestreamindex"]?.toIntOrNull()?.takeIf { it >= 0 }
+    if (!queryParameter(url, "SubtitleMethod").equals("Encode", ignoreCase = true)) return null
+    return queryParameter(url, "SubtitleStreamIndex")?.toIntOrNull()?.takeIf { it >= 0 }
 }
+
+/** HLS manifests retain the full media timeline; only a sliced non-HLS stream needs an offset. */
+internal fun transcodeStreamStartPositionMs(url: String, method: PlayMethod): Long {
+    if (method != PlayMethod.Transcode ||
+        url.substringBefore('?').substringBefore('#').endsWith(".m3u8", ignoreCase = true) ||
+        queryParameter(url, "Protocol").equals("hls", ignoreCase = true) ||
+        queryParameter(url, "CopyTimestamps").equals("true", ignoreCase = true)
+    ) return 0L
+    return queryParameter(url, "StartTimeTicks")?.toLongOrNull()?.coerceAtLeast(0L)?.div(10_000L) ?: 0L
+}
+
+/** Duplicate or malformed selection parameters are not evidence that the server honored a choice. */
+private fun queryParameter(url: String, name: String): String? {
+    val matches = url.substringBefore('#').substringAfter('?', "").split('&').filter { part ->
+        val key = runCatching { java.net.URLDecoder.decode(part.substringBefore('='), "UTF-8") }.getOrNull()
+        key.equals(name, ignoreCase = true)
+    }
+    val part = matches.singleOrNull() ?: return null
+    return runCatching { java.net.URLDecoder.decode(part.substringAfter('=', ""), "UTF-8") }.getOrNull()
+}
+
+private fun hasQueryParameter(url: String, name: String): Boolean =
+    url.substringBefore('#').substringAfter('?', "").split('&').any { part ->
+        runCatching { java.net.URLDecoder.decode(part.substringBefore('='), "UTF-8") }
+            .getOrNull().equals(name, ignoreCase = true)
+    }
+
+private fun urlMatchesSource(url: String, sourceId: String?): Boolean =
+    !hasQueryParameter(url, "MediaSourceId") || queryParameter(url, "MediaSourceId") == sourceId
 
 /** 过滤出指定类型的轨，并生成可展示的选项。 */
 private fun MediaSourceDto.tracksOfType(type: String, strings: MediaStrings): List<TrackOption> =
-    MediaStreams.filter { it.Type == type }.mapIndexed { index, stream ->
-        TrackOption(
-            index = stream.Index ?: index,
-            label = stream.displayLabel(type, index, strings),
-            language = stream.Language.normalizeLanguage(),
-        )
-    }
+    MediaStreams.filter { it.Type == type && (type != "Subtitle" || it.Index?.let { index -> index >= 0 } == true) }
+        .mapIndexed { index, stream ->
+            TrackOption(
+                index = stream.Index ?: index,
+                label = stream.displayLabel(type, index, strings),
+                language = stream.Language.normalizeLanguage(),
+            )
+        }
 
 /** 轨道展示名：优先服务端标题，其次「语言 · 编码」（兜底文案经 [MediaStrings]）。 */
 private fun MediaStreamDto.displayLabel(type: String, index: Int, strings: MediaStrings): String {

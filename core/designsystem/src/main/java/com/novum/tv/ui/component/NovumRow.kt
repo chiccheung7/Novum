@@ -1,6 +1,8 @@
 package com.novum.tv.ui.component
 
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -12,10 +14,18 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusDirection
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
@@ -23,6 +33,7 @@ import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntSize
 import coil3.SingletonImageLoader
@@ -30,6 +41,8 @@ import coil3.request.Disposable
 import coil3.request.ImageRequest
 import com.novum.tv.ui.theme.NovumDimens
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.launch
 
 /**
  * TV 横向内容行：区块标题 + 高性能 LazyRow。
@@ -82,6 +95,12 @@ fun <T> NovumRow(
     itemContent: @Composable LazyItemScope.(index: Int, element: T) -> Unit,
 ) {
     val listState = rememberLazyListState()
+    var focusedIndex by remember { mutableIntStateOf(-1) }
+    val focusMarginPx = with(LocalDensity.current) { focusScrollMargin.toPx() }
+    val spacingPx = with(LocalDensity.current) { itemSpacing.toPx() }
+    val itemFocus = remember { mutableMapOf<Any, FocusRequester>() }
+    val navigationScope = rememberCoroutineScope()
+    var navigationJob = remember { null as Job? }
     // 内容出血：水平取 edgePadding，垂直恒取 FocusBleed。
     val effectiveContentPadding = contentPadding ?: PaddingValues(
         start = edgePadding,
@@ -189,6 +208,39 @@ fun <T> NovumRow(
                             NovumFastNav.onNavKeyDown()
                         }
                         if (isRepeatNav) {
+                            NovumFastNav.poke()
+                            val layout = listState.layoutInfo
+                            val focused = layout.visibleItemsInfo.firstOrNull { it.index == focusedIndex }
+                            if (navigationJob?.isActive == true) return@onPreviewKeyEvent true
+                            val forward = event.key == Key.DirectionRight
+                            val nextIndex = focusedIndex + if (forward) 1 else -1
+                            if (focused != null && nextIndex in elements.indices) {
+                                val next = layout.visibleItemsInfo.firstOrNull { it.index == nextIndex }
+                                val nextSize = next?.size ?: focused.size
+                                val nextOffset = next?.offset?.toFloat() ?: if (forward) {
+                                    focused.offset + focused.size + spacingPx
+                                } else {
+                                    focused.offset - nextSize - spacingPx
+                                }
+                                val start = layout.viewportStartOffset + maxOf(layout.beforeContentPadding.toFloat(), focusMarginPx)
+                                val end = layout.viewportEndOffset - maxOf(layout.afterContentPadding.toFloat(), focusMarginPx)
+                                val delta = when {
+                                    nextOffset < start -> nextOffset - start
+                                    nextOffset + nextSize > end -> nextOffset + nextSize - end
+                                    else -> 0f
+                                }
+                                if (delta != 0f) {
+                                    val requester = itemFocus.getOrPut(key(elements[nextIndex])) { FocusRequester() }
+                                    navigationJob = navigationScope.launch {
+                                        listState.scrollBy(delta)
+                                        repeat(3) {
+                                            withFrameNanos { }
+                                            if (runCatching { requester.requestFocus() }.getOrDefault(false)) return@launch
+                                        }
+                                    }
+                                    return@onPreviewKeyEvent true
+                                }
+                            }
                             // repeat 同时移动焦点：消费事件——不消费时系统
                             // 还会再走一次 bring-into-view，一帧内两次滚动叠加成
                             // 抽帧观感。位移全交给 bring-into-view（含
@@ -196,7 +248,6 @@ fun <T> NovumRow(
                             syncStep(
                                 if (event.key == Key.DirectionRight) FocusDirection.Right else FocusDirection.Left,
                             )
-                            NovumFastNav.poke()
                             return@onPreviewKeyEvent true
                         }
                         false
@@ -211,7 +262,12 @@ fun <T> NovumRow(
                 ) { index, element ->
                     // 不再手动 bringIntoView：Compose 1.7+ 的 LazyList 在焦点移动时会自动滚动，
                     // 再叠加一层会让「聚焦 → 滚动 → 再滚动」互相拉扯，表现为画面抖动。
-                    itemContent(index, element)
+                    val requester = remember(key(element)) {
+                        itemFocus.getOrPut(key(element)) { FocusRequester() }
+                    }
+                    Box(Modifier.focusRequester(requester).onFocusChanged { if (it.hasFocus) focusedIndex = index }) {
+                        itemContent(index, element)
+                    }
                 }
             }
         }

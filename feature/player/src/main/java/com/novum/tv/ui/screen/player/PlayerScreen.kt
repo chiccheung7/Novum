@@ -38,6 +38,7 @@ import com.novum.tv.core.state.UiState
 import com.novum.tv.data.remote.emby.EmbyClientFactory
 import com.novum.tv.feature.player.BuildConfig
 import com.novum.tv.ui.component.NovumStateView
+import com.novum.tv.ui.common.userMessage
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
@@ -165,7 +166,7 @@ fun PlayerScreen(
                 // 手动切轨后的回调可能早于下一帧重组，直接读取同步更新的恢复快照。
                 val rememberedPrefs = viewModel.state.value.rememberedPrefs
                 val textEnabled = applySubtitleEnabledState(player,
-                    burnedIn = activePlan?.burnedInSubtitleLabel != null,
+                    burnedIn = activePlan?.serverSubtitleSelection == true || activePlan?.burnedInSubtitleLabel != null,
                     remembered = rememberedPrefs, enabledByDefault = viewModel.state.value.subtitlesEnabled)
                 // 条目记忆优先（手动改过的字幕/音轨起播即恢复），未命中回落语言偏好
                 if (textEnabled) {
@@ -210,6 +211,12 @@ fun PlayerScreen(
                     )
                 }
             }
+
+            override fun onPlaybackStateChanged(playbackState: Int) {
+                if (playbackState == Player.STATE_READY) {
+                    player.activePlaybackPlan()?.let(viewModel::onSubtitleStreamReady)
+                }
+            }
         }
         player.addListener(listener)
         onDispose { player.removeListener(listener) }
@@ -238,14 +245,14 @@ fun PlayerScreen(
 
     LaunchedEffect(player, plan, subtitlesEnabled) {
         if (plan != null) {
-            applySubtitleEnabledState(player, plan.burnedInSubtitleLabel != null,
+            applySubtitleEnabledState(player, plan.serverSubtitleSelection || plan.burnedInSubtitleLabel != null,
                 viewModel.state.value.rememberedPrefs, subtitlesEnabled)
             if (BuildConfig.DEBUG) {
                 android.util.Log.d(CUE_LOG_TAG, "prepare: subs=${plan.subtitles.size} method=${plan.method}")
             }
             player.setMediaItem(
                 buildMediaItem(plan, subtitlesEnabled),
-                plan.startPositionMs,
+                localPlaybackPosition(plan, plan.startPositionMs),
             )
             player.prepare()
             viewModel.onStarted(plan.startPositionMs)
@@ -256,7 +263,7 @@ fun PlayerScreen(
         if (plan == null) return@LaunchedEffect
         while (isActive) {
             delay(PROGRESS_REPORT_INTERVAL_MS)
-            if (player.isPlaying) viewModel.onProgress(player.currentPosition)
+            if (player.isPlaying) viewModel.onProgress(player.mediaPositionMs())
         }
     }
 
@@ -270,8 +277,8 @@ fun PlayerScreen(
      * - 其余 → 实际位置，避免把半集误标成已看。
      */
     val stopPosition: (finished: Boolean) -> Long = { finished ->
-        val duration = player.duration
-        val position = player.currentPosition
+        val duration = player.mediaDurationMs()
+        val position = player.mediaPositionMs()
         when {
             finished -> if (duration > 0) duration else position
             duration > 0 && position >= duration - duration / 20 -> duration
@@ -355,7 +362,7 @@ fun PlayerScreen(
                     audioPassthrough = state.audioPassthrough,
                     passthroughCapable = state.offloadCapable,
                     onSetPassthrough = { enabled ->
-                        viewModel.setAudioPassthrough(enabled, player.currentPosition)
+                        viewModel.setAudioPassthrough(enabled, player.mediaPositionMs())
                     },
                     onRetryNextLine = { positionMs -> viewModel.retryNextLine(positionMs) },
                     initialSpeed = state.playbackSpeed,
@@ -366,6 +373,13 @@ fun PlayerScreen(
                     danmu = state.danmu,
                     danmuActions = rememberDanmuActions(viewModel),
                     danmuSearchPrefill = state.title,
+                    onSelectServerSubtitle = { index ->
+                        viewModel.selectServerSubtitle(index, player.mediaPositionMs(), player.activePlaybackPlan())
+                    },
+                    subtitleSwitching = state.subtitleSwitching,
+                    subtitleSwitchError = state.subtitleSwitchError?.userMessage(),
+                    onSubtitleSwitchFailed = viewModel::onSubtitleStreamFailed,
+                    onRebuildServerStream = { position -> viewModel.seekServerStream(position, player.activePlaybackPlan()) },
                 )
             }
         }

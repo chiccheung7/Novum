@@ -16,7 +16,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.unit.dp
@@ -70,8 +69,7 @@ fun NovumConfirmDialog(
             Column(
                 modifier = Modifier
                     .width(DIALOG_WIDTH)
-                    .clip(RoundedCornerShape(20.dp))
-                    .background(NovumPalette.InkElevated)
+                    .novumGlassPanel(RoundedCornerShape(20.dp))
                     .padding(horizontal = 32.dp, vertical = 24.dp),
                 verticalArrangement = Arrangement.spacedBy(NovumDimens.TextBlockGap),
             ) {
