@@ -10,6 +10,7 @@ import com.sun.net.httpserver.HttpExchange
 import com.sun.net.httpserver.HttpServer
 import java.net.InetSocketAddress
 import java.util.concurrent.CopyOnWriteArrayList
+import java.util.concurrent.Executors
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.async
 import kotlinx.coroutines.test.runTest
@@ -116,7 +117,13 @@ class LineProbeSessionTest {
 
 private class ProbeServer : AutoCloseable {
     val requests = CopyOnWriteArrayList<String>()
+    private val requestExecutor = Executors.newCachedThreadPool { task ->
+        Thread(task, "line-probe-test-server").apply { isDaemon = true }
+    }
     private val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0).apply {
+        // The HTTPS fallback deliberately shares this HTTP endpoint. A stalled TLS
+        // request must not block the independent, authorized HTTP HEAD probe.
+        executor = requestExecutor
         createContext("/") { exchange -> respond(exchange) }
         start()
     }
@@ -132,5 +139,8 @@ private class ProbeServer : AutoCloseable {
         }
     }
 
-    override fun close() = server.stop(0)
+    override fun close() {
+        server.stop(0)
+        requestExecutor.shutdownNow()
+    }
 }
