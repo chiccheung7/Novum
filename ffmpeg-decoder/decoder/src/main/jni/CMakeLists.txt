@@ -50,6 +50,12 @@ set_target_properties(ffmpegJNI PROPERTIES
                       CXX_VISIBILITY_PRESET hidden
                       VISIBILITY_INLINES_HIDDEN ON)
 
+# NDK r26 defaults to 4 KB ELF segments. The final shared library must also
+# load on Android devices using 16 KB memory pages.
+target_link_options(ffmpegJNI PRIVATE
+                    "-Wl,-z,max-page-size=16384"
+                    "-Wl,-z,common-page-size=16384")
+
 target_link_libraries(ffmpegJNI
                       PRIVATE android
                       PRIVATE swresample

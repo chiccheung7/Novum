@@ -2,8 +2,10 @@ package com.novum.tv.data.repository
 
 import com.novum.tv.data.remote.emby.ItemDto
 import com.novum.tv.data.remote.emby.MediaStreamDto
+import com.novum.tv.data.remote.emby.UserDataDto
 import com.novum.tv.testing.FakeMediaStrings
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Test
 
 /**
@@ -44,5 +46,19 @@ class MediaMappersFormatTest {
         assertEquals(listOf("SDR"), sdr.videoFormats)
         val none = entry(emptyList())
         assertEquals(emptyList<String>(), none.videoFormats)
+    }
+
+    @Test
+    fun watchedItemIgnoresStalePlaybackPositionOnHome() {
+        val watched = ItemDto(
+            Id = "m-1",
+            Name = "片名",
+            Type = "Movie",
+            RunTimeTicks = 10_000_000L,
+            UserData = UserDataDto(Played = true, PlaybackPositionTicks = 5_000_000L),
+        ).toHomeEntry("https://smart.uhdnow.com", FakeMediaStrings)!!
+
+        assertNull(watched.progress)
+        assertNull(watched.remainingMinutes)
     }
 }

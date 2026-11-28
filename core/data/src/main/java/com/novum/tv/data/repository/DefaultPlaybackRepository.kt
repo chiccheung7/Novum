@@ -96,6 +96,7 @@ class DefaultPlaybackRepository @Inject constructor(
                 lineProbe.lines(
                     excludeBaseUrl = excludeLine,
                     pinnedLine = snapshot?.pinnedLineUrlFor(owner.playbackPrefsNamespace()),
+                    pinnedLineCleartextConfirmed = snapshot?.pinnedLineCleartextConfirmed == true,
                 ).firstOrNull()
             }.getOrNull()
             if (!isCurrent(owner)) return@withContext failureOf(NovumError.Unauthorized())

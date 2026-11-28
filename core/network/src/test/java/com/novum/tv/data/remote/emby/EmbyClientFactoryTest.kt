@@ -16,11 +16,28 @@ import okhttp3.Request
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNotSame
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /** Real HTTP requests are restricted to ephemeral loopback servers with synthetic credentials. */
 class EmbyClientFactoryTest {
+    @Test
+    fun apiCacheReusesCanonicalAddressesAndEvictsLeastRecentlyUsedServer() {
+        val factory = EmbyClientFactory(Json, SessionHolder())
+        val first = factory.api("https://first.example/emby")
+        assertSame(first, factory.api("https://first.example/emby/"))
+        val second = factory.api("https://second.example")
+        repeat(EmbyClientFactory.MAX_CACHED_SERVERS - 2) { index ->
+            factory.api("https://line-$index.example")
+        }
+        assertSame(first, factory.api("https://first.example/emby"))
+        factory.api("https://new.example")
+        assertNotSame(second, factory.api("https://second.example"))
+    }
+
     @Test
     fun cachedClientDoesNotSendTheNextSessionsTokenToItsOldServer() = runBlocking {
         RecordingServer().use { oldServer ->
@@ -31,6 +48,11 @@ class EmbyClientFactoryTest {
                 cached.publicInfo()
 
                 holder.update(session(newServer.url, "new-fixture-token"))
+                holder.setPinnedLineCleartextPermission(
+                    oldServer.url,
+                    requireNotNull(holder.playbackPrefsNamespace()),
+                    confirmed = true,
+                )
                 cached.publicInfo()
                 factory.api(newServer.url).publicInfo()
 
@@ -66,7 +88,7 @@ class EmbyClientFactoryTest {
     }
 
     @Test
-    fun boundApiStillDropsAuthenticationWhenRedirectedToTheNewSessionsOrigin() = runBlocking {
+    fun boundApiBlocksAnUnapprovedHttpRedirectAfterTheActiveSessionSwitches() = runBlocking {
         RecordingServer().use { destination ->
             RecordingServer(redirectTo = "${destination.url}/System/Info/Public").use { origin ->
                 val holder = SessionHolder().apply { update(session(origin.url, "first-fixture-token")) }
@@ -75,10 +97,11 @@ class EmbyClientFactoryTest {
                 val bound = factory.api(origin.url, captured)
                 holder.update(session(destination.url, "second-fixture-token"))
 
-                assertEquals("Fixture", bound.publicInfo().ServerName)
+                val failure = runCatching { bound.publicInfo() }.exceptionOrNull()
 
-                assertEquals("first-fixture-token", origin.requests.single().token)
-                assertNull(destination.requests.single().token)
+                assertTrue(origin.requests.isEmpty())
+                assertTrue(destination.requests.isEmpty())
+                assertNotNull("An unapproved cleartext redirect must be blocked", failure)
             }
         }
     }
@@ -88,6 +111,11 @@ class EmbyClientFactoryTest {
         RecordingServer().use { destination ->
             RecordingServer(redirectTo = "${destination.url}/System/Info/Public").use { origin ->
                 val holder = SessionHolder().apply { update(session(origin.url, "fixture-account-secret")) }
+                holder.setPinnedLineCleartextPermission(
+                    destination.url,
+                    requireNotNull(holder.playbackPrefsNamespace()),
+                    confirmed = true,
+                )
                 val factory = EmbyClientFactory(Json { ignoreUnknownKeys = true }, holder)
 
                 assertEquals("Fixture", factory.api(origin.url).publicInfo().ServerName)
@@ -137,7 +165,7 @@ class EmbyClientFactoryTest {
     }
 
     @Test
-    fun redirectBackToStartingOriginKeepsTheStartingAccountAfterASwitch() = runBlocking {
+    fun redirectsBetweenTheActiveOriginAndPinnedHttpLineKeepTheStartingAccount() = runBlocking {
         val gate = RedirectGate()
         RecordingServer(
             redirectOnlyPath = "/System/Info/Public",
@@ -146,6 +174,11 @@ class EmbyClientFactoryTest {
             RecordingServer(redirectTo = "${origin.url}/redirected").use { intermediate ->
                 origin.redirectTo = "${intermediate.url}/redirected"
                 val holder = SessionHolder().apply { update(session(origin.url, "first-fixture-token")) }
+                holder.setPinnedLineCleartextPermission(
+                    intermediate.url,
+                    requireNotNull(holder.playbackPrefsNamespace()),
+                    confirmed = true,
+                )
                 val factory = EmbyClientFactory(Json { ignoreUnknownKeys = true }, holder)
                 val pending = async(Dispatchers.IO) { factory.api(origin.url).publicInfo() }
                 try {
@@ -269,6 +302,65 @@ class EmbyClientFactoryTest {
                 assertNull(origin.requests.single().token)
                 assertNull(destination.requests.single().token)
             }
+        }
+    }
+
+    @Test
+    fun cleartextGuardAllowsTheActiveHttpServerOriginAfterSessionRestore() {
+        RecordingServer().use { server ->
+            val holder = SessionHolder().apply { update(session(server.url, "fixture-token")) }
+            val client = OkHttpClient.Builder().addCleartextOriginGuard(holder).build()
+
+            client.newCall(Request.Builder().url("${server.url}/image").build()).execute().use {
+                assertEquals(200, it.code)
+            }
+
+            assertEquals(1, server.requests.size)
+        }
+    }
+
+    @Test
+    fun cleartextGuardDeniesUnapprovedHttpAndRedirectsFromPinnedLine() {
+        RecordingServer().use { destination ->
+            RecordingServer(redirectTo = "${destination.url}/image").use { pinnedLine ->
+                val holder = SessionHolder().apply { update(session("https://secure.example", "fixture-token")) }
+                val client = OkHttpClient.Builder().addCleartextOriginGuard(holder).build()
+
+                val directFailure = runCatching {
+                    client.newCall(Request.Builder().url("${destination.url}/image").build())
+                        .execute().use { it.code }
+                }.exceptionOrNull()
+                assertNotNull("An unapproved HTTP origin must be denied", directFailure)
+                assertTrue(destination.requests.isEmpty())
+
+                holder.setPinnedLineCleartextPermission(
+                    pinnedLine.url,
+                    requireNotNull(holder.playbackPrefsNamespace()),
+                    confirmed = true,
+                )
+                val redirectFailure = runCatching {
+                    client.newCall(Request.Builder().url("${pinnedLine.url}/image").build())
+                        .execute().use { it.code }
+                }.exceptionOrNull()
+
+                assertNotNull("A redirect must not escape the pinned origin", redirectFailure)
+                assertEquals(1, pinnedLine.requests.size)
+                assertTrue(destination.requests.isEmpty())
+            }
+        }
+    }
+
+    @Test
+    fun loginPermissionIsTemporaryAndLimitedToTheConfirmedOrigin() {
+        RecordingServer().use { server ->
+            val holder = SessionHolder()
+            holder.allowLoginCleartextOrigin(server.url)
+            assertTrue(holder.isCleartextAllowed("${server.url}/authenticate"))
+            assertFalse(holder.isCleartextAllowed("http://other.example/authenticate"))
+
+            holder.clearLoginCleartextOrigin(server.url)
+
+            assertFalse(holder.isCleartextAllowed("${server.url}/authenticate"))
         }
     }
 

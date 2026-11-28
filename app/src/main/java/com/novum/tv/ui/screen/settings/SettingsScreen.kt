@@ -18,6 +18,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -47,9 +48,11 @@ import com.novum.tv.model.DanmuArea
 import com.novum.tv.ui.component.NovumInitialFocus
 import com.novum.tv.ui.component.NovumNoScrollDeadZone
 import com.novum.tv.ui.component.NovumContentScaffold
+import com.novum.tv.ui.component.NovumConfirmDialog
 import com.novum.tv.ui.component.NovumStateView
 import com.novum.tv.ui.LinePickerViewModel
 import com.novum.tv.ui.component.LocalNovumToast
+import com.novum.tv.ui.component.LineOption
 import com.novum.tv.ui.component.NovumLinePickerDialog
 import com.novum.tv.ui.component.NovumOptionListDialog
 import com.novum.tv.ui.component.NovumOptionRow
@@ -101,6 +104,7 @@ fun SettingsScreen(
 
     // 播放线路选择弹窗。
     var linePickerOpen by rememberSaveable { mutableStateOf(false) }
+    var pendingCleartextLine by remember { mutableStateOf<LineOption?>(null) }
     val pickerState by linePickerViewModel.pickerState.collectAsStateWithLifecycle()
     val pinnedLine by linePickerViewModel.pinned.collectAsStateWithLifecycle()
 
@@ -127,12 +131,31 @@ fun SettingsScreen(
                 lines = pickerState.lines,
                 pinnedUrl = pinnedLine.url.takeIf { it.isNotBlank() },
                 onSelectLine = { option ->
-                    linePickerViewModel.select(option)
-                    linePickerOpen = false
+                    if (option?.cleartextNeedsConfirmation == true) {
+                        pendingCleartextLine = option
+                    } else {
+                        linePickerViewModel.select(option)
+                        linePickerOpen = false
+                    }
                 },
                 loading = pickerState.lines == null && !pickerState.failed,
                 failed = pickerState.failed,
+                onRetry = linePickerViewModel::refresh,
                 onDismiss = { linePickerOpen = false },
+            )
+        }
+        pendingCleartextLine?.let { option ->
+            NovumConfirmDialog(
+                title = stringResource(R.string.line_picker_cleartext_title),
+                message = stringResource(R.string.line_picker_cleartext_message, option.displayName),
+                confirmText = stringResource(R.string.line_picker_cleartext_confirm),
+                cancelText = stringResource(R.string.line_picker_cleartext_cancel),
+                onConfirm = {
+                    linePickerViewModel.select(option, cleartextConfirmed = true)
+                    pendingCleartextLine = null
+                    linePickerOpen = false
+                },
+                onCancel = { pendingCleartextLine = null },
             )
         }
         when (val current = state) {
@@ -190,19 +213,21 @@ fun SettingsScreen(
                             color = NovumPalette.Paper,
                             modifier = Modifier.padding(start = 20.dp, end = 20.dp, bottom = 16.dp),
                         )
-                        SectionContent(
-                            section = selectedSection,
-                            settings = current.data,
-                            viewModel = viewModel,
-                            sessionLabel = sessionLabel,
-                            loggingOut = loggingOut,
-                            onLoggedOut = onLoggedOut,
-                            pinnedLineLabel = pinnedLine.displayLabel,
-                            onOpenLinePicker = {
-                                linePickerViewModel.refresh()
-                                linePickerOpen = true
-                            },
-                        )
+                        key(selectedSection) {
+                            SectionContent(
+                                section = selectedSection,
+                                settings = current.data,
+                                viewModel = viewModel,
+                                sessionLabel = sessionLabel,
+                                loggingOut = loggingOut,
+                                onLoggedOut = onLoggedOut,
+                                pinnedLineLabel = pinnedLine.displayLabel,
+                                onOpenLinePicker = {
+                                    linePickerViewModel.refresh()
+                                    linePickerOpen = true
+                                },
+                            )
+                        }
                     }
                 }
             }

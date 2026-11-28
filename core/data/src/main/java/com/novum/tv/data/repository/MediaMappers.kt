@@ -472,7 +472,9 @@ internal fun ItemDto.toHomeEntry(server: String, strings: MediaStrings): HomeEnt
     val userData = UserData
     val runtimeTicks = RunTimeTicks
     val positionTicks = userData?.PlaybackPositionTicks
-    val progress = if (runtimeTicks != null && runtimeTicks > 0L && positionTicks != null && positionTicks > 0L) {
+    val progress = if (userData?.Played != true && runtimeTicks != null && runtimeTicks > 0L &&
+        positionTicks != null && positionTicks > 0L
+    ) {
         (positionTicks.toFloat() / runtimeTicks).coerceIn(0f, 1f)
     } else {
         null

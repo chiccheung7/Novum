@@ -57,6 +57,7 @@ internal fun FullScreenBackdrop(
     entry: HomeEntry?,
     progress: State<Pair<Float, Float>>,
     driftPx: Float,
+    onBackdropSettled: (String) -> Unit,
 ) {
     // Ken Burns：30 秒内线性推近 1.0→1.08。
     val kenBurns = remember { Animatable(1f) }
@@ -107,6 +108,7 @@ internal fun FullScreenBackdrop(
                             windowSize = LocalWindowInfo.current.containerSize,
                             density = LocalDensity.current,
                         ),
+                        onSettled = { onBackdropSettled(backdrop) },
                     )
                 }
             }

@@ -59,6 +59,31 @@ class NovumLinePickerTest {
     }
 
     @Test
+    fun marksUnapprovedHttpLinesBeforeSelection() {
+        composeRule.setContent {
+            NovumTheme {
+                NovumLinePickerPanel(
+                    lines = listOf(
+                        LineOption(
+                            "http://line.example",
+                            "线路 A",
+                            "line.example",
+                            Long.MAX_VALUE,
+                            cleartextNeedsConfirmation = true,
+                        ),
+                    ),
+                    pinnedUrl = null,
+                    onSelectLine = {},
+                    loading = false,
+                    failed = false,
+                )
+            }
+        }
+
+        composeRule.onNodeWithText("HTTP · 需确认").assertIsDisplayed()
+    }
+
+    @Test
     fun lowestLatencyLineIsCurrentWhenNotPinned() {
         composeRule.setContent {
             NovumTheme {
@@ -175,5 +200,27 @@ class NovumLinePickerTest {
 
         composeRule.onNodeWithText("线路列表获取失败").assertIsDisplayed()
         composeRule.onNodeWithText("将沿用当前服务器地址").assertIsDisplayed()
+        composeRule.onNodeWithText("重试").assertIsDisplayed()
+        composeRule.onNodeWithText("取消").assertIsDisplayed()
+    }
+
+    @Test
+    fun failedStateRetryIsReachable() {
+        var retries = 0
+        composeRule.setContent {
+            NovumTheme {
+                NovumLinePickerPanel(
+                    lines = null,
+                    pinnedUrl = null,
+                    onSelectLine = {},
+                    loading = false,
+                    failed = true,
+                    onRetry = { retries++ },
+                )
+            }
+        }
+
+        composeRule.onNodeWithText("重试").performSemanticsAction(SemanticsActions.OnClick)
+        composeRule.runOnIdle { assertTrue("失败态应提供可执行的重试动作", retries == 1) }
     }
 }

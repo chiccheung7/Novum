@@ -6,6 +6,7 @@ import com.novum.tv.data.line.LineProbe
 import com.novum.tv.data.remote.emby.SessionHolder
 import com.novum.tv.data.settings.SettingsRepository
 import com.novum.tv.data.settings.pinnedLineUrlFor
+import com.novum.tv.data.settings.pinnedCleartextLineFor
 import com.novum.tv.ui.component.LineOption
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
@@ -13,11 +14,13 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 
 /**
  * 线路选择 ViewModel。
@@ -47,7 +50,10 @@ class LinePickerViewModel @Inject constructor(
     /** 当前锁定的线路（url/name 成对；url 空 = 自动测速模式）。 */
     val pinned: StateFlow<PinnedLine> = settings.settings
         .map {
-            val url = it.pinnedLineUrlFor(sessionHolder.playbackPrefsNamespace())
+            val accountKey = sessionHolder.playbackPrefsNamespace()
+            val url = it.pinnedLineUrlFor(accountKey)?.takeUnless { pinned ->
+                pinned.startsWith("http://") && it.pinnedCleartextLineFor(accountKey) == null
+            }
             if (url == null) PinnedLine() else PinnedLine(url = url, name = it.pinnedLineName)
         }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), PinnedLine())
@@ -61,10 +67,25 @@ class LinePickerViewModel @Inject constructor(
         _failed.value = false
         _lines.value = null
         refreshJob = viewModelScope.launch {
+            val accountKey = sessionHolder.playbackPrefsNamespace()
+            val pinnedSettings = try {
+                settings.settings.first()
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                null
+            }
+            val pinnedLine = pinnedSettings?.pinnedLineUrlFor(accountKey)?.takeUnless {
+                it.startsWith("http://") && pinnedSettings.pinnedCleartextLineFor(accountKey) == null
+            }
             // 只吞真正的探测失败（404/超时是常态）；取消必须原样抛出，否则被取消的
             // 旧任务会继续往下走，把 _failed 置 true 盖掉新一次刷新正在加载的状态
             val probed = try {
-                lineProbe.lines()
+                lineProbe.lines(
+                    pinnedLine = pinnedLine,
+                    pinnedLineCleartextConfirmed = pinnedSettings?.pinnedLineCleartextConfirmed == true,
+                    includeUnapprovedHttp = true,
+                )
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (_: Exception) {
@@ -76,7 +97,7 @@ class LinePickerViewModel @Inject constructor(
                 _failed.value = true
             } else {
                 _lines.value = probed
-                    // 按主机名和非默认端口归一化去重，忽略默认端口与协议头差异。
+                    // 按协议、主机名和非默认端口归一化去重，避免把 HTTP 与 HTTPS 合并。
                     // 同组优先保留服务端命名的线路，再取延迟较低者。
                     .groupBy { lineKey(it.baseUrl) }
                     .map { (_, group) ->
@@ -91,6 +112,8 @@ class LinePickerViewModel @Inject constructor(
                             displayName = line.displayName,
                             shortName = line.shortName,
                             latencyMs = line.latencyMs,
+                            cleartextNeedsConfirmation = line.baseUrl.startsWith("http://") &&
+                                !sessionHolder.isCleartextAllowed(line.baseUrl),
                         )
                     }
             }
@@ -102,7 +125,8 @@ class LinePickerViewModel @Inject constructor(
      *
      * 写设置 + 失效 LineProbe 缓存——下一次起播立即按新策略出流。
      */
-    fun select(option: LineOption?) {
+    fun select(option: LineOption?, cleartextConfirmed: Boolean = false) {
+        if (option?.baseUrl?.startsWith("http://") == true && !cleartextConfirmed) return
         // 在入队前绑定用户操作所属账号；异步写入不能把 A 的线路保存成 B 的偏好。
         val accountKey = sessionHolder.playbackPrefsNamespace() ?: return
         viewModelScope.launch {
@@ -111,8 +135,14 @@ class LinePickerViewModel @Inject constructor(
                     pinnedLineUrl = option?.baseUrl.orEmpty(),
                     pinnedLineName = option?.displayName.orEmpty(),
                     pinnedLineAccountKey = if (option == null) "" else accountKey,
+                    pinnedLineCleartextConfirmed = option?.baseUrl?.startsWith("http://") == true && cleartextConfirmed,
                 )
             }
+            sessionHolder.setPinnedLineCleartextPermission(
+                option?.baseUrl,
+                accountKey,
+                confirmed = option?.baseUrl?.startsWith("http://") == true && cleartextConfirmed,
+            )
             lineProbe.invalidate()
         }
     }
@@ -144,10 +174,9 @@ data class PinnedLine(
  * 「中国大陆优化」与 smart.uhdnow.com（:443）这类同址别名归一成同键。
  */
 private fun lineKey(url: String): String {
-    val host = url.substringAfter("://").trimEnd('/').lowercase()
-    return when {
-        host.endsWith(":443") -> host.removeSuffix(":443")
-        host.endsWith(":80") -> host.removeSuffix(":80")
-        else -> host
-    }
+    val parsed = url.toHttpUrlOrNull() ?: return url.trimEnd('/').lowercase()
+    val host = parsed.host.takeIf { ':' !in it } ?: "[${parsed.host}]"
+    val defaultPort = if (parsed.scheme == "https") 443 else 80
+    val port = parsed.port.takeIf { it != defaultPort }?.let { ":$it" }.orEmpty()
+    return "${parsed.scheme}://$host$port"
 }

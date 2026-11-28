@@ -56,21 +56,50 @@ object ServerAddress {
      * IPv6 字面量（含 `:`）不在此处理范围内：家庭电视场景不会用到。
      */
     private fun build(scheme: String, hostAndPort: String): String? {
-        val hostPart = hostAndPort.substringBefore('/')
-        if (hostPart.isBlank()) return null
+        // Split the authority before looking for a port. A pasted reverse-proxy
+        // URL may carry a query or fragment, and those characters must never be
+        // considered part of the host (otherwise `host?x=1` gets `:8096`
+        // appended after the query).
+        val boundary = hostAndPort.indexOfFirst { it == '/' || it == '?' || it == '#' }
+            .takeIf { it >= 0 } ?: hostAndPort.length
+        val authority = hostAndPort.substring(0, boundary)
+        if (authority.isBlank() || '@' in authority || authority.any { it.isWhitespace() }) return null
         // 反代场景常见的子路径不能丢弃，否则请求会打到站点根路径而 404。
-        val rawPath = hostAndPort.substringAfter('/', missingDelimiterValue = "")
-        val path = if (rawPath.isBlank()) "" else "/" + rawPath.trim('/')
+        val suffix = hostAndPort.substring(boundary)
 
-        val hasPort = hostPart.substringAfterLast(':', missingDelimiterValue = "")
-            .toIntOrNull() != null
-        val hostWithPort = if (hasPort) {
-            hostPart
-        } else {
-            val port = if (scheme == "https") DEFAULT_HTTPS_PORT else DEFAULT_HTTP_PORT
-            "$hostPart:$port"
+        val (host, explicitPort) = when {
+            authority.startsWith('[') -> {
+                val close = authority.indexOf(']')
+                if (close < 0) return null
+                val tail = authority.substring(close + 1)
+                when {
+                    tail.isEmpty() -> authority to null
+                    tail.startsWith(':') -> authority.substring(0, close + 1) to tail.substring(1)
+                    else -> return null
+                }
+            }
+
+            authority.count { it == ':' } == 1 ->
+                authority.substringBefore(':') to authority.substringAfter(':')
+
+            authority.count { it == ':' } > 1 ->
+                // A bare IPv6 literal has no unambiguous port. Bracket it so
+                // the resulting URL remains valid and use the default port.
+                "[$authority]" to null
+
+            else -> authority to null
         }
-        return "$scheme://$hostWithPort$path"
+        if (host.isBlank()) return null
+        val port = explicitPort?.toIntOrNull()?.takeIf { it in 1..65535 }
+            ?: if (explicitPort == null) {
+                if (scheme == "https") DEFAULT_HTTPS_PORT else DEFAULT_HTTP_PORT
+            } else {
+                return null
+            }
+        val candidate = "$scheme://$host:$port$suffix"
+        // Keep the explicit default port in the returned string for stable
+        // Retrofit/cache identities, but reject malformed hosts and user info.
+        return candidate.takeIf { it.toHttpUrlOrNull() != null }
     }
 
     /**

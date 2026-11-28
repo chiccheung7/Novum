@@ -8,7 +8,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
@@ -57,12 +57,14 @@ fun NovumConfirmDialog(
         Box(
             modifier = modifier
                 .fillMaxSize()
-                .background(NovumPalette.Scrim.copy(alpha = scrimAlpha)),
+                .background(NovumPalette.Scrim.copy(alpha = scrimAlpha))
+                .padding(horizontal = 24.dp, vertical = 24.dp),
             contentAlignment = Alignment.Center,
         ) {
             Column(
                 modifier = Modifier
-                    .width(DIALOG_WIDTH)
+                    .widthIn(max = DIALOG_WIDTH)
+                    .fillMaxWidth()
                     .novumGlassPanel(RoundedCornerShape(20.dp))
                     .padding(horizontal = 32.dp, vertical = 24.dp),
                 verticalArrangement = Arrangement.spacedBy(NovumDimens.TextBlockGap),
@@ -89,7 +91,8 @@ fun NovumConfirmDialog(
                     NovumButton(
                         onClick = onCancel,
                         modifier = Modifier
-                            .width(176.dp)
+                            .weight(1f)
+                            .widthIn(min = 96.dp)
                             .focusRequester(cancelRequester),
                         centerContent = true,
                     ) {
@@ -97,7 +100,7 @@ fun NovumConfirmDialog(
                     }
                     NovumButton(
                         onClick = onConfirm,
-                        modifier = Modifier.width(176.dp),
+                        modifier = Modifier.weight(1f).widthIn(min = 96.dp),
                         centerContent = true,
                     ) {
                         Text(text = confirmText, style = NovumType.ButtonLg)

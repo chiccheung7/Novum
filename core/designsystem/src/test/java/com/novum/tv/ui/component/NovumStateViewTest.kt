@@ -2,7 +2,9 @@ package com.novum.tv.ui.component
 
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsFocused
 import androidx.compose.ui.test.junit4.v2.createComposeRule
+import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performSemanticsAction
 import com.novum.tv.core.error.NovumError
@@ -54,6 +56,20 @@ class NovumStateViewTest {
         composeRule.waitForIdle()
 
         assertTrue("重试回调未触发", retried)
+    }
+
+    @Test
+    fun retryableErrorPlacesInitialFocusOnRetryAction() {
+        composeRule.setContent {
+            NovumTheme {
+                NovumStateView(state = UiState.Error(NovumError.Network()), onRetry = {})
+            }
+        }
+
+        composeRule.waitUntil(timeoutMillis = 3_000) {
+            composeRule.onAllNodesWithText("重试").fetchSemanticsNodes().isNotEmpty()
+        }
+        composeRule.onNodeWithText("重试").assertIsFocused()
     }
 
     @Test

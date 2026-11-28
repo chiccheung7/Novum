@@ -1,5 +1,7 @@
 package com.novum.tv.data.repository
 
+import com.novum.tv.core.error.NovumError
+import com.novum.tv.core.network.toNovumError
 import com.novum.tv.data.remote.emby.ItemDto
 import com.novum.tv.model.HomeEntry
 import com.novum.tv.model.HomeRow
@@ -94,6 +96,10 @@ internal fun <T> CoroutineScope.asyncOrNull(block: suspend () -> T): Deferred<T?
     } catch (cancellation: CancellationException) {
         throw cancellation
     } catch (throwable: Throwable) {
+        // A failed optional block may be tolerated, but an expired session must
+        // reach the repository so the UI can offer re-authentication instead
+        // of showing a convincing but empty home page.
+        if (throwable.toNovumError() is NovumError.Unauthorized) throw throwable
         null
     }
 }

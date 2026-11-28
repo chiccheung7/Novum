@@ -60,7 +60,6 @@ import com.novum.tv.ui.component.NovumTopBar
 import com.novum.tv.ui.theme.NovumDimens
 import com.novum.tv.ui.theme.NovumPalette
 import com.novum.tv.ui.theme.NovumTheme
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 /**
@@ -158,8 +157,8 @@ fun HomeScreen(
                 // 未组合 item，动画漫长且易被中途取消。
                 // 改为「两段式」：先瞬时跳到接近顶部（保留一屏距离），再播一段
                 // 短动画落位——总时长可控、Hero 行必然重新组合。
-                val total = listState.layoutInfo.totalItemsCount
-                if (total > BACK_TO_TOP_INSTANT_THRESHOLD) {
+                val firstVisible = listState.firstVisibleItemIndex
+                if (firstVisible > BACK_TO_TOP_INSTANT_THRESHOLD) {
                     listState.scrollToItem(BACK_TO_TOP_INSTANT_TARGET)
                 }
                 runCatchingSuspend { listState.animateScrollToItem(0) }
@@ -268,6 +267,8 @@ fun HomeContent(
     // 用户已轮播到的作品必须保留，否则返回首页会突然跳回第一张。
     var displayEntry by remember { mutableStateOf(feed.hero.firstOrNull()) }
     var heroRotateIndex by remember { mutableIntStateOf(0) }
+    var settledBackdropUrl by remember { mutableStateOf<String?>(null) }
+    val currentBackdropUrl = displayEntry?.let { it.backdropUrl ?: it.imageUrl }
 
     LaunchedEffect(feed) {
         val heroes = feed.hero
@@ -293,12 +294,22 @@ fun HomeContent(
     // 用户操作信号：任何按键 +1（轮播计时重置；DPAD 导航本身就是按键事件）
     var interactionTick by remember { mutableIntStateOf(0) }
 
-    // 页面可见且无遥控操作时轮播；CTA 焦点不参与计时，离开首页则由生命周期暂停。
-    // 任意按键都会重启静默计时，避免用户刚操作就切换海报。
-    LaunchedEffect(feed.hero, interactionTick, isPageVisible) {
-        if (!isPageVisible || feed.hero.isEmpty()) return@LaunchedEffect
+    // 页面可见且无遥控操作、Hero CTA 未聚焦时轮播；选择 CTA 时保持作品稳定。
+    // 任意按键或焦点变化都会重新开始静默计时。
+    LaunchedEffect(
+        feed.hero,
+        interactionTick,
+        isPageVisible,
+        displayEntry?.id,
+        currentBackdropUrl,
+    ) {
+        if (!isPageVisible || feed.hero.size < 2) return@LaunchedEffect
         while (true) {
-            delay(heroRotateIdleMs)
+            awaitHeroRotationInterval(
+                settledBackdropUrl = snapshotFlow { settledBackdropUrl },
+                currentBackdropUrl = currentBackdropUrl,
+                intervalMs = heroRotateIdleMs,
+            )
             heroRotateIndex = (heroRotateIndex + 1) % feed.hero.size
             displayEntry = feed.hero[heroRotateIndex]
         }
@@ -375,6 +386,10 @@ fun HomeContent(
                 entry = displayEntry,
                 progress = backdropProgressState,
                 driftPx = backdropDriftPx,
+                onBackdropSettled = { url ->
+                    // Crossfade retains the old image briefly; ignore its late load result.
+                    if (url == currentBackdropUrl) settledBackdropUrl = url
+                },
             )
         }
 
@@ -479,8 +494,8 @@ private const val HERO_PRELOAD_COUNT = 4
 private const val FOCUS_REQUEST_FRAMES = 3
 
 /**
- * Hero 自动轮播：首页处于前台且无操作 [HERO_ROTATE_IDLE_MS] 后推进下一部作品。
- * 任意按键重置计时，焦点位置不限制轮播；离开首页暂停，返回后重新计时。
+ * Hero 自动轮播：当前背景图加载结束后，再静默等待 [HERO_ROTATE_IDLE_MS] 推进下一部作品。
+ * 任意按键重置计时；离开首页暂停，返回后重新计时。
  */
 private const val HERO_ROTATE_IDLE_MS = 6_000L
 

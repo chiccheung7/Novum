@@ -9,10 +9,20 @@ import kotlin.concurrent.thread
 import kotlinx.serialization.json.Json
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class DanmuClientTest {
+    @Test
+    fun apiInstanceIsReusedAcrossAccountChanges() {
+        val holder = SessionHolder().apply { update(session("https://first.example", "first-token")) }
+        val client = DanmuClient(Json, holder)
+        val first = client.api()
+        holder.update(session("https://second.example", "second-token"))
+        assertSame(first, client.api())
+    }
+
     @Test
     fun capturedPrefixKeepsItsServerAndTokenAfterSessionSwitch() {
         val holder = SessionHolder().apply { update(session("https://first.example/emby/", "first-token")) }

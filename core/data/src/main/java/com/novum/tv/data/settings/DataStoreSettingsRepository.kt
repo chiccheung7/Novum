@@ -55,6 +55,7 @@ class DataStoreSettingsRepository @Inject constructor(
             preferences[SettingsKeys.PinnedLineUrl] = next.pinnedLineUrl
             preferences[SettingsKeys.PinnedLineName] = next.pinnedLineName
             preferences[SettingsKeys.PinnedLineAccountKey] = next.pinnedLineAccountKey
+            preferences[SettingsKeys.PinnedLineCleartextConfirmed] = next.pinnedLineCleartextConfirmed
             preferences[SettingsKeys.PlaybackSpeed] = next.playbackSpeed
             preferences[SettingsKeys.AutoPlayNext] = next.autoPlayNext
             preferences[SettingsKeys.DanmuEnabled] = next.danmuEnabled
@@ -87,6 +88,7 @@ private object SettingsKeys {
     val PinnedLineUrl = stringPreferencesKey("pinned_line_url")
     val PinnedLineName = stringPreferencesKey("pinned_line_name")
     val PinnedLineAccountKey = stringPreferencesKey("pinned_line_account_key")
+    val PinnedLineCleartextConfirmed = booleanPreferencesKey("pinned_line_cleartext_confirmed")
     val PlaybackSpeed = floatPreferencesKey("playback_speed")
     val AutoPlayNext = booleanPreferencesKey("auto_play_next")
     val DanmuEnabled = booleanPreferencesKey("danmu_enabled")
@@ -120,6 +122,8 @@ private fun Preferences.toAppSettings(): AppSettings {
         pinnedLineUrl = this[SettingsKeys.PinnedLineUrl] ?: defaults.pinnedLineUrl,
         pinnedLineName = this[SettingsKeys.PinnedLineName] ?: defaults.pinnedLineName,
         pinnedLineAccountKey = this[SettingsKeys.PinnedLineAccountKey] ?: defaults.pinnedLineAccountKey,
+        pinnedLineCleartextConfirmed = this[SettingsKeys.PinnedLineCleartextConfirmed]
+            ?: defaults.pinnedLineCleartextConfirmed,
         playbackSpeed = this[SettingsKeys.PlaybackSpeed] ?: defaults.playbackSpeed,
         autoPlayNext = this[SettingsKeys.AutoPlayNext] ?: defaults.autoPlayNext,
         danmuEnabled = this[SettingsKeys.DanmuEnabled] ?: defaults.danmuEnabled,

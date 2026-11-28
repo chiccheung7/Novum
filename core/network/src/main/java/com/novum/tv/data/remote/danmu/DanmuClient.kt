@@ -2,6 +2,7 @@ package com.novum.tv.data.remote.danmu
 
 import javax.inject.Inject
 import javax.inject.Singleton
+import com.novum.tv.data.remote.emby.addCleartextOriginGuard
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import okhttp3.HttpUrl.Companion.toHttpUrl
@@ -13,7 +14,6 @@ import retrofit2.http.Body
 import retrofit2.http.GET
 import retrofit2.http.POST
 import retrofit2.http.Url
-import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
 
 /**
@@ -50,7 +50,7 @@ interface DanmuApi {
 }
 
 /**
- * 弹幕 API 客户端：按「服务器 + token」构建并缓存 [DanmuApi]。
+ * 弹幕 API 客户端：共用 [DanmuApi]，每次通过绝对 URL 传入服务器与 token。
  *
  * 与 [com.novum.tv.data.remote.emby.EmbyClientFactory] 的差异：
  * - 鉴权走 URL 路径里的 token（弹幕服务自己的鉴权体系），不注入 Emby 头；
@@ -62,7 +62,7 @@ class DanmuClient @Inject constructor(
     private val holder: com.novum.tv.data.remote.emby.SessionHolder,
 ) {
 
-    private val cache = ConcurrentHashMap<String, DanmuApi>()
+    private val sharedApi: DanmuApi by lazy { create() }
 
     /** 弹幕服务的 URL 前缀（含 token）；未登录或地址无效时为 null。 */
     fun baseUrl(): String? {
@@ -107,11 +107,12 @@ class DanmuClient @Inject constructor(
                         .build(),
                 )
             }
+            .addCleartextOriginGuard(holder)
             .build()
     }
 
-    /** 指定前缀的 API（缓存按前缀复用 Retrofit，HTTP 客户端进程内共享）。 */
-    fun api(prefix: String): DanmuApi = cache.getOrPut(prefix) { create() }
+    /** 所有请求均使用 @Url，无需按含 token 的前缀重复构建或缓存 API。 */
+    fun api(): DanmuApi = sharedApi
 
     private fun create(): DanmuApi =
         Retrofit.Builder()

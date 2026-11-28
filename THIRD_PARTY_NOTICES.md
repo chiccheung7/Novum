@@ -14,6 +14,8 @@
 
 当前源码在 `ffmpeg-decoder/` 收录了 Media3 FFmpeg 扩展的可重建工程：Media3 1.11.1 的 Java/JNI 包装层源码、FFmpeg 6.0 静态库编译脚本和一键构建脚本。构建产物 `app/libs/media3-ffmpeg-decoder.aar` 不入库；放入该路径后由 App 的 `OffloadRenderersFactory` 自动启用。未执行构建时，公开版只依赖电视平台解码器。构建脚本、启用的解码器和许可边界见 [扩展说明](ffmpeg-decoder/README.md)。
 
+v0.2.6 的发布 APK 使用从源码重建的扩展，FFmpeg 源码快照标识为 6.0.2（`release/6.0`），启用 `ac3`、`eac3`、`truehd`、`dca` 解码器；构建使用 NDK `26.3.11579264`、CMake `3.22.1`，四个 ABI 的 JNI 均显式采用 16 KB ELF 段对齐。对应 FFmpeg 源码快照随该版本 Release 以 `Novum-0.2.6-ffmpeg-source.tar.gz` 提供，包装层及完整构建脚本位于同一 Release 标签的 `ffmpeg-decoder/`；发布文件校验值见 Release 的 `SHA256SUMS`。
+
 历史私有基线曾包含 `app/libs/media3-ffmpeg-decoder.aar`，但当时无法定位其完整源码、构建配置和许可材料；公开源码快照未包含该文件，也不包含带有它的旧 Git 历史。维护者同时发布了原始 `ad5fe33` 的完整 APK，其中保留该历史扩展。历史 AAR 的 SHA-256 为 `1E094BEB7DFB709C262F5B7CC5B1F8A2EFFD1C6415446B1204F32866AF9E216E`；该哈希仅对应旧产物（Java 包 `androidx.media3.decoder.ffmpeg`，四种 ABI 含 `libffmpegJNI.so`），不代表按当前脚本重建出的 AAR。
 
 Java/JNI 包装层来自 AndroidX Media3，适用 Apache-2.0；按当前脚本编译的 FFmpeg 静态库未启用 `--enable-gpl` 或 `--enable-nonfree`，适用 LGPL 2.1+，条款见 [FFmpeg 许可文本](ffmpeg-decoder/LICENSE_FFMPEG_LGPLv2.1.txt)。不能把包装层的 Apache-2.0 许可直接套用于 FFmpeg 二进制或整个 AAR；分发含该 AAR 的 APK 时须遵守 LGPL 的源码提供与许可声明要求。历史 Release APK 中 FFmpeg 的实际构建配置仍未核实，不能依据当前脚本反推其许可证，也不能把整个 APK 视为 Apache-2.0 授权。参考 [Media3 FFmpeg 扩展文档](https://github.com/androidx/media/blob/release/libraries/decoder_ffmpeg/README.md) 与 [FFmpeg 许可说明](https://ffmpeg.org/legal.html)。

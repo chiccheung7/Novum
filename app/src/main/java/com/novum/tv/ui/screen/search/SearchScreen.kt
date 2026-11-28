@@ -74,11 +74,16 @@ fun SearchScreen(
 
     if (!submitted) NovumInitialFocus(inputFocus)
 
-    fun searchNow(keyword: String, selected: SearchCategory, force: Boolean = true) {
+    fun searchNow(
+        keyword: String,
+        selected: SearchCategory,
+        force: Boolean = true,
+        recordHistory: Boolean = true,
+    ) {
         val normalized = keyword.trim()
         if (normalized.isEmpty()) return
         submitted = true
-        historyViewModel.record(normalized)
+        if (recordHistory) historyViewModel.record(normalized)
         fun searchMedia(type: SearchType) {
             if (force) viewModel.search(normalized, type)
             else viewModel.start(GridSource.Search(normalized, type))
@@ -100,7 +105,7 @@ fun SearchScreen(
         }
         delay(SEARCH_DEBOUNCE_MS)
         // 去重由 ViewModel 的当前请求决定：返回保留分页，新进程的空 VM 仍会加载。
-        searchNow(keyword, category, force = false)
+        searchNow(keyword, category, force = false, recordHistory = false)
     }
 
     NovumContentScaffold(
@@ -170,12 +175,12 @@ fun SearchScreen(
                         UiState.Loading -> NovumSkeletonPosterGrid()
                         is UiState.Empty -> NovumStateView(
                             state = current,
-                            onRetry = { searchNow(query, category) },
+                            onRetry = { searchNow(query, category, recordHistory = false) },
                             emptyMessage = stringResource(R.string.search_empty),
                         )
                         is UiState.Error -> NovumStateView(
                             state = current,
-                            onRetry = { searchNow(query, category) },
+                            onRetry = { searchNow(query, category, recordHistory = false) },
                         )
                         is UiState.Success -> PosterGrid(
                             items = current.data,

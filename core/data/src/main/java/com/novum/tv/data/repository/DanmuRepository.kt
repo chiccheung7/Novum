@@ -64,7 +64,7 @@ class DefaultDanmuRepository @Inject constructor(
     override suspend fun match(fileName: String): NovumResult<DanmuMatch?> =
         danmuResult(mediaStrings, logger, TAG) {
             val prefix = requirePrefix()
-            val response = client.api(prefix).match(
+            val response = client.api().match(
                 url = "$prefix/match",
                 body = buildJsonObject { put("fileName", fileName) },
             )
@@ -74,7 +74,7 @@ class DefaultDanmuRepository @Inject constructor(
     override suspend fun searchAnime(keyword: String): NovumResult<List<DanmuAnime>> =
         danmuResult(mediaStrings, logger, TAG) {
             val prefix = requirePrefix()
-            val response = client.api(prefix).search(
+            val response = client.api().search(
                 url = "$prefix/search/anime?keyword=${encode(keyword)}",
             )
             parseAnimes(response)
@@ -83,7 +83,7 @@ class DefaultDanmuRepository @Inject constructor(
     override suspend fun episodes(bangumiId: String): NovumResult<List<DanmuEpisode>> =
         danmuResult(mediaStrings, logger, TAG) {
             val prefix = requirePrefix()
-            val response = client.api(prefix).episodes(
+            val response = client.api().episodes(
                 url = "$prefix/bangumi/${encode(bangumiId)}",
             )
             parseEpisodes(response)
@@ -92,7 +92,7 @@ class DefaultDanmuRepository @Inject constructor(
     override suspend fun comments(episodeId: String): NovumResult<List<DanmuComment>> =
         danmuResult(mediaStrings, logger, TAG) {
             val prefix = requirePrefix()
-            val response = client.api(prefix).comments(
+            val response = client.api().comments(
                 url = "$prefix/comment/${encode(episodeId)}?format=json",
             )
             parseComments(response)

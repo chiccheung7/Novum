@@ -16,6 +16,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
@@ -100,7 +101,9 @@ fun <T> NovumRow(
     val spacingPx = with(LocalDensity.current) { itemSpacing.toPx() }
     val itemFocus = remember { mutableMapOf<Any, FocusRequester>() }
     val navigationScope = rememberCoroutineScope()
-    var navigationJob = remember { null as Job? }
+    // Keep the in-flight repeat-scroll job in Compose state. A plain local var
+    // is recreated on every recomposition and drops this guard mid-animation.
+    var navigationJob by remember { mutableStateOf<Job?>(null) }
     // 内容出血：水平取 edgePadding，垂直恒取 FocusBleed。
     val effectiveContentPadding = contentPadding ?: PaddingValues(
         start = edgePadding,

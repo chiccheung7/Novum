@@ -29,7 +29,7 @@ android {
         // navigation-compose 2.10.x 的 AAR 声明 minSdk 24，故下限锁 24（Android TV 7.0）
         minSdk = 24
         targetSdk = 37
-        versionCode = 7
+        versionCode = 8
         // 与 :core:network 的 BuildConfig.VERSION_NAME 同源（gradle/libs.versions.toml 的 novum）
         versionName = libs.versions.novum.get()
 
@@ -63,6 +63,12 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",
             )
+        }
+        create("benchmark") {
+            initWith(getByName("release"))
+            signingConfig = signingConfigs.getByName("debug")
+            isDebuggable = false
+            matchingFallbacks += listOf("release")
         }
     }
 
@@ -98,8 +104,7 @@ android {
         // AGP 9.5.0 is pinned because Kotlin 2.4.21/KSP 2.3.13 support ends at
         // AGP 9.3.1; the newer-version detector is informational for this toolchain.
         disable += "AndroidGradlePluginVersion"
-        // 忽略 vendored FFmpeg AAR 的 16KB 页对齐告警，以及 API 24–25 所需的 legacy launcher PNG 告警。
-        disable += "Aligned16KB"
+        // API 24–25 仍需要 legacy launcher PNG。
         disable += "IconLauncherShape"
     }
 

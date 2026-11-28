@@ -7,6 +7,7 @@ import androidx.compose.ui.unit.dp
 import com.novum.tv.ui.theme.NovumTheme
 import java.io.File
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -25,6 +26,7 @@ class NovumImageTest {
     fun failedImageRequestDoesNotWriteTokenToLogcat() {
         val missingImage = File.createTempFile("novum-image-missing", ".png")
         check(missingImage.delete())
+        var settled: Boolean? = null
         ShadowLog.clear()
         composeRule.setContent {
             NovumTheme {
@@ -32,6 +34,7 @@ class NovumImageTest {
                     url = missingImage.toURI().toString() + "?api_key=image-test-token",
                     contentDescription = null,
                     modifier = Modifier.size(64.dp),
+                    onSettled = { settled = it },
                 )
             }
         }
@@ -42,5 +45,6 @@ class NovumImageTest {
         val logged = ShadowLog.getLogsForTag("NovumImage").joinToString { it.msg }
         assertFalse("图片失败日志不得泄漏URL里的访问令牌", logged.contains("image-test-token"))
         assertTrue("失败信息保留脱敏后的诊断参数", logged.contains("api_key=***"))
+        assertEquals("加载失败也要结束轮播的等待状态", false, settled)
     }
 }

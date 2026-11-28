@@ -6,10 +6,12 @@ import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
+import java.io.IOException
 import java.io.File
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -152,6 +154,28 @@ class DataStoreSessionStoreTest {
         val storedToken = dataStore.data.first()[stringPreferencesKey("session_token")]
         assertTrue(cipher.isEncrypted(requireNotNull(storedToken)))
         assertFalse(requireNotNull(storedToken).contains("legacy-token"))
+    }
+
+    @Test
+    fun loadPropagatesDataStoreIoErrorsInsteadOfTreatingThemAsLoggedOut() = runTest {
+        val failure = IOException("disk unavailable")
+        val failingStore = object : DataStore<Preferences> {
+            override val data = flow<Preferences> { throw failure }
+
+            override suspend fun updateData(
+                transform: suspend (t: Preferences) -> Preferences,
+            ): Preferences = throw failure
+        }
+        val store = DataStoreSessionStore(failingStore, cipher)
+
+        val thrown = try {
+            store.load()
+            throw AssertionError("Expected the storage error to be propagated")
+        } catch (error: IOException) {
+            error
+        }
+
+        assertEquals("disk unavailable", thrown.message)
     }
 
     private class TestSecretCipher : SessionSecretCipher {

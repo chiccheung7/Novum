@@ -6,6 +6,7 @@ val media3Version = rootProject.extra["media3Version"] as String
 
 android {
     namespace = "androidx.media3.decoder.ffmpeg"
+    ndkVersion = providers.gradleProperty("novumNdkVersion").orElse("26.3.11579264").get()
     compileSdk {
         version = release(37) {
             minorApiLevel = 1

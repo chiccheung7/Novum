@@ -1,7 +1,6 @@
 package com.novum.tv.data.remote.emby
 
 import com.novum.tv.core.network.ServerAddress
-import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -42,26 +41,34 @@ class EmbyClientFactory @Inject constructor(
     private val sessionHolder: SessionHolder,
 ) : EmbyApiProvider {
 
-    private val cache = ConcurrentHashMap<String, ServerClient>()
+    // 线路与登录地址数量不可控；只保留最近使用的 API，所有实例共用连接池。
+    private val cache = object : LinkedHashMap<String, EmbyApi>(16, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, EmbyApi>?): Boolean =
+            size > MAX_CACHED_SERVERS
+    }
+
+    private val httpClient: OkHttpClient by lazy { createHttpClient() }
 
     /**
      * 获取指定服务器的 API。
      *
      * @param baseUrl 规范化后的地址（不含尾部斜杠）。
      */
-    override fun api(baseUrl: String): EmbyApi = serverClient(baseUrl).api
+    override fun api(baseUrl: String): EmbyApi {
+        val canonicalUrl = ServerAddress.toBaseUrl(baseUrl)
+        return synchronized(cache) {
+            cache.getOrPut(canonicalUrl) { createApi(canonicalUrl, httpClient) }
+        }
+    }
 
     override fun api(baseUrl: String, session: SessionSnapshot): EmbyApi {
-        val client = serverClient(baseUrl).httpClient
         return createApi(baseUrl, Call.Factory { request ->
-            client.newCall(request.newBuilder().tag(SessionSnapshot::class.java, session).build())
+            httpClient.newCall(request.newBuilder().tag(SessionSnapshot::class.java, session).build())
         })
     }
 
-    private fun serverClient(baseUrl: String): ServerClient = cache.getOrPut(baseUrl) { create(baseUrl) }
-
-    private fun create(baseUrl: String): ServerClient {
-        val client = OkHttpClient.Builder()
+    private fun createHttpClient(): OkHttpClient =
+        OkHttpClient.Builder()
             // 电视盒子网络抖动常见，连接超时不宜过长，避免登录页长时间无反馈
             .followRedirects(true)
             .followSslRedirects(true)
@@ -76,10 +83,8 @@ class EmbyClientFactory @Inject constructor(
                 chain.proceed(builder.build())
             }
             .addEmbySessionAuthentication(sessionHolder, includeClientDescription = true)
+            .addCleartextOriginGuard(sessionHolder)
             .build()
-
-        return ServerClient(client, createApi(baseUrl, client))
-    }
 
     private fun createApi(baseUrl: String, callFactory: Call.Factory): EmbyApi =
         Retrofit.Builder()
@@ -89,9 +94,9 @@ class EmbyClientFactory @Inject constructor(
             .build()
             .create(EmbyApi::class.java)
 
-    private data class ServerClient(val httpClient: OkHttpClient, val api: EmbyApi)
-
     companion object {
+        internal const val MAX_CACHED_SERVERS = 8
+
         /**
          * 网关白名单 UA。
          *

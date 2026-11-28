@@ -1,6 +1,8 @@
 package com.novum.tv.ui.screen.player
 
 import android.app.Activity
+import android.content.Context
+import android.content.ContextWrapper
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
@@ -34,6 +36,8 @@ import com.novum.tv.core.player.OffloadRenderersFactory
 import com.novum.tv.core.player.buildMediaItem
 import com.novum.tv.core.state.UiState
 import com.novum.tv.data.remote.emby.EmbyClientFactory
+import com.novum.tv.data.remote.emby.addCleartextOriginGuard
+import com.novum.tv.data.remote.emby.addEmbySessionAuthentication
 import com.novum.tv.feature.player.BuildConfig
 import com.novum.tv.ui.component.NovumStateView
 import com.novum.tv.ui.common.userMessage
@@ -92,6 +96,10 @@ fun PlayerScreen(
                         .build(),
                 )
             }
+            // PlaybackInfo URLs may omit api_key; authenticate only requests to the
+            // active Emby origin and strip credentials on cross-origin redirects.
+            .addEmbySessionAuthentication(viewModel.sessionHolder)
+            .addCleartextOriginGuard(viewModel.sessionHolder)
             .build()
         val dataSourceFactory = DefaultDataSource.Factory(context, OkHttpDataSource.Factory(okHttp))
             .setTransferListener(networkSpeed)
@@ -224,7 +232,7 @@ fun PlayerScreen(
     // 显示模式切换：起播黑场期按片源规格把窗口指到能 1:1
     // 容纳片源的显示模式（4K 片源不再被 1080p 输出封顶），播放会话离场还原。
     // 本副作用必须排在 prepare 之前——同一黑场期完成切换，首帧即目标模式
-    val activity = context as? Activity
+    val activity = context.findActivity()
     // 本次会话的显示模式句柄：离场还原只对「最新一代会话」生效——换集替换导航时
     // 旧页晚于新页起播离场，不能把新页刚切好的模式还原掉（详见 DisplayModeSwitcher）
     var displaySession by remember { mutableStateOf<DisplayModeSwitcher.Session?>(null) }
@@ -411,3 +419,10 @@ private const val VIDEO_LOG_TAG = "NovumVideo"
 
 /** 进度回写间隔。 */
 private const val PROGRESS_REPORT_INTERVAL_MS = 5_000L
+
+/** Compose commonly supplies a ContextThemeWrapper rather than the Activity itself. */
+private tailrec fun Context.findActivity(): Activity? = when (this) {
+    is Activity -> this
+    is ContextWrapper -> baseContext.findActivity()
+    else -> null
+}

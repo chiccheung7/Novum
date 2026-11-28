@@ -77,6 +77,7 @@ class DefaultAuthRepository @Inject constructor(
             // 不能让最后一条候选的网络错误覆盖前面更准确的 401。
             var sawUnauthorized = false
             for (baseUrl in candidates) {
+                sessionHolder.allowLoginCleartextOrigin(baseUrl)
                 try {
                     val api = clients.api(baseUrl)
                     val info = api.publicInfo()
@@ -134,6 +135,8 @@ class DefaultAuthRepository @Inject constructor(
                     val error = throwable.toNovumError()
                     if (error is NovumError.Unauthorized) sawUnauthorized = true
                     lastError = error
+                } finally {
+                    sessionHolder.clearLoginCleartextOrigin(baseUrl)
                 }
             }
             failureOf(if (sawUnauthorized) NovumError.Unauthorized() else lastError)

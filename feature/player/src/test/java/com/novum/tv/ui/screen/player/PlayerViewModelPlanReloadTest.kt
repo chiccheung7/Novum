@@ -10,6 +10,7 @@ import com.novum.tv.data.repository.ItemPlaybackPrefsStore
 import com.novum.tv.data.repository.MediaRepository
 import com.novum.tv.data.repository.PlaybackReporter
 import com.novum.tv.data.repository.PlaybackRepository
+import com.novum.tv.data.remote.emby.SessionHolder
 import com.novum.tv.data.settings.AppSettings
 import com.novum.tv.data.settings.SettingsRepository
 import com.novum.tv.model.HomeFeed
@@ -797,6 +798,7 @@ class PlayerViewModelPlanReloadTest {
             // 偶红根因）：注入 Unconfined 让文件 IO 内联在测试协程上执行
             ioDispatcher = Dispatchers.Unconfined,
         ),
+        sessionHolder = SessionHolder(),
         appContext = ApplicationProvider.getApplicationContext(),
         logger = NoopNovumLogger,
         // 收尾上报用的是进程级作用域：测试里用 Unconfined 让它内联执行，避免用例

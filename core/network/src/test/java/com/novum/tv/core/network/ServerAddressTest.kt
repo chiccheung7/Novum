@@ -49,6 +49,25 @@ class ServerAddressTest {
     }
 
     @Test
+    fun keepsQueryAndFragmentOutOfAuthorityWhenNormalizing() {
+        assertEquals(
+            listOf("https://demo.example.com:443/proxy/emby?route=one#section"),
+            ServerAddress.candidates("https://demo.example.com/proxy/emby?route=one#section"),
+        )
+        assertEquals(
+            listOf("https://demo.example.com:443?route=one#section"),
+            ServerAddress.candidates("https://demo.example.com?route=one#section"),
+        )
+    }
+
+    @Test
+    fun rejectsOutOfRangeAndNonNumericPorts() {
+        assertTrue(ServerAddress.candidates("https://demo.example.com:0").isEmpty())
+        assertTrue(ServerAddress.candidates("https://demo.example.com:65536").isEmpty())
+        assertTrue(ServerAddress.candidates("https://demo.example.com:abc").isEmpty())
+    }
+
+    @Test
     fun keepsCustomPortForBothSchemes() {
         assertEquals(
             listOf("http://192.168.5.26:9000", "https://192.168.5.26:9000"),

@@ -136,6 +136,36 @@ class LinePickerViewModelTest {
         assertEquals(AppSettings(), settings.settings.first())
     }
 
+    @Test
+    fun httpLineSelectionRequiresExplicitConfirmation() = runTest {
+        val holder = SessionHolder().apply { update(session()) }
+        val settings = FakeSettingsRepository()
+        val viewModel = viewModel(settings, holder)
+        val httpLine = option.copy(baseUrl = "http://line-a.example", displayName = "线路 A")
+
+        viewModel.select(httpLine)
+        runCurrent()
+
+        assertEquals(AppSettings(), settings.settings.first())
+        assertEquals(false, holder.isCleartextAllowed(httpLine.baseUrl))
+    }
+
+    @Test
+    fun confirmedHttpLineSelectionPersistsAndGrantsOnlyThatOrigin() = runTest {
+        val holder = SessionHolder().apply { update(session()) }
+        val settings = FakeSettingsRepository()
+        val viewModel = viewModel(settings, holder)
+        val httpLine = option.copy(baseUrl = "http://line-a.example", displayName = "线路 A")
+
+        viewModel.select(httpLine, cleartextConfirmed = true)
+        runCurrent()
+
+        assertEquals(httpLine.baseUrl, settings.settings.first().pinnedLineUrlFor(holder.playbackPrefsNamespace()))
+        assertEquals(true, settings.settings.first().pinnedLineCleartextConfirmed)
+        assertEquals(true, holder.isCleartextAllowed("${httpLine.baseUrl}/Videos/one"))
+        assertEquals(false, holder.isCleartextAllowed("http://other.example/Videos/one"))
+    }
+
     private fun TestScope.collectPinned(viewModel: LinePickerViewModel) {
         backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { viewModel.pinned.collect() }
     }

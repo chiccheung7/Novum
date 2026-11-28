@@ -7,8 +7,10 @@
   （CLEARTEXT communication to 192.168.x.x not permitted），而这类服务器通常
   没有有效证书，无法靠 HTTPS 解决。
 
-  登录页默认 HTTPS；选用 HTTP 并提交完整表单时弹出确认框，说明凭据会明文传输，
-  用户可选择取消并改回 HTTPS。见 LoginScreen 的确认逻辑。
+  Android 的静态配置无法表达运行时输入的局域网地址。应用在 API、Coil、播放器与弹幕
+  OkHttp 客户端的每个网络跳转上执行来源校验；线路测速在打开连接前校验，且不跟随重定向。
+  登录页默认 HTTPS；HTTP 登录确认后只放行该服务器来源。其他 HTTP 线路需在选择时确认，
+  并通过当前账号的固定线路设置持久化授权。
 -->
 <network-security-config>
     <base-config cleartextTrafficPermitted="true">

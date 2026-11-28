@@ -48,7 +48,8 @@ data class ServerLine(
  * docs.uhdnow.com/partner/emby-ext-domains：返回 `{ ok, data: [{ name, url }] }`，
  * 列表顺序即服务端配置顺序、无优先级字段）→ 结构化提取 `data[].name/url`，
  * 结构不认识时**递归兜底**提取其中所有 http(s) URL → 与当前服务器地址合并 →
- * **并发 HEAD 测速** → 按延迟升序排序。
+ * **并发 HEAD 测速** → 按延迟升序排序。未被当前 HTTP 会话或固定线路授权的 HTTP
+ * 地址只供线路选择器展示，不探测，也不会进入自动选线结果。
  *
  * [pinnedLine] 非空时排到列表首位且不被 [excludeBaseUrl] 过滤；测速结果仅供展示。
  * 切线只影响媒体流域名，API 鉴权域保持不变。
@@ -75,23 +76,33 @@ class LineProbe @Inject constructor(
      *
      * @param excludeBaseUrl 需要排除的线路（换线重试时排除刚失败的那条；
      *   仅在未手动锁线时生效——锁定的线路用户点名要用的，不给自动换线让位）。
+     * @param includeUnapprovedHttp 线路选择器可设为 true，以展示需用户确认的 HTTP 线路；
+     *   该选项不会触发未授权 HTTP 请求。
      */
     suspend fun lines(
         excludeBaseUrl: String? = null,
         pinnedLine: String? = null,
+        pinnedLineCleartextConfirmed: Boolean = false,
+        includeUnapprovedHttp: Boolean = false,
     ): List<ServerLine> {
         val owner = sessionHolder.capture()
         return withContext(Dispatchers.IO) {
             val key = owner.playbackPrefsNamespace() ?: return@withContext emptyList()
             if (sessionHolder.capture() !== owner) return@withContext emptyList()
+            sessionHolder.setPinnedLineCleartextPermission(pinnedLine, key, pinnedLineCleartextConfirmed)
             val now = System.currentTimeMillis()
             val cached = cache[key]?.takeIf { now - it.at < CACHE_TTL_MS }?.lines
             val base = cached ?: probe(owner)
             if (sessionHolder.capture() !== owner) return@withContext emptyList()
             if (cached == null) cache[key] = CacheEntry(now, base)
-            val pinned = pinnedLine?.takeIf { it.isNotBlank() }
-            val pinnedEntry = pinned?.let { url -> base.find { it.baseUrl == url } }
-            val rest = base.filter {
+            val eligible = if (includeUnapprovedHttp) base else base.filter {
+                sessionHolder.isCleartextAllowed(it.baseUrl)
+            }
+            val pinned = pinnedLine?.takeIf {
+                it.isNotBlank() && (includeUnapprovedHttp || sessionHolder.isCleartextAllowed(it))
+            }
+            val pinnedEntry = pinned?.let { url -> eligible.find { it.baseUrl == url } }
+            val rest = eligible.filter {
                 (excludeBaseUrl == null || it.baseUrl != excludeBaseUrl) && it.baseUrl != pinned
             }
             // 锁线已由调用方核对账号归属；暂未发现/下线的同账号线路仍尊重手动选择。
@@ -118,7 +129,13 @@ class LineProbe @Inject constructor(
         }
         return coroutineScope {
             discovered.map { line ->
-                async(Dispatchers.IO) { line.copy(latencyMs = measureLatency(line.baseUrl)) }
+                async(Dispatchers.IO) {
+                    if (sessionHolder.isCleartextAllowed(line.baseUrl)) {
+                        line.copy(latencyMs = measureLatency(line.baseUrl))
+                    } else {
+                        line.copy(latencyMs = Long.MAX_VALUE)
+                    }
+                }
             }.awaitAll()
                 .sortedBy { it.latencyMs }
                 .also { logger.d("LineProbe", "线路排序: " + it.joinToString { l -> "${l.displayName}=${l.latencyMs}ms" }) }
@@ -132,6 +149,7 @@ class LineProbe @Inject constructor(
      * 引入新的客户端实例与连接池。
      */
     private fun measureLatency(baseUrl: String): Long {
+        if (!sessionHolder.isCleartextAllowed(baseUrl)) return Long.MAX_VALUE
         val start = System.nanoTime()
         return runCatching {
             val connection = (URL("$baseUrl/System/Info/Public").openConnection() as HttpURLConnection).apply {
@@ -139,6 +157,7 @@ class LineProbe @Inject constructor(
                 connectTimeout = PROBE_TIMEOUT_MS
                 readTimeout = PROBE_TIMEOUT_MS
                 useCaches = false
+                instanceFollowRedirects = false
             }
             try {
                 connection.responseCode

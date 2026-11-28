@@ -2,7 +2,7 @@
 """Keep one T-Cast connection for install, screenshots and remote keys; never uses ADB.
 
 Commands are JSON lines on stdin, e.g. {"action":"screenshot","name":"before"},
-{"action":"install"}, {"action":"keys","codes":[14,15]},
+{"action":"install"}, {"action":"keys","codes":["right","ok"]},
 {"action":"send","message":"223>>GET"}, {"action":"quit"}.
 Protocol reference: https://github.com/pengchujin/aerial-tv/blob/main/docs/tcast-protocol.md
 """
@@ -19,6 +19,9 @@ import threading
 import time
 import urllib.request
 from pathlib import Path
+
+REMOTE_KEYS = {"up": 11, "down": 12, "left": 13, "right": 14, "ok": 15,
+               "back": 16, "menu": 18, "home": 19, "enter": 68}
 
 
 def main():
@@ -98,7 +101,9 @@ def main():
                     send(command["message"])
                 elif action == "keys":
                     for code in command["codes"]:
-                        send(f"149>>{int(code)}")
+                        # T-Cast has its own key codes, not Android KEYCODE_* values.
+                        key = REMOTE_KEYS.get(str(code).lower(), code)
+                        send(f"149>>{int(key)}")
                         time.sleep(0.3)
                 elif action == "screenshot":
                     screenshot_name = re.sub(r"[^A-Za-z0-9_-]", "_", command.get("name", "screen"))

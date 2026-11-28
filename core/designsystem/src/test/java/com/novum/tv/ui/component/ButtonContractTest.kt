@@ -29,7 +29,7 @@ class ButtonContractTest {
                 cursor = start + 1
                 val open = start + "NovumButton".length
                 val args = balancedArguments(text, open) ?: continue
-                val fixedWidth = Regex("""\.(width|size)\(""").containsMatchIn(args)
+                val fixedWidth = Regex("""\.(width|size|weight)\(""").containsMatchIn(args)
                 if (fixedWidth && !args.contains("centerContent = true")) {
                     val line = text.substring(0, start).count { it == '\n' } + 1
                     offenders += "${file.relativeTo(projectRoot)}:$line"
@@ -57,7 +57,7 @@ class ButtonContractTest {
                 cursor = start + 1
                 val open = start + "NovumButton".length
                 val args = balancedArguments(text, open) ?: continue
-                val fixedWidth = Regex("""\.(width|size)\(""").containsMatchIn(args)
+                val fixedWidth = Regex("""\.(width|size|weight)\(""").containsMatchIn(args)
                 if (!fixedWidth && args.contains("centerContent = true")) {
                     val line = text.substring(0, start).count { it == '\n' } + 1
                     offenders += "${file.relativeTo(projectRoot)}:$line"

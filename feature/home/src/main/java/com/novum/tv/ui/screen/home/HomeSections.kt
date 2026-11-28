@@ -208,7 +208,9 @@ private fun EntryCard(
         badge = if (showProgress && entry.isNextUp) {
             stringResource(R.string.home_next_up)
         } else {
-            entry.rating?.let { String.format(java.util.Locale.US, "%.1f", it) }
+            entry.rating?.takeIf { it > 0f }?.let {
+                String.format(java.util.Locale.US, "%.1f", it)
+            }
                 .takeIf { showRating }
         },
         imageUrl = if (usePoster) entry.posterUrl ?: entry.imageUrl else entry.imageUrl ?: entry.posterUrl,

@@ -16,7 +16,9 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.novum.tv.navigation.HomeRoute
 import com.novum.tv.navigation.LoginRoute
 import com.novum.tv.navigation.NovumNavHost
+import com.novum.tv.core.state.UiState
 import com.novum.tv.ui.component.LocalNovumToast
+import com.novum.tv.ui.component.NovumStateView
 import com.novum.tv.ui.component.NovumFocusScrollTuning
 import com.novum.tv.ui.component.NovumToastHost
 import com.novum.tv.ui.theme.NovumPalette
@@ -53,7 +55,7 @@ fun NovumApp(
                 val toastViewModel: NovumToastViewModel = hiltViewModel()
                 Box(modifier = Modifier.fillMaxSize()) {
                     CompositionLocalProvider(LocalNovumToast provides toastViewModel.controller) {
-                        when (entry) {
+                        when (val currentEntry = entry) {
                             AppEntryViewModel.Entry.Loading -> Box(
                                 modifier = Modifier
                                     .fillMaxSize()
@@ -65,6 +67,15 @@ fun NovumApp(
 
                             AppEntryViewModel.Entry.LoggedOut ->
                                 NovumNavHost(startDestination = LoginRoute)
+
+                            is AppEntryViewModel.Entry.RestoreFailed ->
+                                NovumStateView(
+                                    state = UiState.Error(currentEntry.error),
+                                    onRetry = entryViewModel::retryRestore,
+                                    modifier = Modifier
+                                        .align(Alignment.Center)
+                                        .fillMaxSize(),
+                                )
                         }
                     }
 

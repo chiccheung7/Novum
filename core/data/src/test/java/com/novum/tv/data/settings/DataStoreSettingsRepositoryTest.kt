@@ -253,22 +253,24 @@ class DataStoreSettingsRepositoryTest {
 
         repository.update {
             it.copy(
-                pinnedLineUrl = "https://line-a.example",
+                pinnedLineUrl = "http://line-a.example",
                 pinnedLineName = "线路 A",
                 pinnedLineAccountKey = "account-a-hash",
+                pinnedLineCleartextConfirmed = true,
             )
         }
 
         val settings = repository.settings.first()
         assertEquals(
             previous.copy(
-                pinnedLineUrl = "https://line-a.example",
+                pinnedLineUrl = "http://line-a.example",
                 pinnedLineName = "线路 A",
                 pinnedLineAccountKey = "account-a-hash",
+                pinnedLineCleartextConfirmed = true,
             ),
             settings,
         )
-        assertEquals("https://line-a.example", settings.pinnedLineUrlFor("account-a-hash"))
+        assertEquals("http://line-a.example", settings.pinnedLineUrlFor("account-a-hash"))
         assertNull(settings.pinnedLineUrlFor("account-b-hash"))
     }
 
@@ -285,6 +287,7 @@ class DataStoreSettingsRepositoryTest {
         assertEquals("旧线路", legacy.pinnedLineName)
         assertEquals("", legacy.pinnedLineAccountKey)
         assertNull(legacy.pinnedLineUrlFor("account-a-hash"))
+        assertEquals(false, legacy.pinnedLineCleartextConfirmed)
 
         repository.update { it.copy(subtitleSize = 4) }
 

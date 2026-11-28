@@ -17,7 +17,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.tv.material3.Text
 import androidx.tv.material3.Icon
@@ -43,8 +46,9 @@ private val HERO_CTA_GAP = 20.dp
 /** Hero 双 CTA 高度（= 全站统一按钮高度 [NovumDimens.ButtonHeight]）。 */
 private val HERO_CTA_HEIGHT = NovumDimens.ButtonHeight
 
-/** Hero 信息区的固定高度，为内容和下方继续观看行预留空间。 */
-private val HERO_INFO_ZONE_H = 420.dp
+/** Hero 区在短屏幕收紧高度，但保留 CTA 与元信息所需的最低空间。 */
+private val HERO_INFO_ZONE_MIN_H = 360.dp
+private val HERO_INFO_ZONE_MAX_H = 420.dp
 
 /** 简介 → 双 CTA 间距（CTA 不再沉底，跟简介保持合适距离即可）。 */
 private val HERO_OVERVIEW_TO_CTA = 24.dp
@@ -68,18 +72,20 @@ internal fun HeroSection(
     firstFocus: FocusRequester?,
     onPlayFocused: ((Boolean) -> Unit)? = null,
 ) {
-    // 信息区高度恒定：首屏预算锚（27+88+40+本区+40+露出 96 = 720），
-    // 内容之外是海报呼吸空间
+    val windowHeight = with(LocalDensity.current) { LocalWindowInfo.current.containerSize.height.toDp() }
+    val zoneHeight = adaptiveHeroInfoZoneHeight(windowHeight)
+    val overviewLines = adaptiveHeroOverviewLines(zoneHeight)
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .height(HERO_INFO_ZONE_H),
+            .height(zoneHeight),
     ) {
         if (entry != null) {
             HeroInfoBlock(
                 entry = entry,
                 firstFocus = firstFocus,
                 onPlayFocused = onPlayFocused,
+                overviewLines = overviewLines,
                 onDetail = { onDetail(entry.seriesId ?: entry.id) },
                 onPlay = {
                     // 电影直接起播；剧集/分集进详情页选源（详情页再决定从哪播）
@@ -109,6 +115,7 @@ private fun HeroInfoBlock(
     entry: HomeEntry,
     firstFocus: FocusRequester?,
     onPlayFocused: ((Boolean) -> Unit)? = null,
+    overviewLines: Int,
     onDetail: () -> Unit,
     onPlay: () -> Unit,
 ) {
@@ -134,12 +141,15 @@ private fun HeroInfoBlock(
                 entry.officialRating?.takeIf { it.isNotBlank() }?.let { add(it) }
                 entry.resolution?.let { add(it) }
                 entry.runtimeMinutes?.let { add(formatRuntime(it)) }
-                entry.rating?.let { add(String.format(java.util.Locale.US, "%.1f", it)) }
+                entry.rating?.takeIf { it > 0f }?.let {
+                    add(String.format(java.util.Locale.US, "%.1f", it))
+                }
             },
             genreTags = entry.genres.take(2),
             // 只显示动态范围；编码类标签不再上屏
             formatBadges = entry.videoFormats,
             overview = entry.overview,
+            overviewLines = overviewLines,
         )
         // 简介与双 CTA 之间使用固定间距。
         Spacer(modifier = Modifier.height(HERO_OVERVIEW_TO_CTA))
@@ -167,6 +177,15 @@ private fun HeroInfoBlock(
             }
         }
     }
+}
+
+internal fun adaptiveHeroInfoZoneHeight(windowHeight: Dp): Dp =
+    (windowHeight * 0.58f).coerceIn(HERO_INFO_ZONE_MIN_H, HERO_INFO_ZONE_MAX_H)
+
+internal fun adaptiveHeroOverviewLines(zoneHeight: Dp): Int = when {
+    zoneHeight < 390.dp -> 3
+    zoneHeight < 410.dp -> 4
+    else -> 5
 }
 
 /**

@@ -17,6 +17,7 @@ import com.novum.tv.data.repository.DanmuRepository
 import com.novum.tv.data.repository.ItemPlaybackPrefsStore
 import com.novum.tv.data.repository.MediaRepository
 import com.novum.tv.data.repository.PlaybackRepository
+import com.novum.tv.data.remote.emby.SessionHolder
 import com.novum.tv.data.settings.SettingsRepository
 import com.novum.tv.data.settings.danmuConfig
 import com.novum.tv.model.Chapter
@@ -124,6 +125,7 @@ class PlayerViewModel @Inject constructor(
     private val danmuRepository: DanmuRepository,
     private val capability: CapabilityProvider,
     private val playbackPrefs: ItemPlaybackPrefsStore,
+    internal val sessionHolder: SessionHolder,
     private val logger: NovumLogger,
     @ApplicationContext private val appContext: Context,
     @ApplicationScope private val appScope: CoroutineScope,
@@ -339,7 +341,9 @@ class PlayerViewModel @Inject constructor(
 
             fileName != null -> danmuJob = viewModelScope.launch {
                 _state.update { it.copy(danmu = it.danmu.copy(load = DanmuLoad.Matching)) }
-                when (val matched = danmuRepository.match(fileName)) {
+                val matched = danmuRepository.match(fileName)
+                currentCoroutineContext().ensureActive()
+                when (matched) {
                     is NovumResult.Success -> {
                         val match = matched.value
                         if (match == null) {
@@ -363,7 +367,9 @@ class PlayerViewModel @Inject constructor(
     /** 拉取指定分集的弹幕并进入 Loaded 态。 */
     private suspend fun loadDanmuComments(episodeId: String, manual: Boolean, title: String? = null) {
         _state.update { it.copy(danmu = it.danmu.copy(load = DanmuLoad.Loading)) }
-        when (val result = danmuRepository.comments(episodeId)) {
+        val result = danmuRepository.comments(episodeId)
+        currentCoroutineContext().ensureActive()
+        when (result) {
             is NovumResult.Success -> _state.update { state ->
                 state.copy(
                     danmu = state.danmu.copy(
@@ -388,7 +394,17 @@ class PlayerViewModel @Inject constructor(
         if (!enabled) {
             danmuJob?.cancel()
             danmuJob = null
-            _state.update { it.copy(danmu = it.danmu.copy(load = DanmuLoad.Idle)) }
+            danmuSearchJob?.cancel()
+            danmuSearchJob = null
+            _state.update {
+                it.copy(
+                    danmu = it.danmu.copy(
+                        load = DanmuLoad.Idle,
+                        comments = emptyList(),
+                        search = DanmuSearch.Idle,
+                    ),
+                )
+            }
         }
         viewModelScope.launch {
             runCatchingSuspend { settings.update { it.copy(danmuEnabled = enabled) } }
@@ -463,7 +479,12 @@ class PlayerViewModel @Inject constructor(
         danmuSearchJob?.cancel()
         danmuSearchJob = viewModelScope.launch {
             _state.update { it.copy(danmu = it.danmu.copy(search = DanmuSearch.Searching)) }
-            when (val result = danmuRepository.searchAnime(trimmed)) {
+            val result = danmuRepository.searchAnime(trimmed)
+            // Some repository implementations may complete a non-cancellable
+            // adapter after the Job was cancelled. Do not let that stale result
+            // reopen a dialog the user already closed.
+            currentCoroutineContext().ensureActive()
+            when (result) {
                 is NovumResult.Success -> _state.update { state ->
                     state.copy(danmu = state.danmu.copy(search = DanmuSearch.Results(trimmed, result.value)))
                 }
@@ -480,7 +501,9 @@ class PlayerViewModel @Inject constructor(
         danmuSearchJob?.cancel()
         danmuSearchJob = viewModelScope.launch {
             _state.update { it.copy(danmu = it.danmu.copy(search = DanmuSearch.Searching)) }
-            when (val result = danmuRepository.episodes(anime.bangumiId)) {
+            val result = danmuRepository.episodes(anime.bangumiId)
+            currentCoroutineContext().ensureActive()
+            when (result) {
                 is NovumResult.Success -> _state.update { state ->
                     state.copy(danmu = state.danmu.copy(search = DanmuSearch.Episodes(anime, result.value)))
                 }
@@ -496,6 +519,8 @@ class PlayerViewModel @Inject constructor(
      * 选定手动匹配的分集：拉取弹幕并按条目记忆（下次播放同一集直接恢复）。
      */
     fun selectDanmuEpisode(episode: DanmuEpisode) {
+        danmuSearchJob?.cancel()
+        danmuSearchJob = null
         danmuEpisodeId = episode.episodeId
         viewModelScope.launch {
             runCatchingSuspend { playbackPrefs.update(itemId = itemId, danmuEpisodeId = episode.episodeId) }
@@ -508,11 +533,15 @@ class PlayerViewModel @Inject constructor(
 
     /** 退出手动搜索（不改变当前匹配）。 */
     fun closeDanmuSearch() {
+        danmuSearchJob?.cancel()
+        danmuSearchJob = null
         _state.update { it.copy(danmu = it.danmu.copy(search = DanmuSearch.Idle)) }
     }
 
     /** 恢复自动匹配：清除手动分集记忆并重新按文件名匹配。 */
     fun useDanmuAutoMatch() {
+        danmuSearchJob?.cancel()
+        danmuSearchJob = null
         danmuEpisodeId = null
         viewModelScope.launch {
             runCatchingSuspend { playbackPrefs.update(itemId = itemId, clearDanmuEpisodeId = true) }

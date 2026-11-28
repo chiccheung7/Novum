@@ -39,7 +39,7 @@ import com.novum.tv.ui.screen.settings.SettingsScreen
  *
  * 路由约定：
  * - 页面通过 lambda 回调通信，不把 NavController 传进 Screen。
- * - 详情页返回直接回首页，弹窗由页面自行处理 BackHandler 优先级。
+ * - 详情页返回到实际来源页，弹窗由页面自行处理 BackHandler 优先级。
  * - 页签跳转使用 popUpTo(HomeRoute)+launchSingleTop；当前页签点击由组件守卫为 no-op。
  *
  * 详情目的地采用缩放淡入：进入时 0.94 → 1，返回时对称缩小淡出；其他目的地使用默认淡入。
@@ -139,7 +139,7 @@ fun NovumNavHost(
             },
         ) {
             DetailScreen(
-                onBack = { navigateTab(NovumNavTab.Home) },
+                onBack = { navController.popBackStack() },
                 onPlay = { itemId, startPositionMs, mediaSourceId ->
                     navController.navigate(PlayerRoute(itemId, startPositionMs, mediaSourceId))
                 },

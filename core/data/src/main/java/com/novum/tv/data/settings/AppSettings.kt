@@ -26,6 +26,7 @@ import com.novum.tv.model.DanmuSpeed
  * @param pinnedLineName 锁定线路的显示名（`data[].name`），与 [pinnedLineUrl]
  *   成对持久化（接口可能不返回 name，回退域名短名展示）。
  * @param pinnedLineAccountKey 锁线所属服务器/用户的稳定摘要；旧版无归属锁线须重新选择。
+ * @param pinnedLineCleartextConfirmed 当前账号已明确确认该固定线路可使用明文 HTTP。
  * @param playbackSpeed 记忆的倍速档；1f 为正常速，取值限于 PLAYBACK_SPEEDS。
  * @param autoPlayNext 自动连播：片尾显示
  *   「下一集 10 秒后播放」倒计时，任意键取消，归零换集；季末天然不连播
@@ -60,6 +61,7 @@ data class AppSettings(
     val pinnedLineUrl: String = "",
     val pinnedLineName: String = "",
     val pinnedLineAccountKey: String = "",
+    val pinnedLineCleartextConfirmed: Boolean = false,
     val playbackSpeed: Float = 1f,
     val autoPlayNext: Boolean = true,
     /** 弹幕开关：默认关（对齐官方网页播放器）；抽屉开/关即时写回。 */
@@ -92,6 +94,10 @@ data class AppSettings(
 fun AppSettings.pinnedLineUrlFor(accountKey: String?): String? = pinnedLineUrl.takeIf {
     it.isNotBlank() && !accountKey.isNullOrBlank() && pinnedLineAccountKey == accountKey
 }
+
+/** HTTP 固定线路只在其账号归属匹配且有显式确认位时可用于流量授权。 */
+fun AppSettings.pinnedCleartextLineFor(accountKey: String?): String? =
+    pinnedLineUrlFor(accountKey)?.takeIf { pinnedLineCleartextConfirmed && it.startsWith("http://") }
 
 /** 把设置快照里的弹幕原始字段组装成渲染配置（档位 → 领域枚举）。 */
 fun AppSettings.danmuConfig(): DanmuConfig = DanmuConfig(

@@ -20,7 +20,7 @@
     <string name="login_error_username">请填写用户名</string>
     <string name="login_error_password">请填写密码</string>
     <string name="login_cleartext_title">使用 HTTP 明文连接？</string>
-    <string name="login_cleartext_message">HTTP 会明文传输用户名与密码，是否继续？</string>
+    <string name="login_cleartext_message">HTTP 会明文传输到此服务器的 API、图片、播放与弹幕请求；网络中的其他人可能读取或修改这些数据。服务器发现的其他 HTTP 地址仍需单独确认。是否继续？</string>
     <string name="login_cleartext_confirm">仍然登录</string>
     <string name="login_cleartext_cancel">取消</string>
     <string name="home_exit_confirm">再按一次返回键退出</string>
@@ -44,6 +44,12 @@
 
     <!-- 线路选择 -->
     <string name="line_picker_title">选择线路</string>
+    <string name="line_picker_unmeasured">未测速</string>
+    <string name="line_picker_http_confirmation_needed">HTTP · 需确认</string>
+    <string name="line_picker_cleartext_title">使用 HTTP 线路？</string>
+    <string name="line_picker_cleartext_message">线路「%1$s」使用明文 HTTP。播放请求可能被读取或修改；仅在信任此线路时继续。</string>
+    <string name="line_picker_cleartext_confirm">信任并使用</string>
+    <string name="line_picker_cleartext_cancel">取消</string>
     <string name="line_picker_current">当前</string>
     <string name="line_picker_loading">正在获取线路…</string>
     <string name="line_picker_failed">线路列表获取失败</string>

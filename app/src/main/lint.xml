@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <lint>
-    <!-- 自建 Emby 服务器可能使用 HTTP；登录页会在凭据明文传输前提示用户确认。 -->
+    <!-- 动态 LAN 来源由 OkHttp 网络跳转守卫和线路测速来源检查限制。 -->
     <issue id="InsecureBaseConfiguration" severity="ignore" />
 </lint>

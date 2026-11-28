@@ -22,12 +22,16 @@ AAR 放进 `app/libs/` 即自动生效，无需改一行 App 代码。
 
 ## 一键重建
 
-前置条件：JDK 17、Android SDK、NDK r26b（`26.3.11579264`）、CMake 3.22.1，
+前置条件：JDK 17、Android SDK、NDK r26d（`26.3.11579264`）、CMake 3.22.1，
 并设置 `ANDROID_HOME`。在**仓库根目录**执行：
 
 ```sh
 bash ffmpeg-decoder/build.sh
 ```
+
+Windows 可在 MSYS2 Bash 下执行，需要安装 `make`、`perl`、`diffutils`。
+脚本会自动选择 Windows NDK 工具链；SDK、JDK 路径在 Bash 中使用 `/d/...` 格式。
+静态库与 JNI 使用同一个 `NDK_VERSION`，JNI 显式采用 16 KB ELF 段对齐。
 
 脚本做四件事：
 

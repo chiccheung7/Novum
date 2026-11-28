@@ -331,6 +331,11 @@ int decodePacket(AVCodecContext* context, AVPacket* packet,
 
     int outSampleSize = av_get_bytes_per_sample(context->request_sample_fmt);
     int outSamples = swr_get_out_samples(resampleContext, sampleCount);
+    if (outSamples < 0) {
+      logError("swr_get_out_samples", outSamples);
+      av_frame_free(&frame);
+      return transformError(outSamples);
+    }
     int bufferOutSize = outSampleSize * channelCount * outSamples;
     if (outSize + bufferOutSize > outputSize) {
       LOGD(
@@ -345,7 +350,10 @@ int decodePacket(AVCodecContext* context, AVPacket* packet,
         return AUDIO_DECODER_ERROR_OTHER;
       }
     }
-    result = swr_convert(resampleContext, &outputBuffer, bufferOutSize,
+    // growBuffer may return a new base pointer. Continue appending after the
+    // samples already written for earlier frames in this packet.
+    uint8_t* frameOutput = outputBuffer + outSize;
+    result = swr_convert(resampleContext, &frameOutput, outSamples,
                          (const uint8_t**)frame->data, frame->nb_samples);
     av_frame_free(&frame);
     if (result < 0) {
@@ -358,8 +366,8 @@ int decodePacket(AVCodecContext* context, AVPacket* packet,
            available);
       return AUDIO_DECODER_ERROR_INVALID_DATA;
     }
-    outputBuffer += bufferOutSize;
-    outSize += bufferOutSize;
+    int bytesWritten = result * outSampleSize * channelCount;
+    outSize += bytesWritten;
   }
   return outSize;
 }

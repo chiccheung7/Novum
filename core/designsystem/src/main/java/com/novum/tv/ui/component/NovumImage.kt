@@ -52,6 +52,7 @@ import com.novum.tv.core.log.LogRedaction
  *   尺寸，两边必须保持一致。
  * @param onLoadState 加载结果回调：true = 成功显示，false = 失败。供调用方
  *   在图片盖上来之后收起自己的占位内容（如 [NovumAvatar] 的首字）。
+ * @param onSettled 图片淡入结束或加载失败时调用，供需要完整可见时长的轮播使用。
  */
 @Composable
 fun NovumImage(
@@ -62,6 +63,7 @@ fun NovumImage(
     alignment: Alignment = Alignment.Center,
     requestSize: IntSize? = null,
     onLoadState: ((Boolean) -> Unit)? = null,
+    onSettled: ((Boolean) -> Unit)? = null,
 ) {
     if (url.isNullOrBlank()) return
     var loaded by remember(url) { mutableStateOf(false) }
@@ -78,6 +80,7 @@ fun NovumImage(
             } else {
                 alpha.animateTo(1f, animationSpec = tween(durationMillis = IMAGE_FADE_MS))
             }
+            onSettled?.invoke(true)
         }
     }
     val context = LocalContext.current
@@ -111,6 +114,7 @@ fun NovumImage(
                 // 没有这行日志，「图为什么没上屏」只能靠猜
                 Log.e("NovumImage", LogRedaction.redact("load error: $url -> ${value.result.throwable}"))
                 onLoadState?.invoke(false)
+                onSettled?.invoke(false)
             },
         )
     }

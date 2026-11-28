@@ -40,7 +40,9 @@ class DataStoreSessionStore @Inject constructor(
 
     override suspend fun load(): Session? {
         migrateLegacyToken()
-        return session.first()
+        // Session restoration must distinguish an empty store from a failed disk read.
+        // Startup surfaces IO errors so the entry screen can offer a retry.
+        return dataStore.data.first().toSession(secretCipher)
     }
 
     override suspend fun save(
@@ -144,11 +146,7 @@ class DataStoreSessionStore @Inject constructor(
 
     /** Encrypts tokens written by older releases before continuing automatic sign-in. */
     private suspend fun migrateLegacyToken() {
-        val snapshot = dataStore.data
-            .catch { throwable ->
-                if (throwable is IOException) emit(emptyPreferences()) else throw throwable
-            }
-            .first()
+        val snapshot = dataStore.data.first()
         val storedToken = snapshot[SessionKeys.Token]?.takeIf { it.isNotBlank() } ?: return
         if (secretCipher.isEncrypted(storedToken)) return
 

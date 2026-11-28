@@ -8,7 +8,7 @@
 #
 # 前置条件：
 #   - JDK 17（与 novum 根工程一致）
-#   - Android SDK + NDK r26b/c（脚本默认 26.3.11579264）+ CMake 3.22.1
+#   - Android SDK + NDK r26d（脚本默认 26.3.11579264）+ CMake 3.22.1
 #   - ANDROID_HOME / ANDROID_SDK_ROOT 指向 SDK 根目录
 #
 # 用法（在仓库根目录执行）：
@@ -24,7 +24,13 @@ FFMPEG_DIR="$JNI/ffmpeg"
 FFMPEG_VERSION="6.0"                       # 官方推荐版本
 FFMPEG_TAG="release/${FFMPEG_VERSION}"
 NDK_VERSION="${NDK_VERSION:-26.3.11579264}"
-HOST_PLATFORM="${HOST_PLATFORM:-linux-x86_64}"
+if [ -z "${HOST_PLATFORM:-}" ]; then
+  case "$(uname -s)" in
+    MINGW*|MSYS*|CYGWIN*) HOST_PLATFORM="windows-x86_64" ;;
+    Darwin*) HOST_PLATFORM="darwin-x86_64" ;;
+    *) HOST_PLATFORM="linux-x86_64" ;;
+  esac
+fi
 ANDROID_ABI="${ANDROID_ABI:-24}"           # 必须 <= 宿主 app 的 minSdk(24)
 ENABLED_DECODERS=(ac3 eac3 truehd dca)     # AC3/E-AC3/TrueHD/DTS/DTS-HD
 # -----------------------------------------------------------------------------
@@ -63,7 +69,8 @@ fi
 
 echo "==> 3/4 编译 AAR（复用 novum 根工程的 Gradle wrapper）"
 export JAVA_HOME="${JAVA_HOME:-$(dirname "$(dirname "$(readlink -f "$(command -v javac)")")")}"
-( cd "$HERE/.." && ./gradlew -p ffmpeg-decoder :decoder:assembleRelease --no-daemon )
+( cd "$HERE/.." && ./gradlew -p ffmpeg-decoder :decoder:assembleRelease \
+    -PnovumNdkVersion="$NDK_VERSION" --no-daemon )
 
 echo "==> 4/4 复制 AAR 到 app/libs"
 AAR="$HERE/decoder/build/outputs/aar/decoder-release.aar"

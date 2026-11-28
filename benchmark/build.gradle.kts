@@ -3,7 +3,7 @@ plugins {
 }
 
 // 帧时序测量模块（流畅度规范 11.2）：Macrobenchmark FrameTimingMetric。
-// connectedReleaseAndroidTest 跑 StartupBenchmark.dpadScrollFrameTiming 产出
+// connectedBenchmarkAndroidTest 跑 StartupBenchmark.dpadScrollFrameTiming 产出
 // P50/P90/P99 报告。profile 生成管线待 androidx.baselineprofile 适配 AGP 9
 // 后接入（android.baselineprofile 插件 + generateReleaseBaselineProfile 任务）。
 android {
@@ -17,8 +17,21 @@ android {
     }
 
     targetProjectPath = ":app"
+    buildTypes {
+        create("benchmark") {
+            isDebuggable = true
+            signingConfig = signingConfigs.getByName("debug")
+            matchingFallbacks += listOf("release")
+        }
+    }
     // profile 生成走 release（R8 规则由生成结果自动重写，规范 E4）
     experimentalProperties["android.experimental.self-instrumenting"] = true
+}
+
+androidComponents {
+    beforeVariants(selector().all()) { variant ->
+        variant.enable = variant.buildType == "benchmark"
+    }
 }
 
 dependencies {

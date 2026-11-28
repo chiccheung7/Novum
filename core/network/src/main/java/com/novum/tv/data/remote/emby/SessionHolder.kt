@@ -1,6 +1,7 @@
 package com.novum.tv.data.remote.emby
 
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
+import okhttp3.HttpUrl
 import com.novum.tv.core.network.BuildConfig
 import com.novum.tv.data.session.Session
 import java.security.MessageDigest
@@ -74,6 +75,12 @@ class SessionHolder @Inject constructor() {
     @Volatile
     private var snapshot: SessionSnapshot = SessionSnapshot()
 
+    @Volatile
+    private var loginCleartextOrigin: HttpUrl? = null
+
+    @Volatile
+    private var pinnedCleartextLine: PinnedCleartextLine? = null
+
     /** One atomic read; reference equality also detects a switch to an otherwise identical session. */
     fun capture(): SessionSnapshot = snapshot
 
@@ -102,6 +109,7 @@ class SessionHolder @Inject constructor() {
      * @param session 最新会话。
      */
     fun update(session: Session?) {
+        val previousAccountKey = snapshot.playbackPrefsNamespace()
         snapshot = SessionSnapshot(
             token = session?.token.orEmpty(),
             deviceId = session?.deviceId.orEmpty(),
@@ -109,7 +117,55 @@ class SessionHolder @Inject constructor() {
             userId = session?.userId.orEmpty(),
             userName = session?.userName.orEmpty(),
         )
+        loginCleartextOrigin = null
+        if (previousAccountKey != snapshot.playbackPrefsNamespace()) {
+            pinnedCleartextLine = null
+        }
     }
+
+    /** Temporarily allow the explicitly confirmed HTTP origin used by the login flow. */
+    fun allowLoginCleartextOrigin(server: String) {
+        loginCleartextOrigin = server.toHttpUrlOrNull()?.takeIf { it.scheme == "http" }
+    }
+
+    /** Remove the temporary login permission after the request completes or fails. */
+    fun clearLoginCleartextOrigin(server: String) {
+        val expected = server.toHttpUrlOrNull() ?: return
+        if (loginCleartextOrigin?.sameOrigin(expected) == true) loginCleartextOrigin = null
+    }
+
+    /**
+     * Restore the persisted HTTP line permission for the active account.
+     * The caller must source [server] from that account's persisted pinned-line setting.
+     */
+    fun setPinnedLineCleartextPermission(server: String?, accountKey: String?, confirmed: Boolean) {
+        val activeAccountKey = playbackPrefsNamespace()
+        val parsed = server?.toHttpUrlOrNull()?.takeIf { it.scheme == "http" }
+        pinnedCleartextLine = if (confirmed && parsed != null && !accountKey.isNullOrBlank() &&
+            accountKey == activeAccountKey
+        ) {
+            PinnedCleartextLine(parsed, accountKey)
+        } else {
+            null
+        }
+    }
+
+    /** HTTP is allowed only for the confirmed active server or the active account's pinned line. */
+    fun isCleartextAllowed(url: String): Boolean {
+        val target = url.toHttpUrlOrNull() ?: return false
+        if (target.scheme != "http") return true
+        val current = capture()
+        val activeServer = current.server.toHttpUrlOrNull()
+        if (activeServer?.sameOrigin(target) == true) return true
+        if (loginCleartextOrigin?.sameOrigin(target) == true) return true
+        val pinned = pinnedCleartextLine ?: return false
+        return pinned.accountKey == current.playbackPrefsNamespace() && pinned.origin.sameOrigin(target)
+    }
+
+    private data class PinnedCleartextLine(val origin: HttpUrl, val accountKey: String)
+
+    private fun HttpUrl.sameOrigin(other: HttpUrl): Boolean =
+        scheme == other.scheme && host == other.host && port == other.port
 
     /**
      * 构造 Emby 要求的 `X-Emby-Authorization` 头。

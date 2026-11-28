@@ -13,6 +13,7 @@ import coil3.network.okhttp.OkHttpNetworkFetcherFactory
 import okio.Path.Companion.toOkioPath
 import com.novum.tv.data.remote.emby.EmbyClientFactory
 import com.novum.tv.data.remote.emby.SessionHolder
+import com.novum.tv.data.remote.emby.addCleartextOriginGuard
 import com.novum.tv.data.remote.emby.addEmbySessionAuthentication
 import com.novum.tv.ui.component.NovumFastNav
 import kotlinx.coroutines.delay
@@ -107,6 +108,7 @@ class NovumApplication : Application(), SingletonImageLoader.Factory {
             chain.proceed(builder.build())
         }
         .addEmbySessionAuthentication(sessionHolder)
+        .addCleartextOriginGuard(sessionHolder)
         .build()
 
     private companion object {

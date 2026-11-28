@@ -14,7 +14,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -58,6 +58,7 @@ fun NovumLinePickerDialog(
     onSelectLine: (LineOption?) -> Unit,
     loading: Boolean,
     failed: Boolean,
+    onRetry: () -> Unit = {},
     onDismiss: () -> Unit,
 ) {
     Dialog(
@@ -68,7 +69,7 @@ fun NovumLinePickerDialog(
             modifier = Modifier
                 .fillMaxSize()
                 .background(NovumPalette.Scrim.copy(alpha = LINE_PICKER_SCRIM_ALPHA))
-                .padding(vertical = NovumDimens.SafeVertical),
+                .padding(horizontal = 24.dp, vertical = NovumDimens.SafeVertical),
             contentAlignment = Alignment.Center,
         ) {
             NovumLinePickerPanel(
@@ -77,6 +78,8 @@ fun NovumLinePickerDialog(
                 onSelectLine = onSelectLine,
                 loading = loading,
                 failed = failed,
+                onRetry = onRetry,
+                onDismiss = onDismiss,
             )
         }
     }
@@ -90,8 +93,11 @@ fun NovumLinePickerPanel(
     onSelectLine: (LineOption?) -> Unit,
     loading: Boolean,
     failed: Boolean,
+    onRetry: () -> Unit = {},
+    onDismiss: () -> Unit = {},
 ) {
     val firstRowFocus = remember { FocusRequester() }
+    val actionFocus = remember { FocusRequester() }
     val currentUrl = lines?.let { available ->
         pinnedUrl?.takeIf { pinned -> available.any { it.baseUrl == pinned } }
             ?: available.minByOrNull { it.latencyMs }?.baseUrl
@@ -100,10 +106,15 @@ fun NovumLinePickerPanel(
     if (!loading && !failed && currentUrl != null) {
         // 数据到位并挂上目标行后抓焦；窗口尚未接受焦点时沿用统一重试。
         NovumInitialFocus(firstRowFocus, key = currentUrl)
+    } else if (loading || failed) {
+        // Loading/failed states used to contain only Text, leaving a TV dialog
+        // without an initial focus target or a reachable recovery action.
+        NovumInitialFocus(actionFocus, key = if (loading) "loading" else "failed")
     }
     Column(
         modifier = Modifier
-            .width(LINE_PICKER_PANEL_WIDTH)
+            .widthIn(max = LINE_PICKER_PANEL_WIDTH)
+            .fillMaxWidth()
             .novumGlassPanel()
             .padding(vertical = 24.dp)
             .verticalScroll(rememberScrollState()),
@@ -117,12 +128,20 @@ fun NovumLinePickerPanel(
             modifier = Modifier.padding(horizontal = 32.dp),
         )
         when {
-            loading -> Text(
-                text = stringResource(R.string.line_picker_loading),
-                style = NovumType.Body,
-                color = NovumPalette.PaperMuted,
-                modifier = Modifier.padding(horizontal = 32.dp, vertical = 24.dp),
-            )
+            loading -> {
+                Text(
+                    text = stringResource(R.string.line_picker_loading),
+                    style = NovumType.Body,
+                    color = NovumPalette.PaperMuted,
+                    modifier = Modifier.padding(horizontal = 32.dp, vertical = 24.dp),
+                )
+                NovumButton(
+                    onClick = onDismiss,
+                    modifier = Modifier.focusRequester(actionFocus),
+                ) {
+                    Text(text = stringResource(R.string.action_cancel))
+                }
+            }
 
             failed -> Column(
                 horizontalAlignment = Alignment.CenterHorizontally,
@@ -139,6 +158,17 @@ fun NovumLinePickerPanel(
                     style = NovumType.Caption,
                     color = NovumPalette.PaperMuted,
                 )
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    NovumButton(
+                        onClick = onRetry,
+                        modifier = Modifier.focusRequester(actionFocus),
+                    ) {
+                        Text(text = stringResource(R.string.state_retry))
+                    }
+                    NovumButton(onClick = onDismiss) {
+                        Text(text = stringResource(R.string.action_cancel))
+                    }
+                }
             }
 
             lines != null -> Column(
@@ -148,9 +178,14 @@ fun NovumLinePickerPanel(
                 // 未锁定时默认选中延迟最低线路；锁定后选中锁定线路。
                 lines.forEach { line ->
                     val isCurrent = line.baseUrl == currentUrl
+                    val detail = when {
+                        line.cleartextNeedsConfirmation -> stringResource(R.string.line_picker_http_confirmation_needed)
+                        line.latencyMs == Long.MAX_VALUE -> stringResource(R.string.line_picker_unmeasured)
+                        else -> "${line.latencyMs}ms"
+                    }
                     LineRow(
                         title = line.displayName,
-                        detail = "${line.latencyMs}ms",
+                        detail = detail,
                         selected = isCurrent,
                         requestFocus = isCurrent,
                         focusRequester = if (isCurrent) firstRowFocus else null,
@@ -222,6 +257,7 @@ data class LineOption(
     val displayName: String,
     val shortName: String,
     val latencyMs: Long,
+    val cleartextNeedsConfirmation: Boolean = false,
 )
 
 /** 遮罩透明度（与 Profile 级弹层一致）。 */
