@@ -126,7 +126,7 @@ private fun HeroInfoBlock(
             // 与全局内容对齐线一致。
             .padding(start = NovumDimens.SafeHorizontal),
     ) {
-        // 信息块由 designsystem 组件渲染；有 ClearLogo 时替代文字标题。
+        // 信息块由 designsystem 组件渲染；有 ClearLogo 时将文字标题放进元信息行。
         NovumMediaInfoBlock(
             title = entry.title,
             // ClearLogo 放在信息块顶部；无 logo 时显示文字标题。

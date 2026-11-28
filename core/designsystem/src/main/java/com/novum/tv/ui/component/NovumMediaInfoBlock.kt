@@ -3,15 +3,18 @@ package com.novum.tv.ui.component
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -38,7 +41,7 @@ import kotlin.math.roundToInt
  * 媒体信息块：首页 Hero 与详情页共用，包含标题、元信息、题材标签、格式标志和简介。
  * 按钮由页面管理。
  *
- * @param showTitleWithLogo ClearLogo 可用时仍在下方显示小号文字标题；详情页启用。
+ * ClearLogo 可用时，文字标题放在元信息行首；不可用时回退为独立大标题。
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -52,7 +55,6 @@ fun NovumMediaInfoBlock(
     logoUrl: String? = null,
     titleMaxLines: Int = 1,
     overviewLines: Int = MEDIA_INFO_OVERVIEW_LINES,
-    showTitleWithLogo: Boolean = false,
 ) {
     var logoFailed by remember(logoUrl) { mutableStateOf(false) }
     val showLogo = !logoUrl.isNullOrBlank() && !logoFailed
@@ -69,16 +71,6 @@ fun NovumMediaInfoBlock(
                     .height(MEDIA_INFO_LOGO_HEIGHT)
                     .aspectRatio(MEDIA_INFO_LOGO_ASPECT),
             )
-            if (showTitleWithLogo && !title.isNullOrBlank()) {
-                Spacer(modifier = Modifier.height(MEDIA_INFO_LOGO_TO_TITLE))
-                Text(
-                    text = title,
-                    style = NovumType.BodyStrong.copy(fontFamily = FontFamily.Default),
-                    color = NovumPalette.Paper,
-                    maxLines = titleMaxLines,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
         } else if (title != null) {
             Text(
                 text = title,
@@ -88,7 +80,8 @@ fun NovumMediaInfoBlock(
                 overflow = TextOverflow.Ellipsis,
             )
         }
-        if (metaParts.isNotEmpty()) {
+        val metadataTitle = title?.takeIf { showLogo && it.isNotBlank() }
+        if (metadataTitle != null || metaParts.isNotEmpty()) {
             if (showLogo || title != null) {
                 Spacer(
                     modifier = Modifier.height(
@@ -96,13 +89,41 @@ fun NovumMediaInfoBlock(
                     ),
                 )
             }
-            Text(
-                text = metaParts.joinToString(" · "),
-                style = NovumType.Body,
-                color = NovumPalette.PaperMuted,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
+            if (metadataTitle != null) {
+                BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
+                    val metadataMaxWidth = maxWidth * MEDIA_INFO_METADATA_MAX_FRACTION
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            text = metadataTitle,
+                            // 长片名使用剩余空间，保留右侧年份、类型和评分的阅读空间。
+                            modifier = Modifier.weight(1f, fill = false),
+                            style = NovumType.Body.copy(fontFamily = FontFamily.Default),
+                            color = NovumPalette.PaperMuted,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                        if (metaParts.isNotEmpty()) {
+                            Text(
+                                text = " · " + metaParts.joinToString(" · "),
+                                // 元数据也有上限，避免超长技术信息把片名完全挤出屏幕。
+                                modifier = Modifier.widthIn(max = metadataMaxWidth),
+                                style = NovumType.Body,
+                                color = NovumPalette.PaperMuted,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                    }
+                }
+            } else {
+                Text(
+                    text = metaParts.joinToString(" · "),
+                    style = NovumType.Body,
+                    color = NovumPalette.PaperMuted,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
         }
         // 题材标签和格式标志合并一行，两类胶囊保持水平中线对齐。
         if (genreTags.isNotEmpty() || formatBadges.isNotEmpty()) {
@@ -168,11 +189,11 @@ fun NovumTagChip(text: String, outlined: Boolean = false) {
 /** 信息块标题 → 元信息行。 */
 val MEDIA_INFO_TITLE_TO_META = 16.dp
 
-/** 信息块 ClearLogo（或其下方的小号标题）→ 元信息行。 */
+/** 信息块 ClearLogo → 含文字标题的元信息行。 */
 val MEDIA_INFO_LOGO_TO_META = 20.dp
 
-/** 详情页保留可读文字标题时，与 ClearLogo 之间的间距。 */
-private val MEDIA_INFO_LOGO_TO_TITLE = 12.dp
+/** 片名与元数据同时出现时，元数据最多占行宽的 65%，为长片名保留空间。 */
+private const val MEDIA_INFO_METADATA_MAX_FRACTION = 0.65f
 
 /**
  * 信息块 ClearLogo 高度为 104dp；横版标题图在信息块顶部替代大文字标题。

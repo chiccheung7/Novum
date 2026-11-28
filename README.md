@@ -19,7 +19,7 @@ Novum 是客户端，不提供媒体、Emby 服务器或账号。使用前需要
 
 ## 下载
 
-当前稳定版为 **0.2.7**。前往 [GitHub Releases](https://github.com/chiccheung7/Novum/releases/latest) 下载 APK；发布页同时提供 SHA-256 校验文件和许可材料。
+当前稳定版为 **0.2.8**。前往 [GitHub Releases](https://github.com/chiccheung7/Novum/releases/latest) 下载 APK；发布页同时提供 SHA-256 校验文件和许可材料。
 
 安装后，在登录页填写自己的 Emby 服务器地址和账号。建议使用 HTTPS；连接到 HTTP 地址时，应用会在提交凭据前提示风险。
 

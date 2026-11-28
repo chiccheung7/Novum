@@ -29,7 +29,7 @@ android {
         // navigation-compose 2.10.x 的 AAR 声明 minSdk 24，故下限锁 24（Android TV 7.0）
         minSdk = 24
         targetSdk = 37
-        versionCode = 9
+        versionCode = 10
         // 与 :core:network 的 BuildConfig.VERSION_NAME 同源（gradle/libs.versions.toml 的 novum）
         versionName = libs.versions.novum.get()
 

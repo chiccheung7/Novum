@@ -2,6 +2,9 @@ package com.novum.tv.ui.component
 
 import android.content.Context
 import android.graphics.Color
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.width
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.test.SemanticsNodeInteraction
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.v2.createComposeRule
@@ -13,6 +16,8 @@ import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.dp
 import androidx.test.core.app.ApplicationProvider
 import coil3.ColorImage
 import coil3.ImageLoader
@@ -101,8 +106,8 @@ class NovumMediaInfoBlockTest {
     }
 
     @Test
-    fun logoCanKeepASmallerReadableTitleBelowTheImage() {
-        mountInfoBlock(VALID_LOGO_URL, showTitleWithLogo = true, titleMaxLines = 2)
+    fun logoKeepsTheReadableTitleInTheMetadataLineForHeroAndDetail() {
+        mountInfoBlock(VALID_LOGO_URL, titleMaxLines = 2, metaParts = listOf("2026", "电影", "8.5"))
 
         val logo = awaitLogoDisplayed()
         val title = composeRule.onNodeWithText("测试作品").assertIsDisplayed()
@@ -111,26 +116,80 @@ class NovumMediaInfoBlockTest {
 
         composeRule.runOnIdle {
             val layout = layouts.single().layoutInput
-            assertEquals(NovumType.BodyStrong.fontSize, layout.style.fontSize)
+            assertEquals(NovumType.Body.fontSize, layout.style.fontSize)
             assertEquals(FontFamily.Default, layout.style.fontFamily)
-            assertEquals(2, layout.maxLines)
+            assertEquals(1, layout.maxLines)
         }
         assertTrue(title.fetchSemanticsNode().boundsInRoot.top > logo.fetchSemanticsNode().boundsInRoot.bottom)
+        val titleBounds = title.fetchSemanticsNode().boundsInRoot
+        val metadataBounds = composeRule.onNodeWithText(" · 2026 · 电影 · 8.5")
+            .assertIsDisplayed().fetchSemanticsNode().boundsInRoot
+        assertEquals(titleBounds.center.y, metadataBounds.center.y, 1f)
+        assertTrue(titleBounds.right <= metadataBounds.left)
     }
 
     @Test
-    fun logoStillReplacesTheTextTitleByDefaultForHero() {
+    fun logoWithoutOtherMetadataStillKeepsOneReadableTitle() {
         mountInfoBlock(VALID_LOGO_URL)
 
         awaitLogoDisplayed()
-        composeRule.onNodeWithText("测试作品").assertDoesNotExist()
+        composeRule.onNodeWithText("测试作品").assertIsDisplayed()
+        assertEquals(1, composeRule.onAllNodesWithText("测试作品").fetchSemanticsNodes().size)
+    }
+
+    @Test
+    fun longTitleEllipsizesBeforeItCanHideTheMetadata() {
+        val longTitle = "这是一个很长很长的作品标题".repeat(8)
+        mountInfoBlock(
+            VALID_LOGO_URL,
+            title = longTitle,
+            metaParts = listOf("2026", "剧集", "8.5"),
+            width = 420.dp,
+        )
+        composeRule.waitForIdle()
+        val titleNode = composeRule.onNodeWithText(longTitle).assertIsDisplayed()
+        val metadataNode = composeRule.onNodeWithText(" · 2026 · 剧集 · 8.5").assertIsDisplayed()
+        val titleLayouts = mutableListOf<TextLayoutResult>()
+        val metadataLayouts = mutableListOf<TextLayoutResult>()
+        titleNode.performSemanticsAction(SemanticsActions.GetTextLayoutResult) { it(titleLayouts) }
+        metadataNode.performSemanticsAction(SemanticsActions.GetTextLayoutResult) { it(metadataLayouts) }
+
+        composeRule.runOnIdle {
+            assertTrue(titleLayouts.single().isLineEllipsized(0))
+            assertTrue(!metadataLayouts.single().hasVisualOverflow)
+        }
+        val titleBounds = titleNode.fetchSemanticsNode().boundsInRoot
+        val metadataBounds = metadataNode.fetchSemanticsNode().boundsInRoot
+        assertTrue(titleBounds.width > 0f)
+        assertTrue(titleBounds.right <= metadataBounds.left)
+        assertEquals(titleBounds.center.y, metadataBounds.center.y, 1f)
+    }
+
+    @Test
+    fun oversizedMetadataStillLeavesRoomForTheTitle() {
+        val metadata = listOf("2026", "剧集", "非常长的分级与版本信息".repeat(12))
+        mountInfoBlock(VALID_LOGO_URL, metaParts = metadata, width = 420.dp)
+
+        awaitLogoDisplayed()
+        val titleBounds = composeRule.onNodeWithText("测试作品").assertIsDisplayed()
+            .fetchSemanticsNode().boundsInRoot
+        val metadataNode = composeRule.onNodeWithText(" · " + metadata.joinToString(" · "))
+            .assertIsDisplayed()
+        val layouts = mutableListOf<TextLayoutResult>()
+        metadataNode.performSemanticsAction(SemanticsActions.GetTextLayoutResult) { it(layouts) }
+
+        composeRule.runOnIdle { assertTrue(layouts.single().isLineEllipsized(0)) }
+        val metadataBounds = metadataNode.fetchSemanticsNode().boundsInRoot
+        assertTrue(titleBounds.width > 0f)
+        assertTrue(titleBounds.right <= metadataBounds.left)
+        assertEquals(titleBounds.center.y, metadataBounds.center.y, 1f)
     }
 
     @Test
     fun failedLogoWithSupplementaryTitleFallsBackToOneDisplayTitle() {
         val missingImage = temporaryFolder.newFile("missing-detail-logo.png")
         check(missingImage.delete())
-        mountInfoBlock(missingImage.toURI().toString(), showTitleWithLogo = true)
+        mountInfoBlock(missingImage.toURI().toString(), metaParts = listOf("2026", "剧集"))
         composeRule.waitUntil(timeoutMillis = 5_000) {
             composeRule.onAllNodesWithContentDescription("测试作品").fetchSemanticsNodes().isEmpty()
         }
@@ -141,6 +200,8 @@ class NovumMediaInfoBlockTest {
         composeRule.runOnIdle {
             assertEquals(NovumType.Display.fontSize, layouts.single().layoutInput.style.fontSize)
         }
+        composeRule.onNodeWithText("2026 · 剧集").assertIsDisplayed()
+        assertEquals(1, composeRule.onAllNodesWithText("测试作品").fetchSemanticsNodes().size)
     }
 
     @Test
@@ -164,19 +225,26 @@ class NovumMediaInfoBlockTest {
         return logo.assertIsDisplayed()
     }
 
-    private fun mountInfoBlock(logoUrl: String, showTitleWithLogo: Boolean = false, titleMaxLines: Int = 1) {
+    private fun mountInfoBlock(
+        logoUrl: String,
+        titleMaxLines: Int = 1,
+        title: String = "测试作品",
+        metaParts: List<String> = emptyList(),
+        width: Dp = 640.dp,
+    ) {
         composeRule.setContent {
             NovumTheme {
-                NovumMediaInfoBlock(
-                    title = "测试作品",
-                    logoUrl = logoUrl,
-                    metaParts = emptyList(),
-                    genreTags = emptyList(),
-                    formatBadges = emptyList(),
-                    overview = null,
-                    showTitleWithLogo = showTitleWithLogo,
-                    titleMaxLines = titleMaxLines,
-                )
+                Box(Modifier.width(width)) {
+                    NovumMediaInfoBlock(
+                        title = title,
+                        logoUrl = logoUrl,
+                        metaParts = metaParts,
+                        genreTags = emptyList(),
+                        formatBadges = emptyList(),
+                        overview = null,
+                        titleMaxLines = titleMaxLines,
+                    )
+                }
             }
         }
     }

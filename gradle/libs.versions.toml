@@ -9,7 +9,7 @@ kotlin = "2.4.21"
 # --- 应用版本（单一来源）---
 # :app 的 versionName 与 :core:network 写进 X-Emby-Authorization 的 VERSION_NAME
 # 都从这里取：两处手写曾经漂移成 0.2.1 vs 0.1.0，少数网关会校验该字段。
-novum = "0.2.7"
+novum = "0.2.8"
 
 # --- AndroidX / Compose ---
 composeBom = "2026.11.01"
