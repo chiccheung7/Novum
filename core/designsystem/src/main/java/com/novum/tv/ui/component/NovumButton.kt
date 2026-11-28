@@ -17,15 +17,8 @@ import androidx.compose.ui.Modifier
 import androidx.tv.material3.Button
 import androidx.tv.material3.ButtonDefaults
 import androidx.tv.material3.ButtonScale
-import androidx.compose.runtime.CompositionLocalProvider
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
-import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Dp
-import androidx.tv.material3.LocalContentColor
 import com.novum.tv.ui.theme.NovumDimens
 import com.novum.tv.ui.theme.NovumFocusTokens
 import com.novum.tv.ui.theme.NovumPalette
@@ -61,18 +54,9 @@ fun NovumButton(
     ),
     content: @Composable RowScope.() -> Unit,
 ) {
-    // 内容色与容器色使用同一焦点状态解析，确保聚焦时保持足够对比。
-    var focused by remember { mutableStateOf(false) }
-    val resolvedContentColor = when {
-        !enabled -> NovumPalette.PaperMuted
-        focused -> NovumPalette.Ink
-        else -> NovumPalette.Paper
-    }
-
     Button(
         onClick = onClick,
         modifier = modifier
-            .onFocusChanged { focused = it.isFocused }
             .border(1.dp, NovumPalette.ControlOutline, NovumShapes.Pill)
             .heightIn(min = BUTTON_MIN_HEIGHT)
             // Surface 不向内部 Row 传递最小高度；先按内容确定按钮实际高度，
@@ -98,9 +82,9 @@ fun NovumButton(
             disabledContentColor = NovumPalette.PaperMuted,
         ),
     ) {
-        CompositionLocalProvider(LocalContentColor provides resolvedContentColor) {
-            InnerContent(centerContent = centerContent, content = content)
-        }
+        // TV Material resolves the container and LocalContentColor from the same
+        // interaction state, including focus changes while an error screen opens.
+        InnerContent(centerContent = centerContent, content = content)
     }
 }
 

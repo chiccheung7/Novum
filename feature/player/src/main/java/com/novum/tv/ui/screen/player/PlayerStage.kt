@@ -55,6 +55,7 @@ import androidx.media3.ui.compose.PlayerSurface
 import androidx.tv.material3.Icon
 import androidx.tv.material3.Text
 import com.novum.tv.core.designsystem.R
+import com.novum.tv.core.error.NovumError
 import com.novum.tv.core.player.seekStepMs
 import com.novum.tv.core.player.audioLabel
 import com.novum.tv.core.player.audioOutputLabel
@@ -66,6 +67,7 @@ import com.novum.tv.model.displayLine
 import com.novum.tv.model.PlayMethod
 import com.novum.tv.model.PlaybackPlan
 import com.novum.tv.ui.component.NovumConfirmDialog
+import com.novum.tv.ui.common.userMessage
 import com.novum.tv.ui.theme.NovumPalette
 import com.novum.tv.ui.theme.NovumType
 import kotlinx.coroutines.delay
@@ -184,6 +186,9 @@ internal fun PlayerStage(
     subtitleSwitchError: String? = null,
     onSubtitleSwitchFailed: (PlaybackPlan) -> Boolean = { false },
     onRebuildServerStream: (Long) -> Unit = {},
+    onRetryPlayback: (Long, PlaybackPlan) -> Unit = { _, _ -> },
+    playbackAttempt: Int = 0,
+    onPlaybackFailed: (PlaybackCheckpoint) -> Unit = {},
 ) {
     var isPlaying by remember { mutableStateOf(true) }
     var buffering by remember { mutableStateOf(false) }
@@ -250,9 +255,16 @@ internal fun PlayerStage(
     // 兜底状态：一旦切过转码就不再切回，避免在两个地址之间反复横跳
     var fallbackUsed by remember(plan.url) { mutableStateOf(false) }
     var transcodeRequested by remember(plan.url) { mutableStateOf(false) }
-    var playbackFailed by remember(plan.url) { mutableStateOf(false) }
+    var playbackFailed by remember(plan, playbackAttempt) { mutableStateOf(false) }
+    var failedPositionMs by remember(plan, playbackAttempt) { mutableLongStateOf(plan.startPositionMs) }
+    var recoveryPending by remember(plan, playbackAttempt) { mutableStateOf(false) }
     var playerErrorTick by remember { mutableIntStateOf(0) }
-    var failedPlan by remember { mutableStateOf<PlaybackPlan?>(null) }
+    var failedMediaItem by remember { mutableStateOf<androidx.media3.common.MediaItem?>(null) }
+    // Signed URLs change during refresh. The one automatic network retry belongs
+    // to this player session, not to a URL or a newly returned plan.
+    var networkRetryUsed by remember(player) { mutableStateOf(false) }
+    var failedNetworkError by remember(player) { mutableStateOf<NovumError?>(null) }
+    var displayedNetworkError by remember(player) { mutableStateOf<NovumError?>(null) }
 
     // 播放时钟：只在这里写入，读取点下沉到进度条 / 章节名，避免整页每 500ms 重组
     val position = remember { mutableLongStateOf(plan.startPositionMs) }
@@ -341,19 +353,34 @@ internal fun PlayerStage(
     }
 
     /**
-     * 切到服务端转码并保留进度。
+     * 网络错误先刷新同一播放方案；解码错误继续沿原有兜底链前进。
      *
      * @param positionMs 切换瞬间的播放位置。
      */
-    fun switchToFallback(positionMs: Long) {
+    fun switchToFallback(positionMs: Long, networkError: NovumError? = null) {
+        if (recoveryPending || playbackFailed) return
         if (onSubtitleSwitchFailed(player.activePlaybackPlan() ?: plan)) return
-        when (resolvePlaybackRecovery(plan, fallbackUsed, transcodeRequested)) {
+        when (resolvePlaybackRecovery(plan, fallbackUsed, transcodeRequested, networkError, networkRetryUsed)) {
+            PlaybackRecoveryAction.RetryPlayback -> {
+                networkRetryUsed = true
+                recoveryPending = true
+                onRetryPlayback(positionMs, player.activePlaybackPlan() ?: activePlan)
+            }
             PlaybackRecoveryAction.RequestTranscode -> {
                 transcodeRequested = true
+                recoveryPending = true
                 onRequestTranscode(positionMs)
             }
 
             PlaybackRecoveryAction.ShowFailure -> {
+                displayedNetworkError = networkError
+                failedPositionMs = positionMs
+                player.activePlaybackPlan()?.let { failed ->
+                    onPlaybackFailed(PlaybackCheckpoint(failed, positionMs, player.mediaDurationMs()))
+                }
+                // Remove both the buffered stream and the media item so a late
+                // READY callback cannot bring audio back behind the error overlay.
+                player.stopFailedPlayback()
                 playbackFailed = true
                 controlsVisible = false
             }
@@ -443,10 +470,13 @@ internal fun PlayerStage(
                 )
                 // 只记录错误次数，真正切换放到 LaunchedEffect：listener 里读不到最新的兜底状态。
                 // 播放器回调不保证在主线程，Compose State 统一投递到主线程再写。
-                val eventPlan = player.activePlaybackPlan()
+                val eventItem = player.currentMediaItem
                 cueHandler.post {
-                    if (eventPlan === player.activePlaybackPlan()) {
-                        failedPlan = eventPlan
+                    // A same-plan/same-URL refresh still creates a new MediaItem.
+                    // Do not replay a queued error from the replaced attempt.
+                    if (eventItem != null && eventItem === player.currentMediaItem) {
+                        failedMediaItem = eventItem
+                        failedNetworkError = playbackNetworkError(error)
                         playerErrorTick++
                     }
                 }
@@ -489,21 +519,13 @@ internal fun PlayerStage(
 
     // 播放器报错即尝试兜底
     LaunchedEffect(playerErrorTick) {
-        if (playerErrorTick > 0 && failedPlan === player.activePlaybackPlan()) {
-            switchToFallback(player.mediaPositionMs())
+        if (playerErrorTick > 0 && failedMediaItem === player.currentMediaItem) {
+            switchToFallback(player.mediaPositionMs(), failedNetworkError)
         }
     }
 
-    // 起播超时：直连地址不动声色地卡住时，等满 8 秒主动切转码，比让用户盯着黑屏好
-    LaunchedEffect(player, plan.url) {
-        observePlaybackStartupTimeout(player, PLAYBACK_START_TIMEOUT_MS) {
-            // 已经切过兜底/转码/失败时不再重复触发：fallback 流自身缓冲慢是正常现象，
-            // 旧定时器到点误判会把正在加载的 fallback 顶掉，无谓再走一次转码。
-            if (!fallbackUsed && !transcodeRequested && !playbackFailed) {
-                switchToFallback(player.mediaPositionMs())
-            }
-        }
-    }
+    // Slow startup alone is not a playback failure. OkHttp/Media3 enforce actual
+    // network timeouts; only their error callback may spend the recovery budget.
 
     // 位置与时长轮询：Compose 不订阅播放器内部时钟，用 500ms 采样换来稳定的重组频率
     LaunchedEffect(player) {
@@ -1248,7 +1270,7 @@ internal fun PlayerStage(
                         color = NovumPalette.Paper,
                     )
                     Text(
-                        text = stringResource(R.string.player_error_hint),
+                        text = displayedNetworkError?.userMessage() ?: stringResource(R.string.player_error_hint),
                         style = NovumType.Caption,
                         color = NovumPalette.PaperMuted,
                         modifier = Modifier.padding(top = 8.dp),
@@ -1262,7 +1284,7 @@ internal fun PlayerStage(
                     NovumButton(
                         onClick = {
                             playbackFailed = false
-                            onRetryNextLine(player.mediaPositionMs())
+                            onRetryNextLine(failedPositionMs)
                         },
                         modifier = Modifier.focusRequester(retryFocus),
                     ) {
@@ -1325,9 +1347,6 @@ private const val SCRUB_THROTTLE_MS = 120L
 
 /** 等待播放器时间轴确认 seek；未到位时改用服务端重建流。 */
 private const val LOCAL_SEEK_CONFIRM_MS = 750L
-
-/** 起播超时：超过该时间仍未 READY 就尝试兜底地址。 */
-private const val PLAYBACK_START_TIMEOUT_MS = 8_000L
 
 /** 控制条快进/后退按钮的步长。 */
 private const val SEEK_BUTTON_MS = 10_000L

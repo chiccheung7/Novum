@@ -17,6 +17,11 @@ fun NovumError.userMessage(): String = when (this) {
     is NovumError.Network -> stringResource(R.string.error_network)
     is NovumError.Unauthorized -> stringResource(R.string.error_unauthorized)
     is NovumError.Server -> stringResource(R.string.error_server, code)
+    is NovumError.PlaybackUnavailable -> stringResource(when (reason) {
+        NovumError.PlaybackFailure.SourceUnavailable -> R.string.error_playback_source_unavailable
+        NovumError.PlaybackFailure.SubtitleUnavailable -> R.string.error_playback_subtitle_unavailable
+        NovumError.PlaybackFailure.SeekUnavailable -> R.string.error_playback_seek_unavailable
+    })
     is NovumError.Parse -> stringResource(R.string.error_parse)
     is NovumError.NotFound -> stringResource(R.string.error_not_found)
     is NovumError.Unknown -> stringResource(R.string.error_unknown)

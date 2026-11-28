@@ -381,13 +381,14 @@ private fun DetailBody(
                         ),
                 ) {
                     // 信息块本体 = designsystem 共享 NovumMediaInfoBlock（首页
-                    // Hero 同款）：**ClearLogo（有则替代文字标题）** → 元信息
+                    // Hero 同款）：**ClearLogo + 可读的小号文字标题** → 元信息
                     // （灰字圆点）→ 题材标签 → 格式标志 → 简介。
                     // **恒为剧集内容**——分集标题/简介落到选集卡下方，本块不随
                     // 当前集切换；logo 与首页同排版（由块内渲染，不再页面自绘）
                     NovumMediaInfoBlock(
                         title = data.title,
                         logoUrl = data.logoUrl,
+                        showTitleWithLogo = true,
                         titleMaxLines = 2,
                         metaParts = detailMetaParts(
                             data = data,

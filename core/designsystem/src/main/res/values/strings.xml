@@ -303,6 +303,9 @@
     <string name="error_network">网络连接失败，请检查网络后重试</string>
     <string name="error_unauthorized">登录已失效，请重新登录</string>
     <string name="error_server">服务器返回异常（%1$d）</string>
+    <string name="error_playback_source_unavailable">暂时无法获取所选片源，请重试或选择其他版本</string>
+    <string name="error_playback_subtitle_unavailable">当前字幕不可用，请重试或更换字幕</string>
+    <string name="error_playback_seek_unavailable">当前播放源无法从该进度续播，请重试或从头播放</string>
     <string name="error_parse">数据解析失败</string>
     <string name="error_not_found">内容不存在或已下架</string>
     <string name="error_unknown">出了点问题，请稍后重试</string>

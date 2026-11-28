@@ -98,6 +98,8 @@ data class PlayerUiState(
     val danmu: DanmuSession = DanmuSession(),
     val subtitleSwitching: Boolean = false,
     val subtitleSwitchError: NovumError? = null,
+    /** A refreshed signed URL may be identical; still prepare a new media attempt. */
+    val playbackAttempt: Int = 0,
 ) {
 
     /** 播放计划数据，非成功态为 null。 */
@@ -607,7 +609,10 @@ class PlayerViewModel @Inject constructor(
             )
             val restoreError = (planResult as? NovumResult.Failure)?.error
             val invalidStoredSelection = restoreError is NovumError.NotFound ||
-                restoreError is NovumError.Server && restoreError.code in setOf(400, 404, 502)
+                restoreError is NovumError.Server && restoreError.code in setOf(400, 404) ||
+                restoreError is NovumError.PlaybackUnavailable && restoreError.reason in setOf(
+                    NovumError.PlaybackFailure.SourceUnavailable, NovumError.PlaybackFailure.SubtitleUnavailable,
+                )
             val storedSubtitleToRestore = serverSubtitle
             if (!subtitleSelectionAdopted && storedSubtitleToRestore != null && invalidStoredSelection) {
                 // Stored indices are only an enhancement. Probe the catalog once before dropping
@@ -639,7 +644,7 @@ class PlayerViewModel @Inject constructor(
                     currentCoroutineContext().ensureActive()
                     if (keepDisabled && recovered is NovumResult.Success &&
                         (recovered.value.serverSubtitleStreamIndex != -1 || recovered.value.burnedInSubtitleIndex != null)
-                    ) recovered = NovumResult.Failure(NovumError.Server(502))
+                    ) recovered = NovumResult.Failure(NovumError.PlaybackUnavailable(NovumError.PlaybackFailure.SubtitleUnavailable))
                     planResult = recovered
                     if (recovered is NovumResult.Success) {
                         val recoveredSource = recovered.value.mediaSourceId ?: replacementSource
@@ -912,20 +917,27 @@ class PlayerViewModel @Inject constructor(
      *
      * @param positionMs 当前播放位置，换线后从此继续。
      */
-    fun retryNextLine(positionMs: Long) {
-        val currentLine = (_state.value.plan as? UiState.Success)?.data?.lineBaseUrl
+    fun retryNextLine(positionMs: Long, activePlan: PlaybackPlan? = null) {
+        val previous = activePlan ?: _state.value.data
+        val currentLine = previous?.lineBaseUrl
+        val sourceId = previous?.mediaSourceId ?: requestedMediaSourceId
+        val subtitleIndex = previous?.serverSubtitleStreamIndex ?: previous?.burnedInSubtitleIndex
+            ?: requestedSubtitleStreamIndex.takeIf { sourceId == requestedMediaSourceId }
         replan {
             _state.update { it.copy(plan = UiState.Loading) }
             when (val result = playback.plan(
                     itemId,
                     positionMs,
+                    forceTranscode = previous?.method == PlayMethod.Transcode,
                     excludeLine = currentLine,
                     // 换线只换域名，不换版本：否则重试时悄悄回到默认版本
-                    mediaSourceId = requestedMediaSourceId,
-                    subtitleStreamIndex = requestedSubtitleStreamIndex,
+                    mediaSourceId = sourceId,
+                    subtitleStreamIndex = subtitleIndex,
                 )
             ) {
                 is NovumResult.Success -> {
+                    requestedMediaSourceId = result.value.mediaSourceId ?: sourceId
+                    requestedSubtitleStreamIndex = subtitleIndex ?: result.value.serverSubtitleStreamIndex
                     method = result.value.method
                     playSessionId = result.value.playSessionId
                     _state.update {
@@ -952,13 +964,46 @@ class PlayerViewModel @Inject constructor(
     }
 
     /**
-     * 直连失败且没有兜底地址时，强制请求服务端转码。
-     *
-     * 用于「设备解不了该编码 / 双层 DV」这类服务端事先判断不出来的场景：
-     * 重新发一次只声明转码能力的 PlaybackInfo，拿到转码流后从当前进度续播。
-     *
-     * @param positionMs 当前播放位置，转码起播后接着播。
+     * 网络失败只刷新当前实际播放的版本、字幕与方式，不把网关异常当成解码失败。
+     * 保持旧成功态直至新计划返回，Stage 的按播放器计数的恢复预算才不会被重建。
      */
+    fun retryPlayback(positionMs: Long, activePlan: PlaybackPlan? = null, showLoading: Boolean = false) {
+        val previous = activePlan ?: _state.value.data ?: return
+        val sourceId = previous.mediaSourceId ?: requestedMediaSourceId
+        val subtitleIndex = previous.serverSubtitleStreamIndex ?: previous.burnedInSubtitleIndex
+            ?: requestedSubtitleStreamIndex.takeIf { sourceId == requestedMediaSourceId }
+        val position = positionMs.coerceAtLeast(0L)
+        replan {
+            if (showLoading) _state.update { it.copy(plan = UiState.Loading) }
+            val result = playback.plan(
+                itemId = itemId,
+                startPositionMs = position,
+                forceTranscode = previous.method == PlayMethod.Transcode,
+                mediaSourceId = sourceId,
+                subtitleStreamIndex = subtitleIndex,
+            )
+            currentCoroutineContext().ensureActive()
+            when (result) {
+                is NovumResult.Success -> {
+                    requestedMediaSourceId = result.value.mediaSourceId ?: sourceId
+                    requestedSubtitleStreamIndex = subtitleIndex ?: result.value.serverSubtitleStreamIndex
+                    method = result.value.method
+                    playSessionId = result.value.playSessionId
+                    _state.update { it.copy(
+                        plan = UiState.Success(result.value),
+                        subtitle = result.value.method.label(appContext),
+                        playbackAttempt = it.playbackAttempt + 1,
+                    ) }
+                    if (previous.playSessionId != result.value.playSessionId) {
+                        appScope.launch { reporter.reportStopped(itemId, position, previous.method, previous.playSessionId) }
+                    }
+                }
+                is NovumResult.Failure -> _state.update { it.copy(plan = UiState.Error(result.error)) }
+            }
+        }
+    }
+
+    /** Decode/unsupported-format recovery still advances to server transcoding. */
     fun retryWithTranscode(positionMs: Long) {
         replan {
             when (val result = playback.plan(

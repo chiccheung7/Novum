@@ -124,6 +124,8 @@ data class ItemDto(
     val MediaSources: List<MediaSourceDto> = emptyList(),
     /** 连载状态：`Continuing` / `Ended`。 */
     val Status: String? = null,
+    /** 服务端内容标签，与题材 Genres 分开保留，供首页推荐筛选。 */
+    val Tags: List<String> = emptyList(),
 )
 
 /**

@@ -5,6 +5,7 @@ import com.novum.tv.core.network.toNovumError
 import com.novum.tv.data.remote.emby.ItemDto
 import com.novum.tv.model.HomeEntry
 import com.novum.tv.model.HomeRow
+import java.util.Locale
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Deferred
@@ -44,15 +45,18 @@ internal const val HOME_LATEST_ROW_LIMIT = 18
 
 /**
  * Hero 只从指定源库取样，按本次请求的新种子洗牌。
- * 仅保留有背景图的条目，按 id 去重并限制候选池容量。
+ * 仅保留有背景图且不带动画题材/标签的条目，按 id 去重并限制候选池容量。
  *
  * 候选不足 [HERO_LIMIT] 条时返回全部可用条目。
  */
 internal fun heroRotationPool(items: List<ItemDto>): List<ItemDto> {
+    // 同一条目的稀疏副本不能绕过另一份 DTO 已明确给出的动画标签。
+    val animationIds = items.filter { it.hasAnimationLabel() }.mapNotNull { it.Id }.toSet()
     // 源库也可能重复下发同一条目；保留信息完整度评分较高的 DTO。
     val bestById = LinkedHashMap<String, ItemDto>()
     items.forEach { dto ->
         val id = dto.Id?.takeIf { it.isNotBlank() } ?: return@forEach
+        if (id in animationIds) return@forEach
         if (dto.BackdropImageTags.firstOrNull()?.isNotBlank() != true) return@forEach
         val existing = bestById[id]
         if (existing == null || scoreOf(dto) > scoreOf(existing)) {
@@ -63,6 +67,12 @@ internal fun heroRotationPool(items: List<ItemDto>): List<ItemDto> {
         .seededShuffle(_heroSeedProvider())
         .take(HERO_LIMIT)
 }
+
+/** 只依据明确的题材/内容标签，不从片名推断动画；该限制只用于 Hero。 */
+internal fun ItemDto.hasAnimationLabel(): Boolean =
+    (Genres.asSequence() + Tags.asSequence()).any { it.trim().lowercase(Locale.ROOT) in ANIMATION_LABELS }
+
+private val ANIMATION_LABELS = setOf("动画", "動畫", "动漫", "動漫", "animation", "anime")
 
 /** 条目信息完整度打分（Hero 去重时保留信息更全的那份）。 */
 private fun scoreOf(dto: ItemDto): Int =

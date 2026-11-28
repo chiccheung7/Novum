@@ -450,6 +450,8 @@ class DefaultMediaRepository @Inject constructor(
                         val fullById = fullItems?.associateBy { it.Id }
                         pool.mapNotNull { dto ->
                             val full = fullById?.get(dto.Id)
+                            // 部分 Latest 接口不含分类；完整字段新发现的动画标签也要排除。
+                            if (full?.hasAnimationLabel() == true) return@mapNotNull null
                             val enriched = full?.copy(
                                 BackdropImageTags = full.BackdropImageTags
                                     .takeIf { it.firstOrNull()?.isNotBlank() == true } ?: dto.BackdropImageTags,

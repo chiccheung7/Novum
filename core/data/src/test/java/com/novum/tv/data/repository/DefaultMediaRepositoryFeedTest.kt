@@ -160,6 +160,74 @@ class DefaultMediaRepositoryFeedTest {
     }
 
     @Test
+    fun heroExcludesAnimationGenresAndTagsWithoutRemovingTheirLatestOrResumeCards() = runTest(dispatcher) {
+        val animated = listOf(
+            candidate("animated-movie").copy(Genres = listOf("动画")),
+            candidate("animated-series").copy(Type = "Series", Tags = listOf(" Anime ")),
+        )
+        val liveAction = candidate("live-action", "Animation in the title is not a classification")
+        val api = FeedApi(
+            sourceItems = animated + liveAction,
+            resumeItems = listOf(candidate("animated-resume").copy(Genres = listOf("动画"))),
+        )
+
+        val feed = feed(api)
+
+        assertEquals(listOf("live-action"), feed.hero.map { it.id })
+        assertEquals((animated + liveAction).map { it.Id }, feed.latest.first().items.map { it.id })
+        assertEquals(listOf("animated-resume"), feed.resume!!.items.map { it.id })
+        assertEquals("live-action", api.itemsCalls.single().ids)
+    }
+
+    @Test
+    fun heroAlsoExcludesAnimationDiscoveredDuringFullMetadataEnrichment() = runTest(dispatcher) {
+        val source = listOf(candidate("genre-animation"), candidate("tag-animation"), candidate("live-action"))
+        val api = FeedApi(
+            sourceItems = source,
+            enrichedItems = listOf(
+                source[0].copy(Genres = listOf("動畫")),
+                source[1].copy(Tags = listOf("ANIMATION")),
+                source[2].copy(Genres = listOf("剧情")),
+            ),
+        )
+
+        val feed = feed(api)
+
+        assertEquals(listOf("live-action"), feed.hero.map { it.id })
+        assertEquals(source.map { it.Id }, feed.latest.first().items.map { it.id })
+        assertEquals(source.mapNotNull { it.Id }.toSet(), api.itemsCalls.single().ids!!.split(',').toSet())
+        assertTrue(api.itemsCalls.single().fields.split(',').containsAll(listOf("Genres", "Tags")))
+    }
+
+    @Test
+    fun enrichmentFailureCannotRestoreAlreadyExcludedAnimation() = runTest(dispatcher) {
+        val api = FeedApi(
+            sourceItems = listOf(
+                candidate("animated").copy(Tags = listOf("动漫")),
+                candidate("live-action"),
+            ),
+            failEnrichment = true,
+        )
+
+        val feed = feed(api)
+
+        assertEquals(listOf("live-action"), feed.hero.map { it.id })
+        assertEquals("live-action", api.itemsCalls.single().ids)
+        assertEquals(listOf("animated", "live-action"), feed.latest.first().items.map { it.id })
+    }
+
+    @Test
+    fun allAnimationSourceLeavesHeroEmptyWithoutRequestingEnrichment() = runTest(dispatcher) {
+        val api = FeedApi(sourceItems = listOf(candidate("animated").copy(Genres = listOf("Animation"))))
+
+        val feed = feed(api)
+
+        assertTrue(feed.hero.isEmpty())
+        assertTrue(api.itemsCalls.isEmpty())
+        assertEquals(listOf("animated"), feed.latest.first().items.map { it.id })
+    }
+
+    @Test
     fun heroDeduplicatesTheSourceAndKeepsTheMoreCompleteDto() = runTest(dispatcher) {
         val api = FeedApi(
             sourceItems = listOf(

@@ -1,15 +1,20 @@
 package com.novum.tv.ui.component
 
 import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.assertIsFocused
 import androidx.compose.ui.test.assertWidthIsEqualTo
 import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performKeyInput
+import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.pressKey
+import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.unit.dp
 import com.novum.tv.ui.theme.NovumTheme
+import com.novum.tv.ui.theme.NovumType
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -39,8 +44,17 @@ class NovumConfirmDialogTest {
             }
         }
         composeRule.mainClock.advanceTimeBy(500L)
-        // 520dp 面板减去 64dp 内边距与 12dp 按钮间距，两颗按钮各 222dp。
-        composeRule.onNodeWithText("退出").assertWidthIsEqualTo(222.dp)
+        composeRule.onNodeWithText("退出").assertWidthIsEqualTo(132.dp)
+        val cancelBounds = composeRule.onNodeWithText("取消").fetchSemanticsNode().boundsInRoot
+        val confirmBounds = composeRule.onNodeWithText("退出").fetchSemanticsNode().boundsInRoot
+        assertTrue("Focused actions must retain a visible gap", confirmBounds.left - cancelBounds.right >= 16f)
+        val layouts = mutableListOf<TextLayoutResult>()
+        composeRule.onNodeWithText("退出", useUnmergedTree = true)
+            .performSemanticsAction(SemanticsActions.GetTextLayoutResult) { it(layouts) }
+        composeRule.runOnIdle {
+            assertEquals(NovumType.Button.fontSize, layouts.single().layoutInput.style.fontSize)
+            assertTrue("Compact dialog label must fit", !layouts.single().hasVisualOverflow)
+        }
         composeRule.onNodeWithText("取消").assertIsFocused()
             .performKeyInput { pressKey(Key.DirectionCenter) }
         composeRule.runOnIdle {
@@ -65,8 +79,8 @@ class NovumConfirmDialogTest {
             }
         }
         composeRule.mainClock.advanceTimeBy(500L)
-        // 360dp 窗口两边各留 24dp，面板宽 312dp，按钮各 118dp。
-        composeRule.onNodeWithText("退出").assertWidthIsEqualTo(118.dp)
+        // 312dp panel minus 64dp padding and a 24dp action gap.
+        composeRule.onNodeWithText("退出").assertWidthIsEqualTo(112.dp)
         composeRule.onNodeWithText("取消").assertIsFocused()
     }
 }

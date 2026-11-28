@@ -41,6 +41,47 @@ class NovumStateViewTest {
     }
 
     @Test
+    fun showsUnavailableSourceWithoutInventingAnHttpStatus() {
+        showError(NovumError.PlaybackUnavailable(NovumError.PlaybackFailure.SourceUnavailable))
+
+        composeRule.onNodeWithText("暂时无法获取所选片源，请重试或选择其他版本").assertIsDisplayed()
+        composeRule.onNodeWithText("服务器返回异常（502）").assertDoesNotExist()
+        composeRule.onNodeWithText("重试").assertIsDisplayed()
+    }
+
+    @Test
+    fun showsUnavailableSubtitleWithoutInventingAnHttpStatus() {
+        showError(NovumError.PlaybackUnavailable(NovumError.PlaybackFailure.SubtitleUnavailable))
+
+        composeRule.onNodeWithText("当前字幕不可用，请重试或更换字幕").assertIsDisplayed()
+        composeRule.onNodeWithText("服务器返回异常（502）").assertDoesNotExist()
+    }
+
+    @Test
+    fun showsUnavailableResumePositionWithoutInventingAnHttpStatus() {
+        showError(NovumError.PlaybackUnavailable(NovumError.PlaybackFailure.SeekUnavailable))
+
+        composeRule.onNodeWithText("当前播放源无法从该进度续播，请重试或从头播放").assertIsDisplayed()
+        composeRule.onNodeWithText("服务器返回异常（502）").assertDoesNotExist()
+    }
+
+    @Test
+    fun keepsActualHttp502AsAServerResponse() {
+        showError(NovumError.Server(502))
+
+        composeRule.onNodeWithText("服务器返回异常（502）").assertIsDisplayed()
+        composeRule.onNodeWithText("当前播放源无法从该进度续播，请重试或从头播放").assertDoesNotExist()
+    }
+
+    private fun showError(error: NovumError) {
+        composeRule.setContent {
+            NovumTheme {
+                NovumStateView(state = UiState.Error(error), onRetry = {})
+            }
+        }
+    }
+
+    @Test
     fun retryInvokesCallback() {
         var retried = false
         composeRule.setContent {

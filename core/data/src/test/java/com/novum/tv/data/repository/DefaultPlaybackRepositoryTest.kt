@@ -36,6 +36,9 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import okhttp3.ResponseBody.Companion.toResponseBody
+import retrofit2.HttpException
+import retrofit2.Response
 
 /**
  * 播放仓储测试：地址选择策略、轨映射、异常兜底、未登录短路。
@@ -173,6 +176,9 @@ class DefaultPlaybackRepositoryTest {
                 "movie", mediaSourceId = "source-4k", subtitleStreamIndex = 7,
             )
             assertTrue("Must reject an unfulfilled subtitle switch: $source", result is NovumResult.Failure)
+            val reason = if (source.Id == "source-4k") NovumError.PlaybackFailure.SubtitleUnavailable
+                else NovumError.PlaybackFailure.SourceUnavailable
+            assertEquals(NovumError.PlaybackUnavailable(reason), (result as NovumResult.Failure).error)
         }
     }
 
@@ -183,6 +189,10 @@ class DefaultPlaybackRepositoryTest {
         )))
         val result = repository(api).plan("movie", mediaSourceId = "source-4k", subtitleStreamIndex = -1)
         assertTrue(result is NovumResult.Failure)
+        assertEquals(
+            NovumError.PlaybackUnavailable(NovumError.PlaybackFailure.SubtitleUnavailable),
+            (result as NovumResult.Failure).error,
+        )
     }
 
     @Test
@@ -204,6 +214,18 @@ class DefaultPlaybackRepositoryTest {
         assertEquals("source-4k", plan.mediaSourceId)
         assertTrue(!plan.serverSubtitleSelection)
         assertEquals(7, plan.fallbackBurnedInSubtitleIndex)
+    }
+
+    @Test
+    fun automaticResumeKeepsThePositionWithoutRequestingAServerSideSeek() = runTest(dispatcher) {
+        val api = StubPlaybackApi(info = PlaybackInfoDto(MediaSources = listOf(subtitleSource())))
+
+        val plan = (repository(api).plan("movie", startPositionMs = 60_000L) as NovumResult.Success).value
+
+        assertEquals(60_000L, plan.startPositionMs)
+        assertEquals(PlayMethod.DirectPlay, plan.method)
+        assertNull(api.requests.single().StartTimeTicks)
+        assertNull(api.requests.single().EnableDirectPlay)
     }
 
     @Test
@@ -238,7 +260,10 @@ class DefaultPlaybackRepositoryTest {
             .plan("movie", startPositionMs = 45_000L, forceTranscode = true)
 
         assertTrue(result is NovumResult.Failure)
-        assertTrue((result as NovumResult.Failure).error is NovumError.Server)
+        assertEquals(
+            NovumError.PlaybackUnavailable(NovumError.PlaybackFailure.SourceUnavailable),
+            (result as NovumResult.Failure).error,
+        )
     }
 
     @Test
@@ -250,7 +275,28 @@ class DefaultPlaybackRepositoryTest {
             val result = repository(api).plan("movie", startPositionMs = 45_000L, forceTranscode = true)
 
             assertTrue("Must reject missing transcode URL: $url", result is NovumResult.Failure)
-            assertTrue((result as NovumResult.Failure).error is NovumError.Server)
+            assertEquals(
+                NovumError.PlaybackUnavailable(NovumError.PlaybackFailure.SeekUnavailable),
+                (result as NovumResult.Failure).error,
+            )
+        }
+    }
+
+    @Test
+    fun actualPlaybackInfoHttp502IsNotReclassifiedAsALocalPlaybackFailure() = runTest(dispatcher) {
+        val httpFailure = HttpException(Response.error<PlaybackInfoDto>(502, "Bad Gateway".toResponseBody()))
+        val positioned = repository(StubPlaybackApi(error = httpFailure)).plan(
+            "movie", startPositionMs = 45_000L, forceTranscode = true,
+        )
+        val subtitle = repository(StubPlaybackApi(error = httpFailure)).plan(
+            "movie", mediaSourceId = "source-4k", subtitleStreamIndex = 7,
+        )
+
+        for (result in listOf(positioned, subtitle)) {
+            assertTrue(result is NovumResult.Failure)
+            val error = (result as NovumResult.Failure).error
+            assertTrue(error is NovumError.Server)
+            assertEquals(502, (error as NovumError.Server).code)
         }
     }
 

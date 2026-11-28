@@ -126,17 +126,17 @@ class DefaultPlaybackRepository @Inject constructor(
                     requestedSource ?: pickVersionByStrategy(info.MediaSources, snapshot?.versionStrategy)
                 if (source == null) {
                     if (explicitSubtitle || requiresPositionedTranscode) {
-                        return@withContext failureOf(NovumError.Server(502))
+                        return@withContext failureOf(NovumError.PlaybackUnavailable(NovumError.PlaybackFailure.SourceUnavailable))
                     }
                     successOf(fallbackPlan(server, itemId, startPositionMs, owner.tokenForUrl(server)))
                 } else {
                     if (forceSubtitleBurnIn && source.MediaStreams.none {
                             it.Type == "Subtitle" && it.Index == subtitleStreamIndex
                         }) {
-                        return@withContext failureOf(NovumError.Server(502))
+                        return@withContext failureOf(NovumError.PlaybackUnavailable(NovumError.PlaybackFailure.SubtitleUnavailable))
                     }
                     if (requiresPositionedTranscode && source.TranscodingUrl.toAbsoluteUrl(mediaServer) == null) {
-                        return@withContext failureOf(NovumError.Server(502))
+                        return@withContext failureOf(NovumError.PlaybackUnavailable(NovumError.PlaybackFailure.SeekUnavailable))
                     }
                     // 服务端按我们声明的能力判断，但它不知道「双层 DV 解不了」这类细节；
                     // 一旦片源超出本机能力，立刻换成「只声明转码」的请求，让服务端给转码流。
@@ -168,7 +168,7 @@ class DefaultPlaybackRepository @Inject constructor(
                     }
                     val urls = if (explicitSubtitle) {
                         resolveSubtitleUrls(mediaServer, source, preferDirect, requireTranscode, subtitleStreamIndex)
-                            ?: return@withContext failureOf(NovumError.Server(502))
+                            ?: return@withContext failureOf(NovumError.PlaybackUnavailable(NovumError.PlaybackFailure.SubtitleUnavailable))
                     } else {
                         resolveUrls(mediaServer, source, itemId, preferDirect, forceTranscode, owner.tokenForUrl(mediaServer))
                     }

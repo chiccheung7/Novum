@@ -16,6 +16,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
@@ -48,6 +49,7 @@ fun NovumConfirmDialog(
     scrimAlpha: Float = SCRIM_ALPHA,
 ) {
     val cancelRequester = remember { FocusRequester() }
+    val actionWidth = 132.dp * LocalDensity.current.fontScale.coerceAtLeast(1f)
 
     Dialog(
         onDismissRequest = onCancel,
@@ -86,24 +88,24 @@ fun NovumConfirmDialog(
                         .fillMaxWidth()
                         .padding(top = 8.dp),
                     // 操作按钮排列在右下角。
-                    horizontalArrangement = Arrangement.spacedBy(12.dp, Alignment.End),
+                    horizontalArrangement = Arrangement.spacedBy(24.dp, Alignment.End),
                 ) {
                     NovumButton(
                         onClick = onCancel,
                         modifier = Modifier
-                            .weight(1f)
-                            .widthIn(min = 96.dp)
+                            .weight(1f, fill = false)
+                            .widthIn(max = actionWidth)
                             .focusRequester(cancelRequester),
                         centerContent = true,
                     ) {
-                        Text(text = cancelText, style = NovumType.ButtonLg)
+                        Text(text = cancelText, style = NovumType.Button)
                     }
                     NovumButton(
                         onClick = onConfirm,
-                        modifier = Modifier.weight(1f).widthIn(min = 96.dp),
+                        modifier = Modifier.weight(1f, fill = false).widthIn(max = actionWidth),
                         centerContent = true,
                     ) {
-                        Text(text = confirmText, style = NovumType.ButtonLg)
+                        Text(text = confirmText, style = NovumType.Button)
                     }
                 }
             }

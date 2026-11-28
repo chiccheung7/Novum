@@ -37,6 +37,8 @@ import kotlin.math.roundToInt
 /**
  * 媒体信息块：首页 Hero 与详情页共用，包含标题、元信息、题材标签、格式标志和简介。
  * 按钮由页面管理。
+ *
+ * @param showTitleWithLogo ClearLogo 可用时仍在下方显示小号文字标题；详情页启用。
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -50,6 +52,7 @@ fun NovumMediaInfoBlock(
     logoUrl: String? = null,
     titleMaxLines: Int = 1,
     overviewLines: Int = MEDIA_INFO_OVERVIEW_LINES,
+    showTitleWithLogo: Boolean = false,
 ) {
     var logoFailed by remember(logoUrl) { mutableStateOf(false) }
     val showLogo = !logoUrl.isNullOrBlank() && !logoFailed
@@ -66,6 +69,16 @@ fun NovumMediaInfoBlock(
                     .height(MEDIA_INFO_LOGO_HEIGHT)
                     .aspectRatio(MEDIA_INFO_LOGO_ASPECT),
             )
+            if (showTitleWithLogo && !title.isNullOrBlank()) {
+                Spacer(modifier = Modifier.height(MEDIA_INFO_LOGO_TO_TITLE))
+                Text(
+                    text = title,
+                    style = NovumType.BodyStrong.copy(fontFamily = FontFamily.Default),
+                    color = NovumPalette.Paper,
+                    maxLines = titleMaxLines,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
         } else if (title != null) {
             Text(
                 text = title,
@@ -155,8 +168,11 @@ fun NovumTagChip(text: String, outlined: Boolean = false) {
 /** 信息块标题 → 元信息行。 */
 val MEDIA_INFO_TITLE_TO_META = 16.dp
 
-/** 信息块 ClearLogo 高度；横版标题图位于信息块顶部并替代文字标题。 */
+/** 信息块 ClearLogo（或其下方的小号标题）→ 元信息行。 */
 val MEDIA_INFO_LOGO_TO_META = 20.dp
+
+/** 详情页保留可读文字标题时，与 ClearLogo 之间的间距。 */
+private val MEDIA_INFO_LOGO_TO_TITLE = 12.dp
 
 /**
  * 信息块 ClearLogo 高度为 104dp；横版标题图在信息块顶部替代大文字标题。

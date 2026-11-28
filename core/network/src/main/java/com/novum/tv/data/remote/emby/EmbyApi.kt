@@ -315,7 +315,7 @@ interface EmbyApi {
          * 就不下发，会让定位退化成按季序号猜、错误落到第一季。
          */
         const val DEFAULT_FIELDS =
-            "PrimaryImageAspectRatio,ProductionYear,CommunityRating,RunTimeTicks,UserData,Genres," +
+            "PrimaryImageAspectRatio,ProductionYear,CommunityRating,RunTimeTicks,UserData,Genres,Tags," +
                 "Overview,ImageTags,BackdropImageTags,ChildCount,PremiereDate,SeriesId,SeriesName," +
                 "SeriesPrimaryImageTag,SeriesThumbImageTag,IndexNumber,ParentIndexNumber,SeasonId," +
                 "DateCreated,DateLastMediaAdded,MediaStreams,OfficialRating"

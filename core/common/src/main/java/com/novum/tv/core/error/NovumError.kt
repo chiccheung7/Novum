@@ -20,6 +20,15 @@ sealed class NovumError {
      */
     data class Server(val code: Int, val message: String? = null) : NovumError()
 
+    /** A valid response did not provide a stream that can fulfill the playback request. */
+    data class PlaybackUnavailable(val reason: PlaybackFailure) : NovumError()
+
+    enum class PlaybackFailure {
+        SourceUnavailable,
+        SubtitleUnavailable,
+        SeekUnavailable,
+    }
+
     /** 响应体无法解析（字段缺失、JSON 结构变化）。 */
     data class Parse(val cause: Throwable? = null) : NovumError()
 
@@ -31,5 +40,5 @@ sealed class NovumError {
 
     /** 该错误是否值得让用户点「重试」。 */
     val isRetryable: Boolean
-        get() = this is Network || this is Server || this is Unknown
+        get() = this is Network || this is Server || this is PlaybackUnavailable || this is Unknown
 }

@@ -39,6 +39,9 @@ class NovumResultTest {
     fun retryableErrorsAreMarked() {
         assertTrue(NovumError.Network().isRetryable)
         assertTrue(NovumError.Server(code = 500).isRetryable)
+        for (reason in NovumError.PlaybackFailure.entries) {
+            assertTrue(NovumError.PlaybackUnavailable(reason).isRetryable)
+        }
         assertFalse(NovumError.Unauthorized().isRetryable)
         assertFalse(NovumError.NotFound().isRetryable)
     }

@@ -196,7 +196,7 @@ class PlayerViewModelPlanReloadTest {
         val original = requireNotNull(prefs.get(ITEM_ID))
         val automatic = serverPlan(3).copy(subtitleTracks = serverPlan(3).subtitleTracks.filter { it.index == 3 })
         val playback = RecordingPlaybackRepository().apply {
-            planResults.add(NovumResult.Failure(NovumError.Server(502)))
+            planResults.add(NovumResult.Failure(NovumError.PlaybackUnavailable(NovumError.PlaybackFailure.SubtitleUnavailable)))
             planResults.add(NovumResult.Success(automatic))
         }
 
@@ -214,6 +214,48 @@ class PlayerViewModelPlanReloadTest {
         assertEquals(original.danmuEpisodeId, recovered.danmuEpisodeId)
         assertEquals(original.danmuOffsetMs, recovered.danmuOffsetMs)
         assertEquals(recovered, vm.state.value.rememberedPrefs)
+    }
+
+    @Test
+    fun badRequestAndLegacyNotFoundCanRecoverOnlyAfterTheStoredSubtitleDisappeared() = runTest {
+        for (status in listOf(400, 404)) {
+            val prefs = storedSubtitlePrefs(7)
+            val original = requireNotNull(prefs.get(ITEM_ID))
+            val automatic = serverPlan(3).copy(subtitleTracks = serverPlan(3).subtitleTracks.filter { it.index == 3 })
+            val playback = RecordingPlaybackRepository().apply {
+                planResults.add(NovumResult.Failure(NovumError.Server(status)))
+                planResults.add(NovumResult.Success(automatic))
+            }
+
+            val vm = viewModel(playback, FakeSettingsRepository(), playbackPrefs = prefs)
+            advanceUntilIdle()
+
+            assertEquals(automatic, vm.state.value.data)
+            assertEquals(listOf(7, null), playback.calls.map { it.subtitleStreamIndex })
+            val recovered = requireNotNull(prefs.get(ITEM_ID))
+            assertEquals(null, recovered.serverSubtitleStreamIndex)
+            assertEquals(null, recovered.subtitleTrack)
+            assertEquals(original.audioTrack, recovered.audioTrack)
+            assertEquals(original.danmuEpisodeId, recovered.danmuEpisodeId)
+        }
+    }
+
+    @Test
+    fun aBadRequestDoesNotEraseAStoredSubtitleThatStillExistsInTheCatalog() = runTest {
+        val prefs = storedSubtitlePrefs(7)
+        val original = requireNotNull(prefs.get(ITEM_ID))
+        val error = NovumError.Server(400)
+        val playback = RecordingPlaybackRepository().apply {
+            planResults.add(NovumResult.Failure(error))
+            planResults.add(NovumResult.Success(serverPlan(7)))
+        }
+
+        val vm = viewModel(playback, FakeSettingsRepository(), playbackPrefs = prefs)
+        advanceUntilIdle()
+
+        assertEquals(error, (vm.state.value.plan as UiState.Error).error)
+        assertEquals(listOf(7, null), playback.calls.map { it.subtitleStreamIndex })
+        assertEquals(original, prefs.get(ITEM_ID))
     }
 
     @Test
@@ -251,7 +293,7 @@ class PlayerViewModelPlanReloadTest {
         advanceUntilIdle()
 
         assertTrue(vm.state.value.plan is UiState.Error)
-        assertEquals(2, playback.calls.size)
+        assertEquals(1, playback.calls.size)
         assertEquals(original, prefs.get(ITEM_ID))
     }
 
@@ -260,7 +302,7 @@ class PlayerViewModelPlanReloadTest {
         val prefs = storedSubtitlePrefs(7)
         val original = prefs.get(ITEM_ID)
         val playback = RecordingPlaybackRepository().apply {
-            planResults.add(NovumResult.Failure(NovumError.Server(502)))
+            planResults.add(NovumResult.Failure(NovumError.PlaybackUnavailable(NovumError.PlaybackFailure.SubtitleUnavailable)))
             planResults.add(NovumResult.Success(plan()))
         }
 
@@ -292,7 +334,8 @@ class PlayerViewModelPlanReloadTest {
 
     @Test
     fun networkUnauthorizedAndOrdinaryServerFailuresDoNotProbeOrEraseStoredSubtitles() = runTest {
-        for (error in listOf(NovumError.Network(), NovumError.Unauthorized(), NovumError.Server(500))) {
+        for (error in listOf(NovumError.Network(), NovumError.Unauthorized(), NovumError.Server(500),
+            NovumError.Server(502), NovumError.Server(503), NovumError.Server(504))) {
             val prefs = storedSubtitlePrefs(7)
             val original = prefs.get(ITEM_ID)
             val playback = RecordingPlaybackRepository().apply {
@@ -311,7 +354,7 @@ class PlayerViewModelPlanReloadTest {
         val prefs = storedSubtitlePrefs(7)
         val original = prefs.get(ITEM_ID)
         val playback = RecordingPlaybackRepository().apply {
-            planResults.add(NovumResult.Failure(NovumError.Server(404)))
+            planResults.add(NovumResult.Failure(NovumError.NotFound()))
             planResults.add(NovumResult.Failure(NovumError.Network()))
         }
 
@@ -330,7 +373,7 @@ class PlayerViewModelPlanReloadTest {
         val automatic = serverPlan(3).copy(mediaSourceId = "replacement-source")
         val off = serverPlan(-1).copy(mediaSourceId = "replacement-source", url = "http://line-a/replacement-off.m3u8")
         val playback = RecordingPlaybackRepository().apply {
-            planResults.add(NovumResult.Failure(NovumError.Server(404)))
+            planResults.add(NovumResult.Failure(NovumError.NotFound()))
             planResults.add(NovumResult.Success(automatic))
             planResults.add(NovumResult.Success(off))
         }
@@ -354,7 +397,7 @@ class PlayerViewModelPlanReloadTest {
         val prefs = storedSubtitlePrefs(-1)
         val original = prefs.get(ITEM_ID)
         val playback = RecordingPlaybackRepository().apply {
-            planResults.add(NovumResult.Failure(NovumError.Server(502)))
+            planResults.add(NovumResult.Failure(NovumError.PlaybackUnavailable(NovumError.PlaybackFailure.SourceUnavailable)))
             planResults.add(NovumResult.Success(serverPlan(3).copy(mediaSourceId = "replacement-source")))
             planResults.add(NovumResult.Failure(NovumError.Network()))
         }
@@ -373,7 +416,7 @@ class PlayerViewModelPlanReloadTest {
         val original = prefs.get(ITEM_ID)
         val burned = serverPlan(3).copy(mediaSourceId = "replacement-source")
         val playback = RecordingPlaybackRepository().apply {
-            planResults.add(NovumResult.Failure(NovumError.Server(502)))
+            planResults.add(NovumResult.Failure(NovumError.PlaybackUnavailable(NovumError.PlaybackFailure.SourceUnavailable)))
             planResults.add(NovumResult.Success(burned))
             planResults.add(NovumResult.Success(burned))
         }
@@ -381,7 +424,7 @@ class PlayerViewModelPlanReloadTest {
         val vm = viewModel(playback, FakeSettingsRepository(), playbackPrefs = prefs)
         advanceUntilIdle()
 
-        assertEquals(NovumError.Server(502), (vm.state.value.plan as UiState.Error).error)
+        assertEquals(NovumError.PlaybackUnavailable(NovumError.PlaybackFailure.SubtitleUnavailable), (vm.state.value.plan as UiState.Error).error)
         assertEquals(3, playback.calls.size)
         assertEquals(original, prefs.get(ITEM_ID))
     }
@@ -780,15 +823,167 @@ class PlayerViewModelPlanReloadTest {
         assertEquals(emptyList<ReportCall>(), playback.reports)
     }
 
+    @Test
+    fun resumeAndReplayUseDifferentPositionsButNetworkRefreshKeepsTheActualDirectSource() = runTest {
+        val old = plan().copy(startPositionMs = 120_000, mediaSourceId = "actual-source")
+        val playback = RecordingPlaybackRepository(old)
+        val vm = viewModel(playback, FakeSettingsRepository(), media = resumedMedia(120_000))
+        advanceUntilIdle()
+        assertEquals(120_000L, playback.calls.single().startPositionMs)
+        val gate = CompletableDeferred<Unit>()
+        playback.planGate = gate
+        val refreshed = old.copy(url = "https://media.example/refreshed", playSessionId = "refreshed-session")
+        playback.nextPlan = refreshed
+
+        vm.retryPlayback(120_000, old)
+        runCurrent()
+        assertEquals("Keep Stage mounted while refreshing the failed request", old, vm.state.value.data)
+        gate.complete(Unit)
+        advanceUntilIdle()
+
+        val call = playback.calls.last()
+        assertEquals(120_000L, call.startPositionMs)
+        assertEquals("actual-source", call.mediaSourceId)
+        assertFalse(call.forceTranscode)
+        assertEquals(null, call.excludeLine)
+        assertEquals(refreshed, vm.state.value.data)
+        assertEquals(1, vm.state.value.playbackAttempt)
+
+        val replay = RecordingPlaybackRepository()
+        viewModel(replay, FakeSettingsRepository(), media = resumedMedia(120_000), startPositionMs = 0L)
+        advanceUntilIdle()
+        assertEquals(0L, replay.calls.single().startPositionMs)
+    }
+
+    @Test
+    fun networkRefreshRetainsActualTranscodeSourceAndBothExplicitSubtitleStates() = runTest {
+        for (index in listOf(-1, 7)) {
+            val prefs = storedSubtitlePrefs(index)
+            val saved = prefs.get(ITEM_ID)
+            val playback = RecordingPlaybackRepository(serverPlan(index))
+            val vm = viewModel(playback, FakeSettingsRepository(), playbackPrefs = prefs)
+            advanceUntilIdle()
+            val actual = serverPlan(index).copy(mediaSourceId = "actual-fallback-source", startPositionMs = 175_000)
+            playback.nextPlan = actual.copy(url = "https://media.example/refreshed-$index")
+
+            vm.retryPlayback(175_000, actual)
+            advanceUntilIdle()
+
+            val call = playback.calls.last()
+            assertTrue(call.forceTranscode)
+            assertEquals("actual-fallback-source", call.mediaSourceId)
+            assertEquals(index, call.subtitleStreamIndex)
+            assertEquals(175_000L, call.startPositionMs)
+            assertEquals(saved, prefs.get(ITEM_ID))
+        }
+    }
+
+    @Test
+    fun networkRefreshPreparesAnotherAttemptEvenWhenTheReturnedPlanAndUrlAreIdentical() = runTest {
+        val same = plan().copy(startPositionMs = 120_000, mediaSourceId = "source-1")
+        val playback = RecordingPlaybackRepository(same)
+        val vm = viewModel(playback, FakeSettingsRepository())
+        advanceUntilIdle()
+
+        vm.retryPlayback(120_000, same)
+        advanceUntilIdle()
+
+        assertEquals(same, vm.state.value.data)
+        assertEquals(1, vm.state.value.playbackAttempt)
+        assertEquals(2, playback.calls.size)
+    }
+
+    @Test
+    fun failedNetworkRefreshSurfacesTheOriginalGatewayErrorWithoutErasingPreferences() = runTest {
+        val prefs = storedSubtitlePrefs(-1)
+        val saved = prefs.get(ITEM_ID)
+        val playback = RecordingPlaybackRepository(serverPlan(-1))
+        val vm = viewModel(playback, FakeSettingsRepository(), playbackPrefs = prefs)
+        advanceUntilIdle()
+        val error = NovumError.Server(503, "upstream unavailable")
+        playback.planFailure = error
+
+        vm.retryPlayback(98_000, vm.state.value.data)
+        advanceUntilIdle()
+
+        assertEquals(error, (vm.state.value.plan as UiState.Error).error)
+        assertEquals(0, vm.state.value.playbackAttempt)
+        assertEquals(2, playback.calls.size)
+        assertEquals(saved, prefs.get(ITEM_ID))
+    }
+
+    @Test
+    fun manualRetryFromAnErrorRetainsTheFailedProgressiveTranscodeSnapshot() = runTest {
+        val prefs = storedSubtitlePrefs(-1)
+        val playback = RecordingPlaybackRepository(serverPlan(-1))
+        val vm = viewModel(playback, FakeSettingsRepository(), playbackPrefs = prefs, startPositionMs = 0L)
+        advanceUntilIdle()
+        val actual = serverPlan(-1).copy(mediaSourceId = "actual-source", streamStartPositionMs = 120_000,
+            startPositionMs = 120_000, playSessionId = "actual-session")
+        playback.planFailure = NovumError.Server(502)
+        vm.retryPlayback(131_000L, actual)
+        advanceUntilIdle()
+        assertTrue(vm.state.value.plan is UiState.Error)
+
+        playback.planFailure = null
+        playback.nextPlan = actual.copy(startPositionMs = 131_000)
+        val gate = CompletableDeferred<Unit>()
+        playback.planGate = gate
+        vm.retryPlayback(131_000L, actual, showLoading = true)
+        runCurrent()
+        assertEquals(UiState.Loading, vm.state.value.plan)
+        gate.complete(Unit)
+        advanceUntilIdle()
+
+        val retry = playback.calls.last()
+        assertEquals(131_000L, retry.startPositionMs)
+        assertEquals("actual-source", retry.mediaSourceId)
+        assertEquals(-1, retry.subtitleStreamIndex)
+        assertTrue(retry.forceTranscode)
+        assertEquals(131_000L, vm.state.value.data?.startPositionMs)
+        assertEquals(1, vm.state.value.playbackAttempt)
+    }
+
+    @Test
+    fun manualNextLineRetryKeepsTheFailedActualTranscodeAndSubtitleOffSelection() = runTest {
+        val playback = RecordingPlaybackRepository()
+        val vm = viewModel(playback, FakeSettingsRepository(), mediaSourceId = "route-source")
+        advanceUntilIdle()
+        val failed = serverPlan(-1).copy(mediaSourceId = "actual-source", lineBaseUrl = "https://failed.example",
+            streamStartPositionMs = 120_000)
+
+        vm.retryNextLine(131_000L, failed)
+        advanceUntilIdle()
+
+        val retry = playback.calls.last()
+        assertEquals(131_000L, retry.startPositionMs)
+        assertEquals("actual-source", retry.mediaSourceId)
+        assertEquals(-1, retry.subtitleStreamIndex)
+        assertEquals("https://failed.example", retry.excludeLine)
+        assertTrue(retry.forceTranscode)
+    }
+
+    private fun resumedMedia(positionMs: Long): MediaRepository = object : MediaRepository by EmptyMediaRepository {
+        override suspend fun detail(itemId: String): NovumResult<MediaDetail> = NovumResult.Success(MediaDetail(
+            id = itemId, title = "Resume episode", type = "Movie", year = null, rating = null,
+            officialRating = null, runtimeMinutes = 60, overview = null, genres = emptyList(),
+            posterUrl = null, backdropUrl = null, isFavorite = false, played = false,
+            resumePositionMs = positionMs, childCount = null, premiereDate = null, status = null,
+            cast = emptyList(), studios = emptyList(),
+        ))
+    }
+
     private fun viewModel(
         playback: PlaybackRepository,
         settings: SettingsRepository,
         mediaSourceId: String? = null,
         playbackPrefs: ItemPlaybackPrefsStore? = null,
         appScope: CoroutineScope = CoroutineScope(Dispatchers.Unconfined),
+        media: MediaRepository = EmptyMediaRepository,
+        startPositionMs: Long? = null,
     ) = PlayerViewModel(
         playback = playback,
-        media = EmptyMediaRepository,
+        media = media,
         settings = settings,
         danmuRepository = NoopDanmuRepository,
         capability = FakeCapabilityProvider(),
@@ -807,6 +1002,7 @@ class PlayerViewModelPlanReloadTest {
         savedStateHandle = SavedStateHandle(
             buildMap {
                 put("itemId", ITEM_ID)
+                startPositionMs?.let { put("startPositionMs", it) }
                 mediaSourceId?.let { put("mediaSourceId", it) }
             },
         ),

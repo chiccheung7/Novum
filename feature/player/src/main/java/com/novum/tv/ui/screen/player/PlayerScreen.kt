@@ -3,6 +3,7 @@ package com.novum.tv.ui.screen.player
 import android.app.Activity
 import android.content.Context
 import android.content.ContextWrapper
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
@@ -33,7 +34,6 @@ import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.exoplayer.upstream.DefaultBandwidthMeter
 import com.novum.tv.core.player.OffloadRenderersFactory
-import com.novum.tv.core.player.buildMediaItem
 import com.novum.tv.core.state.UiState
 import com.novum.tv.data.remote.emby.EmbyClientFactory
 import com.novum.tv.data.remote.emby.addCleartextOriginGuard
@@ -73,6 +73,7 @@ fun PlayerScreen(
     var subtitleDelayMs by remember { mutableLongStateOf(0L) }
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
+    val checkpoints = remember(viewModel) { PlaybackCheckpoints() }
 
     // 播放数据与字幕都必须走和 API 相同的网络出口：
     // 网关按 UA / 来源站校验，ExoPlayer 默认栈会拿到 403，表现就是「字幕轨选中却没字」。
@@ -138,7 +139,19 @@ fun PlayerScreen(
     }
     // release 跟随 player 身份：remember key 变化重建播放器时旧实例先释放（不泄漏 Surface）
     DisposableEffect(player) {
-        onDispose { player.release() }
+        checkpoints.attach(player)
+        onDispose {
+            checkpoints.detach(player)
+            player.release()
+        }
+    }
+    // Error/Loading remove Stage. Disposal is the final guard for navigation paths
+    // that never invoke a Stage callback; explicit exits and disposal share one budget.
+    DisposableEffect(viewModel) {
+        onDispose {
+            checkpoints.captureActive()
+            checkpoints.reportStopped(report = viewModel::onStopped)
+        }
     }
 
     // 字幕/音轨语言偏好（详情页默认偏好 → 设置 → 起播生效）。
@@ -228,6 +241,13 @@ fun PlayerScreen(
 
     val plan = state.data
     val subtitlesEnabled = state.subtitlesEnabled
+    val failed = state.plan is UiState.Error
+    LaunchedEffect(player, failed) {
+        if (failed) {
+            checkpoints.capture(player)
+            player.stopFailedPlayback()
+        }
+    }
 
     // 显示模式切换：起播黑场期按片源规格把窗口指到能 1:1
     // 容纳片源的显示模式（4K 片源不再被 1080p 输出封顶），播放会话离场还原。
@@ -247,18 +267,14 @@ fun PlayerScreen(
         displaySession = DisplayModeSwitcher.beginSession(activity, spec?.width, spec?.height, spec?.frameRate)
     }
 
-    LaunchedEffect(player, plan, subtitlesEnabled) {
+    LaunchedEffect(player, plan, subtitlesEnabled, state.playbackAttempt) {
         if (plan != null) {
             applySubtitleEnabledState(player, plan.serverSubtitleSelection || plan.burnedInSubtitleLabel != null,
                 viewModel.state.value.rememberedPrefs, subtitlesEnabled)
             if (BuildConfig.DEBUG) {
                 android.util.Log.d(CUE_LOG_TAG, "prepare: subs=${plan.subtitles.size} method=${plan.method}")
             }
-            player.setMediaItem(
-                buildMediaItem(plan, subtitlesEnabled),
-                localPlaybackPosition(plan, plan.startPositionMs),
-            )
-            player.prepare()
+            player.preparePlayback(plan, subtitlesEnabled)
             viewModel.onStarted(plan.startPositionMs)
         }
     }
@@ -280,14 +296,13 @@ fun PlayerScreen(
      *   多半就是看完了，按 92% 上报会一直留在「看到一半」）；
      * - 其余 → 实际位置，避免把半集误标成已看。
      */
-    val stopPosition: (finished: Boolean) -> Long = { finished ->
-        val duration = player.mediaDurationMs()
-        val position = player.mediaPositionMs()
-        when {
-            finished -> if (duration > 0) duration else position
-            duration > 0 && position >= duration - duration / 20 -> duration
-            else -> position
-        }
+    val reportStopped: (finished: Boolean) -> Unit = { finished ->
+        checkpoints.capture(player)
+        checkpoints.reportStopped(finished, viewModel::onStopped)
+    }
+    BackHandler(enabled = plan == null) {
+        reportStopped(false)
+        onBack()
     }
 
     Box(
@@ -306,7 +321,11 @@ fun PlayerScreen(
 
             is UiState.Error -> NovumStateView(
                 state = planState,
-                onRetry = viewModel::load,
+                onRetry = {
+                    val checkpoint = checkpoints.latest
+                    if (checkpoint == null) viewModel.load()
+                    else viewModel.retryPlayback(checkpoint.positionMs, checkpoint.plan, showLoading = true)
+                },
                 modifier = Modifier.align(Alignment.Center),
             )
 
@@ -351,24 +370,29 @@ fun PlayerScreen(
                     onOpenEpisode = { nextId, sourceId, finished ->
                         // 换集 = 本集结束：必须先上报停止再替换播放页，否则服务端
                         // 收不到结束位置（该集停在"看到一半"，NextUp 不前进）
-                        viewModel.onStopped(stopPosition(finished))
+                        reportStopped(finished)
                         onOpenEpisode(nextId, sourceId, finished)
                     },
                     episodes = state.episodes,
                     currentEpisodeId = state.currentEpisodeId,
                     versionStrategy = state.versionStrategy,
                     onExit = {
-                        viewModel.onStopped(stopPosition(false))
+                        reportStopped(false)
                         onBack()
                     },
                     onMethodChanged = viewModel::onMethodChanged,
                     onRequestTranscode = viewModel::retryWithTranscode,
+                    onRetryPlayback = { position, active -> viewModel.retryPlayback(position, active) },
+                    playbackAttempt = state.playbackAttempt,
+                    onPlaybackFailed = checkpoints::save,
                     audioPassthrough = state.audioPassthrough,
                     passthroughCapable = state.offloadCapable,
                     onSetPassthrough = { enabled ->
                         viewModel.setAudioPassthrough(enabled, player.mediaPositionMs())
                     },
-                    onRetryNextLine = { positionMs -> viewModel.retryNextLine(positionMs) },
+                    onRetryNextLine = { positionMs ->
+                        viewModel.retryNextLine(positionMs, checkpoints.latest?.plan ?: player.activePlaybackPlan())
+                    },
                     initialSpeed = state.playbackSpeed,
                     onSpeedChanged = { speed -> viewModel.setPlaybackSpeed(speed) },
                     bandwidthEstimate = networkSpeed::sampleBitsPerSecond,

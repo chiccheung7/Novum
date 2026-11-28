@@ -70,6 +70,13 @@ class EmbyApiContractTest {
     }
 
     @Test
+    fun defaultFieldsMustCarryExplicitGenresAndTagsForHeroFiltering() {
+        val fields = EmbyApi.DEFAULT_FIELDS.split(',').toSet()
+
+        assertTrue("Hero 筛选需要服务端明确返回 Genres 与 Tags", fields.containsAll(listOf("Genres", "Tags")))
+    }
+
+    @Test
     fun episodeFieldsMustCarryUiConsumedFields() {
         // 消费点：Overview→选集卡简介、RunTimeTicks→片长/剩余时长、UserData→进度与已看、
         // ImageTags→分集缩略图、MediaSources→单集多版本入口

@@ -6,7 +6,7 @@ import org.junit.Test
 import com.novum.tv.testing.RepoPaths
 
 /**
- * 按钮契约测试：固定宽度按钮必须显式居中，按钮文案使用 [NovumType.ButtonLg]，
+ * 按钮契约测试：固定宽度按钮必须显式居中，主要操作使用 ButtonLg，紧凑弹窗使用 Button，
  * 按钮内不写死文字颜色；屏内返回动作由遥控器返回键与导航栈处理。
  */
 class ButtonContractTest {
@@ -73,7 +73,7 @@ class ButtonContractTest {
     }
 
     @Test
-    fun buttonLabelsUseButtonLgType() {
+    fun buttonLabelsUseTheActionTypeForTheirContext() {
         val offenders = mutableListOf<String>()
 
         kotlinSources().forEach { file ->
@@ -84,10 +84,11 @@ class ButtonContractTest {
                 if (start < 0) break
                 cursor = start + 1
                 val block = callBlock(text, start) ?: continue
-                // BodyStrong 与 16sp Button 均不符合全站按钮字号规范。
+                // 弹窗操作保留较小字号，让按钮尺寸与相邻间距满足电视端布局。
+                val compactDialog = file.name == "NovumConfirmDialog.kt"
                 if (block.contains("NovumType.BodyStrong") ||
-                    block.contains("NovumType.Button,") ||
-                    block.contains("NovumType.Button)")
+                    (!compactDialog && (block.contains("NovumType.Button,") ||
+                        block.contains("NovumType.Button)")))
                 ) {
                     val line = text.substring(0, start).count { it == '\n' } + 1
                     offenders += "${file.relativeTo(projectRoot)}:$line"
@@ -96,7 +97,7 @@ class ButtonContractTest {
         }
 
         assertTrue(
-            "按钮文案请用 NovumType.ButtonLg（全站统一 20sp/48dp，不要 BodyStrong/Button）：\n" +
+            "主要按钮文案请用 NovumType.ButtonLg；仅紧凑确认弹窗允许 NovumType.Button：\n" +
                 offenders.joinToString("\n"),
             offenders.isEmpty(),
         )
